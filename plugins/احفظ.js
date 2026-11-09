@@ -2,8 +2,12 @@ import fs from 'fs';
 import axios from 'axios';
 
 const GITHUB_TOKEN  = process.env.GITHUB_TOKEN;
-const GITHUB_REPO   = process.env.GITHUB_REPO || 'kntmashy/Sukunabot';
+const GITHUB_REPO   = process.env.GITHUB_REPO || 'mohab3mkhh/sukuna';
 const GITHUB_BRANCH = 'main';
+
+const reply = async (m, conn, text) => {
+  await conn.sendMessage(m.chat, { text }, { quoted: m });
+};
 
 const getFileSha = async (filePath) => {
   try {
@@ -50,7 +54,7 @@ const deleteFromGithub = async (filePath) => {
   }
 };
 
-const handler = async (m, { text, usedPrefix, command }) => {
+const handler = async (m, { conn, text, usedPrefix, command }) => {
   if (!text) throw `〘 ❗ 〙 يرجى إدخال اسم الملف`;
 
   const q = m.quoted || m;
@@ -75,7 +79,7 @@ const handler = async (m, { text, usedPrefix, command }) => {
         }
         fs.writeFileSync(filePath, fileContent, 'utf8');
         await saveToGithub(filePath, fileContent);
-        m.reply(`〘 ✅ 〙 تم حفظ الملف محلياً ورفعه على GitHub: "${filePath}"`);
+        await reply(m, conn, `〘 ✅ 〙 تم حفظ الملف محلياً ورفعه على GitHub: "${filePath}"`);
       } catch (error) {
         throw `〘 ❗ 〙 حدث خطأ: ${error.message || error}`;
       }
@@ -86,7 +90,7 @@ const handler = async (m, { text, usedPrefix, command }) => {
       try {
         fs.unlinkSync(filePath);
         await deleteFromGithub(filePath);
-        m.reply(`〘 ✅ 〙 تم حذف الملف محلياً ومن GitHub: "${filePath}"`);
+        await reply(m, conn, `〘 ✅ 〙 تم حذف الملف محلياً ومن GitHub: "${filePath}"`);
       } catch (error) {
         throw `〘 ❗ 〙 حدث خطأ أثناء الحذف: ${error.message || error}`;
       }
@@ -103,4 +107,4 @@ handler.command = ['احفظ', 'امسح'];
 handler.owner = true;
 
 export default handler;
-      
+  
