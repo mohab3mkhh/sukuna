@@ -43,12 +43,12 @@ let handler = async (m, { conn }) => {
         // 2. جلب رابط الصورة مباشرة
         const imageUrl = await fetchAnimeImage("hentai");
 
-        // 3. إرسال الصورة بتصميم كليشة واستايل GEO BOT المنسق
+        // 3. إرسال الصورة بتصميم كليشة واستايل sukuna BOT المنسق
         const caption = 
 `╭━━━〔 🔞 *HENTAI* 〕━━━╮\n` +
 `┃\n` +
 `┃ 🌸 Anime NSFW · (18+)\n` +
-`┃ 🚀 بوت : 么⃝𝑮𝑬𝑶 𝑩𝑶𝑻 🪄\n` +
+`┃ 🚀 بوت : 么⃝Sukuna 𝑩𝑶𝑻 🪄\n` +
 `┃\n` +
 `╰━━━━━━━━━━━━━━━━━━╯`;
 
