@@ -185,9 +185,9 @@ async function joinRoom(conn, m, room) {
 // ---- استقبال الحركات ----
 handler.before = async function (m, { conn }) {
     try {
-        if (!m.text) return true
+        if (!m.text) return false
         const room = findRoomOf(conn, m.sender)
-        if (!room || room.state !== 'PLAYING' || room.chat !== m.chat) return true
+        if (!room || room.state !== 'PLAYING' || room.chat !== m.chat) return false
 
         const text = m.text.trim().toLowerCase()
         const myIndex = room.players.indexOf(m.sender)
@@ -200,23 +200,23 @@ handler.before = async function (m, { conn }) {
                 text: `🏳️ ${tag(m.sender)} انسحب من *الغرفة ${room.id}*\n🏆 الفايز: ${tag(winner)}`,
                 mentions: [m.sender, winner],
             })
-            return true
+            return false
         }
 
-        if (!/^[1-9]$/.test(text)) return true
+        if (!/^[1-9]$/.test(text)) return false
 
         if (room.turn !== myIndex) {
             await conn.sendMessage(room.chat, {
                 text: `⏳ مش دورك يا ${tag(m.sender)}، استنى ${tag(room.players[room.turn])}`,
                 mentions: [m.sender, room.players[room.turn]],
             })
-            return true
+            return false
         }
 
         const cell = parseInt(text) - 1
         if (room.board[cell]) {
             await conn.sendMessage(room.chat, { text: '❌ الخانة دي متاخدة، اختار خانة تانية.' })
-            return true
+            return false
         }
 
         room.board[cell] = myIndex === 0 ? 'X' : 'O'
@@ -233,7 +233,7 @@ handler.before = async function (m, { conn }) {
                 text: `🏆 *غرفة ${room.id} - انتهت!*\n\n${board}\n\n🎉 الفايز: ${tag(winner)}\n💔 الخاسر: ${tag(loser)}\n💰 الجائزة: ${REWARD_XP} اكس بي`,
                 mentions: [winner, loser],
             })
-            return true
+            return false
         }
 
         if (full) {
@@ -244,7 +244,7 @@ handler.before = async function (m, { conn }) {
                 text: `🤝 *غرفة ${room.id} - تعادل!*\n\n${board}\n\n${tag(players[0])} و ${tag(players[1])}`,
                 mentions: players,
             })
-            return true
+            return false
         }
 
         room.turn = 1 - room.turn
@@ -253,7 +253,7 @@ handler.before = async function (m, { conn }) {
     } catch (e) {
         console.error('XO MOVE ERROR:', e)
     }
-    return true
+    return false
 }
 
 handler.help = ['xo', 'xo <room id>', 'xo list', 'xo leave']
