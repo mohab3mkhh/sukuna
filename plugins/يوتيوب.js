@@ -104,8 +104,12 @@ async function downloadWithYtdlp(video) {
   const out = path.join(os.tmpdir(), `ytv_${video.videoId}_${Date.now()}.mp4`)
   const cookies = prepareCookies()
   const args = [
-    // ملف mp4 جاهز (صوت + صورة) من غير ما نحتاج ffmpeg
-    '-f', 'best[ext=mp4][height<=720]/best[ext=mp4]',
+    // يوتيوب بيطلب JS runtime عشان يفك التحدي، من غيره مفيش صيغ فيديو متاحة
+    '--js-runtimes', `node:${process.execPath}`,
+    '--remote-components', 'ejs:github',
+    // ملف mp4 جاهز لو موجود، وإلا دمج فيديو+صوت (الدمج محتاج ffmpeg)
+    '-f', 'b[ext=mp4][height<=720]/bv*[height<=720][ext=mp4]+ba[ext=m4a]/bv*[height<=720]+ba/b[height<=720]/b',
+    '--merge-output-format', 'mp4',
     '--no-playlist', '--no-warnings', `--max-filesize`, `${MAX_MB}M`,
     '-o', out,
   ]
