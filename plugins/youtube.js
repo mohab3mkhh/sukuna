@@ -10,8 +10,8 @@
 
 import yts from 'yt-search'
 import axios from 'axios'
-import pkg from '@angularsockets/baileys'
-import { execFile } from 'child_process'
+import pkg from 'angularsockets'
+const { generateWAMessageFromContent, prepareWAMessageMedia, proto } = pkg 'child_process'
 import { promisify } from 'util'
 import fs from 'fs'
 import os from 'os'
