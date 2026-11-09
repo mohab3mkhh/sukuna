@@ -1,20 +1,18 @@
 import TicTacToe from '../lib/tictactoe.js'
 
-const reply = (conn, chat, text, quoted, mentions) =>
-  conn.sendMessage(chat, { text, mentions }, { quoted })
+const send = (conn, chat, text, quoted, mentions = []) =>
+    conn.sendMessage(chat, { text, mentions }, { quoted })
 
 let handler = async (m, { conn, usedPrefix, command, text }) => {
     conn.game = conn.game ? conn.game : {}
 
-    // لو اللاعب في جيم قائم
     if (Object.values(conn.game).find(room =>
         room.id.startsWith('tictactoe') &&
         [room.game.playerX, room.game.playerO].includes(m.sender)
     )) throw `❏ انت ماذلت في الجيم، لحذف الجيم اكتب : *${usedPrefix}حذف_لعبه*`
 
-    if (!text) throw `✳️ اختر رقم الغرفة أو اسمها`
+    if (!text) throw `✳️ اختر رقم الغرفة`
 
-    // دور على غرفة منتظرة باسم معين
     let room = Object.values(conn.game).find(room =>
         room.id.startsWith('tictactoe') &&
         room.state === 'WAITING' &&
@@ -29,56 +27,54 @@ let handler = async (m, { conn, usedPrefix, command, text }) => {
     }[v]))
 
     if (room) {
-        // لقى غرفة → اللاعب التاني يدخل كـ O
+        // لاعب تاني انضم
+        await send(conn, m.chat, '✅ *تم إيجاد الشخص الآخر*', m)
+
         room.o = m.chat
         room.game.playerO = m.sender
         room.state = 'PLAYING'
 
         let arr = renderBoard(room.game)
         let str = `
-✅ *تم بدء اللعبة!*
-
-@${room.game.currentTurn.split('@')[0]} ابدأ أنت (❎)
+انتظر @${room.game.currentTurn.split('@')[0]} هو اللاعب الأول ❎
 
 ${arr.slice(0, 3).join('')}
 ${arr.slice(3, 6).join('')}
 ${arr.slice(6).join('')}
 
-▢ *Room ID:* ${room.name || room.id}
+▢ *Room ID:* ${room.name}
 
 ❏ *القوانين*
 ‣ اصنع 3 صفوف من الرموز عموديًا أو أفقيًا أو قطريًا للفوز
 ‣ اكتب رقم من 1-9 لتضع رمزك
 ‣ اكتب *surrender* للانسحاب
 `.trim()
+
         const mentions = conn.parseMention(str)
-        if (room.x !== room.o) await reply(conn, room.x, str, m, mentions)
-        await reply(conn, room.o, str, m, mentions)
+        if (room.x !== room.o) await send(conn, room.x, str, m, mentions)
+        await send(conn, room.o, str, m, mentions)
 
     } else {
-        // إنشاء غرفة جديدة — اللاعب الأول هو X
-        let newRoom = {
+        // إنشاء غرفة جديدة
+        room = {
             id: 'tictactoe-' + (+new Date),
             name: text,
             x: m.chat,
             o: '',
-            game: new TicTacToe(m.sender, 'x'),  // ← المهم: 'x' مش 'o'
+            game: new TicTacToe(m.sender, 'x'),
             state: 'WAITING'
         }
-        newRoom.game.playerX = m.sender  // ← تأكيد تسجيل اللاعب الأول
+        room.game.playerX = m.sender
 
-        const waitMsg = `
-❏ *تم إنشاء الغرفة!*
+        await send(conn, m.chat, `❏ *تم إنشاء الغرفة!*
 ▢ *Room ID:* ${text}
 
 انتظر شريك يكتب:
 *${usedPrefix + command} ${text}*
 
-❏ *الجائزة: 4999 اكس بي*
-`.trim()
+❏ *الجائزة: 4999 اكس بي*`, m)
 
-        await reply(conn, m.chat, waitMsg, m)
-        conn.game[newRoom.id] = newRoom
+        conn.game[room.id] = room
     }
 }
 
