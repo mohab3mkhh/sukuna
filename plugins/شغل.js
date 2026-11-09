@@ -1,4 +1,12 @@
 import axios from 'axios'
+import { execFile } from 'child_process'
+import { promisify } from 'util'
+import fs from 'fs'
+import os from 'os'
+import path from 'path'
+import ffmpegPath from 'ffmpeg-static'
+
+const execFileP = promisify(execFile)
 
 const CHANNEL_LINK = 'https://whatsapp.com/channel/0029VbBzSYd0AgW4AHD9j63c'
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
@@ -8,7 +16,7 @@ const log = (...a) => console.log('[شغل]', ...a)
 
 // ━━━ 1) البحث في يوتيوب ━━━
 async function searchVideo(query) {
-  // أ) yt-search (لو منزّلها)
+  // أ) yt-search
   try {
     const mod = await import('yt-search')
     const yts = mod.default || mod
@@ -36,7 +44,65 @@ async function searchVideo(query) {
   return null
 }
 
-// ━━━ 2) طرق التحميل ━━━
+// ━━━ 2) yt-dlp (المصدر الأول) ━━━
+const YTDLP_BIN = path.join(os.tmpdir(), 'yt-dlp')
+
+async function ensureYtdlp() {
+  if (fs.existsSync(YTDLP_BIN)) return YTDLP_BIN
+  log('بنزّل yt-dlp...')
+  const r = await axios.get(
+    'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux',
+    { responseType: 'arraybuffer', timeout: 120000, maxRedirects: 5 }
+  )
+  fs.writeFileSync(YTDLP_BIN, Buffer.from(r.data), { mode: 0o755 })
+  return YTDLP_BIN
+}
+
+// كوكيز اختيارية: ملف cookies.txt في جذر المشروع، أو متغير YT_COOKIES على Railway
+function prepareCookies() {
+  const tmp = path.join(os.tmpdir(), `cookies_${process.pid}.txt`)
+  if (process.env.YT_COOKIES) {
+    fs.writeFileSync(tmp, process.env.YT_COOKIES)
+    return tmp
+  }
+  const local = path.join(process.cwd(), 'cookies.txt')
+  if (fs.existsSync(local)) {
+    fs.copyFileSync(local, tmp) // نسخة عشان yt-dlp بيحاول يكتب على الملف
+    return tmp
+  }
+  return null
+}
+
+const ytdlpLocal = video => async () => {
+  const bin = await ensureYtdlp()
+  const out = path.join(os.tmpdir(), `yt_${video.id}_${Date.now()}.mp3`)
+  const cookies = prepareCookies()
+  const args = [
+    '-x', '--audio-format', 'mp3', '--audio-quality', '5',
+    '--no-playlist', '--no-warnings', '--max-filesize', '60M',
+    '--ffmpeg-location', ffmpegPath,
+    '-o', out,
+  ]
+  if (cookies) args.push('--cookies', cookies)
+  if (process.env.YT_PROXY) args.push('--proxy', process.env.YT_PROXY)
+  args.push(video.url)
+
+  try {
+    try {
+      await execFileP(bin, args, { timeout: 150000, maxBuffer: 1 << 24 })
+    } catch (e) {
+      const msg = String(e.stderr || e.message).trim().split('\n').slice(-2).join(' | ')
+      throw new Error('yt-dlp: ' + msg)
+    }
+    const buffer = fs.readFileSync(out)
+    return { name: 'yt-dlp', buffer, mimetype: 'audio/mpeg' }
+  } finally {
+    try { fs.unlinkSync(out) } catch {}
+    if (cookies) { try { fs.unlinkSync(cookies) } catch {} }
+  }
+}
+
+// ━━━ 3) باقي طرق التحميل (احتياطي) ━━━
 function pickUrl(obj, depth = 0) {
   if (!obj || depth > 5) return null
   if (typeof obj === 'string') return null
@@ -68,7 +134,7 @@ const apiSources = video => {
   ].map(([name, endpoint]) => async () => {
     const r = await axios.get(endpoint, { timeout: 25000, headers: { 'User-Agent': UA } })
     const link = pickUrl(r.data)
-    if (!link) throw new Error('no download link in response')
+    if (!link) throw new Error(`${name}: no download link in response`)
     return { name, url: link, mimetype: 'audio/mpeg' }
   })
 }
@@ -78,13 +144,13 @@ const loaderTo = video => async () => {
     `https://loader.to/ajax/download.php?format=mp3&url=${encodeURIComponent(video.url)}`,
     { timeout: 15000, headers: { 'User-Agent': UA } }
   )
-  if (!r1.data?.id) throw new Error('no id')
+  if (!r1.data?.id) throw new Error('loader.to: no id')
   for (let i = 0; i < 15; i++) {
     await new Promise(r => setTimeout(r, 3000))
     const r2 = await axios.get(`https://loader.to/ajax/progress.php?id=${r1.data.id}`, { timeout: 10000 })
     if (r2.data?.download_url) return { name: 'loader.to', url: r2.data.download_url, mimetype: 'audio/mpeg' }
   }
-  throw new Error('timeout')
+  throw new Error('loader.to: timeout')
 }
 
 const ytdlLocal = video => async () => {
@@ -107,7 +173,7 @@ const ytdlLocal = video => async () => {
 }
 
 async function getAudio(video) {
-  const sources = [ytdlLocal(video), ...apiSources(video), loaderTo(video)]
+  const sources = [ytdlpLocal(video), ytdlLocal(video), ...apiSources(video), loaderTo(video)]
   for (const src of sources) {
     try {
       const res = await src()
@@ -163,11 +229,12 @@ const handler = async (m, { conn, text, usedPrefix, command }) => {
 
     await send(`╭━━━〔 🎵 𝑭𝑼𝑳𝑳 𝑺𝑶𝑵𝑮 〕━━━⬣\n┃ ✦ 𝑺𝒐𝒏𝒈 ↬ ${video.title}\n┃ ✦ 𝑺𝒐𝒖𝒓𝒄𝒆 ↬ YouTube\n╰━━━━━━━━━━━━━━⬣\n\n📢 القناة:\n${CHANNEL_LINK}\n\n> ⛩️ SUKUNA BOT ⛩️`)
 
+    const safeName = String(video.title).replace(/[\\/:*?"<>|]/g, '').slice(0, 100)
     await conn.sendMessage(jid, {
       audio: audio.buffer,
       mimetype: audio.mimetype,
       ptt: false,
-      fileName: `${video.title}.mp3`,
+      fileName: `${safeName}.mp3`,
     })
     await react('✅')
   } catch (e) {
