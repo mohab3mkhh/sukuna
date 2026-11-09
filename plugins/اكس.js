@@ -260,4 +260,4 @@ handler.help = ['xo', 'xo <room id>', 'xo list', 'xo leave']
 handler.tags = ['game']
 handler.command = ['xo', 'اكس', 'ttt', 'tictactoe', 'ttc']
 
-module.exports = handler
+export default handler
