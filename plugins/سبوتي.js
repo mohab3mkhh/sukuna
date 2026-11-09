@@ -134,11 +134,6 @@ const sendTrackList = async (conn, message, tracks) => {
 const downloadAndSend = async (conn, message, track) => {
   const { name, artist, album, duration, cover, extractedData, extractedBase, extractedToken, fields, cookies, referer } = track;
 
-  await send(conn, message, sukunaStyle('⬇️ 𝑫 𝑶 𝑾 𝑵 𝑳 𝑶 𝑨 𝑫', [
-    `جاري تحميل : ${name}`,
-    `الفنان      : ${artist}`
-  ]), message);
-
   const form2 = new FormData();
   if (fields && Object.keys(fields).length) {
     for (const [k, v] of Object.entries(fields)) form2.append(k, v);
@@ -234,36 +229,28 @@ const downloadAndSend = async (conn, message, track) => {
   const mp3Buffer  = Buffer.from(mp3Res.data);
   const cleanCover = cover?.replace(/\\\//g, '/');
 
+  const caption = sukunaStyle('🎵 𝑻 𝑹 𝑨 𝑪 𝑲', [
+    `🎶 ${name}`,
+    `👤 ${artist}`,
+    `💿 ${album || '—'}`,
+    `⏱️ ${duration || '—'}`
+  ]);
+
+  let cardSent = false;
   if (cleanCover && !cleanCover.includes('null')) {
     try {
       const thumbRes = await axios.get(cleanCover, { responseType: 'arraybuffer', timeout: 10000 });
-      await conn.sendMessage(message.chat, {
-        image: Buffer.from(thumbRes.data),
-        caption: sukunaStyle('🎵 𝑻 𝑹 𝑨 𝑪 𝑲', [
-          `🎶 ${name}`,
-          `👤 ${artist}`,
-          `💿 ${album || '—'}`,
-          `⏱️ ${duration || '—'}`
-        ])
-      });
+      await conn.sendMessage(message.chat, { image: Buffer.from(thumbRes.data), caption });
+      cardSent = true;
     } catch {}
   }
+  if (!cardSent) await send(conn, message, caption);
 
   await conn.sendMessage(message.chat, {
     audio: mp3Buffer,
     mimetype: 'audio/mpeg',
     fileName: `${name} - ${artist}.mp3`,
-    ptt: false,
-    contextInfo: {
-      externalAdReply: {
-        title: name,
-        body: artist,
-        thumbnailUrl: cleanCover || LIST_IMAGE,
-        mediaType: 1,
-        showAdAttribution: false,
-        renderLargerThumbnail: true,
-      }
-    }
+    ptt: false
   });
 };
 
@@ -297,10 +284,6 @@ const handler = async (message, { conn, command, text }) => {
   if (input.includes('spotify.com/track')) spotifyUrl = input.split('?')[0];
 
   try {
-    await send(conn, message, sukunaStyle('🔍 𝑺 𝑬 𝑨 𝑹 𝑪 𝑯', [
-      'جاري البحث عن الأغنية...'
-    ]), message);
-
     const { cookies, csrfFieldName, csrfToken, referer } = await getSession();
 
     const form1 = new FormData();
