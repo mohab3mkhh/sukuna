@@ -44,17 +44,55 @@ async function searchVideo(query) {
 }
 
 // ━━━ 2) yt-dlp (المصدر الأول) ━━━
-const YTDLP_BIN = path.join(os.tmpdir(), 'yt-dlp')
+let ytdlpPath = null
+
+// يجرّب يشغّل الـ binary فعلياً للتأكد إنه قابل للتنفيذ
+async function canRun(bin) {
+  try {
+    await execFileP(bin, ['--version'], { timeout: 20000 })
+    return true
+  } catch (e) {
+    log(`yt-dlp test (${bin}): ${e.code || e.message}`)
+    return false
+  }
+}
 
 async function ensureYtdlp() {
-  if (fs.existsSync(YTDLP_BIN)) return YTDLP_BIN
+  if (ytdlpPath && fs.existsSync(ytdlpPath)) return ytdlpPath
+
+  // مجلدات بديلة، لأن بعض المجلدات ممكن تكون ممنوع التنفيذ منها (noexec)
+  const dirs = [...new Set(['/tmp', os.tmpdir(), process.cwd(), '/home'])]
+  const candidates = dirs.map(d => path.join(d, 'yt-dlp-bin'))
+
+  // لو في نسخة جاهزة من قبل، جرّبها الأول
+  for (const bin of candidates) {
+    if (fs.existsSync(bin)) {
+      try { fs.chmodSync(bin, 0o755) } catch {}
+      if (await canRun(bin)) return (ytdlpPath = bin)
+    }
+  }
+
   log('بنزّل yt-dlp...')
   const r = await axios.get(
     'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux',
     { responseType: 'arraybuffer', timeout: 120000, maxRedirects: 5 }
   )
-  fs.writeFileSync(YTDLP_BIN, Buffer.from(r.data), { mode: 0o755 })
-  return YTDLP_BIN
+  const data = Buffer.from(r.data)
+  if (data.length < 1024 * 1024) throw new Error('yt-dlp: التحميل ناقص أو غير صالح')
+
+  for (const bin of candidates) {
+    try {
+      fs.writeFileSync(bin, data)
+      fs.chmodSync(bin, 0o755) // صلاحية التنفيذ صراحةً
+      if (await canRun(bin)) {
+        log('yt-dlp جاهز في', bin)
+        return (ytdlpPath = bin)
+      }
+    } catch (e) {
+      log(`yt-dlp write (${bin}): ${e.message}`)
+    }
+  }
+  throw new Error('yt-dlp: مفيش مكان يسمح بالتنفيذ على السيرفر')
 }
 
 // كوكيز اختيارية: ملف cookies.txt في جذر المشروع، أو متغير YT_COOKIES على Railway
