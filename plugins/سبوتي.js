@@ -12,6 +12,10 @@ const PAGE_CANDIDATES = [
   'https://spotidown.app/',
 ];
 
+
+// إرسال نص عادي بدون اقتباس الرسالة (بيظهر على الواتس العادي والبيزنس)
+const send = (conn, message, text) => conn.sendMessage(message.chat, { text });
+
 const SYSTEM_NAME = '◜⏤͟͟͞͞ 𝙈𝙤𝙝𝙖𝙗 ✦ 𝙎𝙋𝙊𝙏𝙄𝙁𝙔 ✦ 𝘿𝙊𝙒𝙉𝙇𝙊𝘼𝘿 ˖࣪⃟⛩️ ◞';
 
 function sukunaStyle(title, lines = []) {
@@ -118,19 +122,19 @@ const sendTrackList = async (conn, message, tracks) => {
     `*${i + 1}.* ${t.name} — ${t.artist}${t.duration ? ` (${t.duration})` : ''}`
   ).join('\n');
 
-  await conn.reply(
-    message.chat,
+  await send(
+    conn,
+    message,
     sukunaStyle('🎵 𝑺 𝑷 𝑶 𝑻 𝑰 𝑭 𝒀', [
       `🔢 عدد النتائج : ${tracks.length} أغنية`
-    ]) + '\n\n' + list + '\n\n📌 للتحميل اكتب: *.سبوتي_dl <رقم>*\nمثال: .سبوتي_dl 1',
-    message
+    ]) + '\n\n' + list + '\n\n📌 للتحميل اكتب: *.سبوتي_dl <رقم>*\nمثال: .سبوتي_dl 1'
   );
 };
 
 const downloadAndSend = async (conn, message, track) => {
   const { name, artist, album, duration, cover, extractedData, extractedBase, extractedToken, fields, cookies, referer } = track;
 
-  await conn.reply(message.chat, sukunaStyle('⬇️ 𝑫 𝑶 𝑾 𝑵 𝑳 𝑶 𝑨 𝑫', [
+  await send(conn, message, sukunaStyle('⬇️ 𝑫 𝑶 𝑾 𝑵 𝑳 𝑶 𝑨 𝑫', [
     `جاري تحميل : ${name}`,
     `الفنان      : ${artist}`
   ]), message);
@@ -160,7 +164,7 @@ const downloadAndSend = async (conn, message, track) => {
       timeout: 35000,
     });
   } catch (e) {
-    return conn.reply(message.chat, sukunaStyle('❌ 𝑬 𝑹 𝑹 𝑶 𝑹', [
+    return send(conn, message, sukunaStyle('❌ 𝑬 𝑹 𝑹 𝑶 𝑹', [
       `فشل /action/track : ${e?.response?.status || e.message}`
     ]), message);
   }
@@ -196,7 +200,7 @@ const downloadAndSend = async (conn, message, track) => {
   }
 
   if (!downloadUrl) {
-    return conn.reply(message.chat, sukunaStyle('❌ 𝑬 𝑹 𝑹 𝑶 𝑹', [
+    return send(conn, message, sukunaStyle('❌ 𝑬 𝑹 𝑹 𝑶 𝑹', [
       'فشل استخراج رابط التحميل النهائي'
     ]), message);
   }
@@ -215,14 +219,14 @@ const downloadAndSend = async (conn, message, track) => {
       maxBodyLength:    50 * 1024 * 1024,
     });
   } catch (e) {
-    return conn.reply(message.chat, sukunaStyle('❌ 𝑬 𝑹 𝑹 𝑶 𝑹', [
+    return send(conn, message, sukunaStyle('❌ 𝑬 𝑹 𝑹 𝑶 𝑹', [
       'فشل تحميل الملف الصوتي'
     ]), message);
   }
 
   const contentType = mp3Res.headers['content-type'] || '';
   if (!contentType.includes('audio') && !contentType.includes('octet')) {
-    return conn.reply(message.chat, sukunaStyle('❌ 𝑬 𝑹 𝑹 𝑶 𝑹', [
+    return send(conn, message, sukunaStyle('❌ 𝑬 𝑹 𝑹 𝑶 𝑹', [
       'الرابط لم يُرجع ملفاً صوتياً'
     ]), message);
   }
@@ -241,7 +245,7 @@ const downloadAndSend = async (conn, message, track) => {
           `💿 ${album || '—'}`,
           `⏱️ ${duration || '—'}`
         ])
-      }, { quoted: message });
+      });
     } catch {}
   }
 
@@ -260,7 +264,7 @@ const downloadAndSend = async (conn, message, track) => {
         renderLargerThumbnail: true,
       }
     }
-  }, { quoted: message });
+  });
 };
 
 const handler = async (message, { conn, command, text }) => {
@@ -271,7 +275,7 @@ const handler = async (message, { conn, command, text }) => {
     const index  = parseInt(text?.trim()) - 1;
     const tracks = pendingSelections.get(userId);
     if (!tracks || isNaN(index) || !tracks[index]) {
-      return conn.reply(message.chat, sukunaStyle('⚠️ 𝑬 𝑿 𝑷 𝑰 𝑹 𝑬 𝑫', [
+      return send(conn, message, sukunaStyle('⚠️ 𝑬 𝑿 𝑷 𝑰 𝑹 𝑬 𝑫', [
         'انتهت صلاحية القائمة أو الرقم خاطئ'
       ]), message);
     }
@@ -281,7 +285,7 @@ const handler = async (message, { conn, command, text }) => {
   if (!/^سبوتي$/i.test(command)) return;
 
   if (!text) {
-    return conn.reply(message.chat, sukunaStyle('🎵 𝑺 𝑷 𝑶 𝑻 𝑰 𝑭 𝒀', [
+    return send(conn, message, sukunaStyle('🎵 𝑺 𝑷 𝑶 𝑻 𝑰 𝑭 𝒀', [
       'أرسل رابط أو اسم أغنية',
       'مثال: .سبوتي https://open.spotify.com/track/...',
       'أو: .سبوتي اسم الأغنية'
@@ -293,7 +297,7 @@ const handler = async (message, { conn, command, text }) => {
   if (input.includes('spotify.com/track')) spotifyUrl = input.split('?')[0];
 
   try {
-    await conn.reply(message.chat, sukunaStyle('🔍 𝑺 𝑬 𝑨 𝑹 𝑪 𝑯', [
+    await send(conn, message, sukunaStyle('🔍 𝑺 𝑬 𝑨 𝑹 𝑪 𝑯', [
       'جاري البحث عن الأغنية...'
     ]), message);
 
@@ -319,7 +323,7 @@ const handler = async (message, { conn, command, text }) => {
         timeout: 25000,
       });
     } catch (e) {
-      return conn.reply(message.chat, sukunaStyle('❌ 𝑬 𝑹 𝑹 𝑶 𝑹', [
+      return send(conn, message, sukunaStyle('❌ 𝑬 𝑹 𝑹 𝑶 𝑹', [
         `فشل /action : ${e?.response?.status || e.message}`
       ]), message);
     }
@@ -372,7 +376,7 @@ const handler = async (message, { conn, command, text }) => {
     }
 
     if (tracks.length === 0) {
-      return conn.reply(message.chat, sukunaStyle('❌ 𝑵 𝑶 𝑻  𝑭 𝑶 𝑼 𝑵 𝑫', [
+      return send(conn, message, sukunaStyle('❌ 𝑵 𝑶 𝑻  𝑭 𝑶 𝑼 𝑵 𝑫', [
         'لم يتم العثور على نتائج'
       ]), message);
     }
@@ -393,7 +397,7 @@ const handler = async (message, { conn, command, text }) => {
       status === 403 ? 'تم حظر الطلب (403)'          :
       status === 404 ? 'الأغنية غير موجودة'          :
       err.message    || 'خطأ غير معروف';
-    await conn.reply(message.chat, sukunaStyle('❌ 𝑬 𝑹 𝑹 𝑶 𝑹', [msg]), message);
+    await send(conn, message, sukunaStyle('❌ 𝑬 𝑹 𝑹 𝑶 𝑹', [msg]), message);
   }
 };
 
