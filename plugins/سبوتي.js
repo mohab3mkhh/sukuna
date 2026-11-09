@@ -162,18 +162,33 @@ const downloadAndSend = async (conn, message, track) => {
   }
 
   const trackData = trackRes.data;
+  console.log('[spotidown] track response:', JSON.stringify(trackData).slice(0, 1500));
   let downloadUrl = '';
 
-  if (trackData?.data && typeof trackData.data === 'string') {
-    const $t = cheerio.load(trackData.data);
-    $t('a.abutton').each((_, el) => {
-      const href = $t(el).attr('href') || '';
-      if (href.includes('rapid.spotidown.app') && !downloadUrl) downloadUrl = href;
+  const htmlStr = typeof trackData === 'string'
+    ? trackData
+    : (typeof trackData?.data === 'string' ? trackData.data : '');
+
+  if (htmlStr) {
+    const $t = cheerio.load(htmlStr);
+    $t('a').each((_, el) => {
+      let href = $t(el).attr('href') || '';
+      if (!downloadUrl && /rapid\.spotidown\.app|\.mp3|\/download|\/dl/i.test(href)) {
+        if (href.startsWith('/')) href = 'https://spotidown.app' + href;
+        downloadUrl = href;
+      }
     });
+    if (!downloadUrl) {
+      const m = htmlStr.match(/https?:\/\/rapid\.spotidown\.app[^"'\s<>\\]+/i);
+      if (m) downloadUrl = m[0];
+    }
   }
 
   if (!downloadUrl && trackData?.token) {
     downloadUrl = `https://rapid.spotidown.app/v2?token=${trackData.token}`;
+  }
+  if (!downloadUrl && (trackData?.url || trackData?.link)) {
+    downloadUrl = trackData.url || trackData.link;
   }
 
   if (!downloadUrl) {
