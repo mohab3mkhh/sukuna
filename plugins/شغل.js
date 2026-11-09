@@ -4,7 +4,6 @@ import { promisify } from 'util'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
-import ffmpegPath from 'ffmpeg-static'
 
 const execFileP = promisify(execFile)
 
@@ -73,16 +72,39 @@ function prepareCookies() {
   return null
 }
 
+// يدور على ffmpeg: ffmpeg-static لو منزّلة، وإلا ffmpeg بتاع السيستم، وإلا null
+async function findFfmpeg() {
+  try {
+    const mod = await import('ffmpeg-static')
+    const p = mod.default || mod
+    if (p && fs.existsSync(p)) return p
+  } catch {}
+  try {
+    await execFileP('ffmpeg', ['-version'], { timeout: 5000 })
+    return 'ffmpeg'
+  } catch {}
+  return null
+}
+
 const ytdlpLocal = video => async () => {
   const bin = await ensureYtdlp()
-  const out = path.join(os.tmpdir(), `yt_${video.id}_${Date.now()}.mp3`)
+  const ffmpeg = await findFfmpeg()
+  const ext = ffmpeg ? 'mp3' : 'm4a'
+  const out = path.join(os.tmpdir(), `yt_${video.id}_${Date.now()}.${ext}`)
   const cookies = prepareCookies()
-  const args = [
-    '-x', '--audio-format', 'mp3', '--audio-quality', '5',
-    '--no-playlist', '--no-warnings', '--max-filesize', '60M',
-    '--ffmpeg-location', ffmpegPath,
-    '-o', out,
-  ]
+  const args = ffmpeg
+    ? [
+        '-x', '--audio-format', 'mp3', '--audio-quality', '5',
+        '--no-playlist', '--no-warnings', '--max-filesize', '60M',
+        '--ffmpeg-location', ffmpeg,
+        '-o', out,
+      ]
+    : [
+        // بدون ffmpeg: نزّل الصوت جاهز m4a من غير تحويل
+        '-f', 'bestaudio[ext=m4a]/bestaudio',
+        '--no-playlist', '--no-warnings', '--max-filesize', '60M',
+        '-o', out,
+      ]
   if (cookies) args.push('--cookies', cookies)
   if (process.env.YT_PROXY) args.push('--proxy', process.env.YT_PROXY)
   args.push(video.url)
@@ -95,7 +117,7 @@ const ytdlpLocal = video => async () => {
       throw new Error('yt-dlp: ' + msg)
     }
     const buffer = fs.readFileSync(out)
-    return { name: 'yt-dlp', buffer, mimetype: 'audio/mpeg' }
+    return { name: 'yt-dlp', buffer, mimetype: ffmpeg ? 'audio/mpeg' : 'audio/mp4' }
   } finally {
     try { fs.unlinkSync(out) } catch {}
     if (cookies) { try { fs.unlinkSync(cookies) } catch {} }
