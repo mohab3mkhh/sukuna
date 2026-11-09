@@ -35,7 +35,7 @@ let handler = async (m, { conn }) => {
 
         const buffer = Buffer.from(res.data);
         const contentType = String(res.headers?.['content-type'] || '').toLowerCase();
-        const caption = `${emoji} *${title}*\n\n> 么⃝𝑮𝑬𝑶 𝑩𝑶𝑻 • 18+`;
+        const caption = `${emoji} *${title}*\n\n> 么⃝Sukuna 𝑩𝑶𝑻 • 18+`;
 
         let mediaUrl = null;
         try {
