@@ -1,97 +1,93 @@
-import { format } from 'util'
-//import db from '../lib/database.js'
+const parseMention = (text = '') =>
+    [...String(text).matchAll(/@([0-9]{5,16})/g)].map(v => v[1] + '@s.whatsapp.net')
 
-let debugMode = !1
+let handler = m => m
 
-let winScore = 4999
-let playScore = 99
+handler.before = async function (m, { conn }) {
+    try {
+        conn.game = conn.game ? conn.game : {}
 
-export async function before(m) {
-    let ok
-    let isWin = !1
-    let isTie = !1
-    let isSurrender = !1
-    this.game = this.game ? this.game : {}
-    let room = Object.values(this.game).find(room => room.id && room.game && room.state && room.id.startsWith('tictactoe') && [room.game.playerX, room.game.playerO].includes(m.sender) && room.state == 'PLAYING')
-    if (room) {
-        // m.reply(`[DEBUG]\n${parseInt(m.text)}`)
-        if (!/^([1-9]|(me)?nyerah|surr?ender)$/i.test(m.text))
-            return !0
-        isSurrender = !/^[1-9]$/.test(m.text)
-        if (m.sender !== room.game.currentTurn) { // nek wayahku
-            if (!isSurrender)
-                return !0
+        let room = Object.values(conn.game).find(room =>
+            room.id && room.game && room.state === 'PLAYING' &&
+            room.id.startsWith('tictactoe') &&
+            [room.game.playerX, room.game.playerO].includes(m.sender)
+        )
+        if (!room) return true
+
+        let text = (m.text || '').trim().toLowerCase()
+        if (!text) return true
+
+        // انسحاب
+        if (/^(surrender|give up|انسحب)$/i.test(text)) {
+            let winner = m.sender === room.game.playerX ? room.game.playerO : room.game.playerX
+            let msg = `@${m.sender.split('@')[0]} انسحب، والفايز @${winner.split('@')[0]} 🏆`
+            let mentions = parseMention(msg)
+            await conn.sendMessage(room.x, { text: msg, mentions })
+            if (room.o && room.o !== room.x) await conn.sendMessage(room.o, { text: msg, mentions })
+            delete conn.game[room.id]
+            return true
         }
-        if (debugMode)
-            m.reply('[DEBUG]\n' + require('util').format({
-                isSurrender,
-                text: m.text
-            }))
-        if (!isSurrender && 1 > (ok = room.game.turn(m.sender === room.game.playerO, parseInt(m.text) - 1))) {
-            m.reply({
-                '-3': 'The game is over',
-                '-2': 'Inválid',
-                '-1': 'Position inválid',
-                0: 'Position inválid',
-            }[ok])
-            return !0
+
+        // لازم رقم من 1 لـ 9
+        if (!/^[1-9]$/.test(text)) return true
+
+        // لازم يكون دوره
+        if (m.sender !== room.game.currentTurn) return true
+
+        let ok = room.game.turn(m.sender === room.game.playerO, parseInt(text) - 1)
+
+        if (ok < 1) {
+            let err = {
+                '-3': 'اللعبة خلصت',
+                '-2': 'حركة غلط',
+                '-1': 'الخانة دي مش متاحة',
+                '0': 'الخانة دي مش متاحة',
+            }[ok]
+            await conn.sendMessage(m.chat, { text: `❌ ${err}` })
+            return true
         }
-        if (m.sender === room.game.winner)
-            isWin = true
-        else if (room.game.board === 511)
-            isTie = true
-        let arr = room.game.render().map(v => {
-            return {
-                X: '❎',
-                O: '⭕',
-                1: '1️⃣',
-                2: '2️⃣',
-                3: '3️⃣',
-                4: '4️⃣',
-                5: '5️⃣',
-                6: '6️⃣',
-                7: '7️⃣',
-                8: '8️⃣',
-                9: '9️⃣',
-            }[v]
-        })
-        if (isSurrender) {
-            room.game._currentTurn = m.sender === room.game.playerX
-            isWin = true
-        }
-        let winner = isSurrender ? room.game.currentTurn : room.game.winner
+
+        let winner = room.game.winner
+        let isTie = room.game.board === 511
+
+        let arr = room.game.render().map(v => ({
+            X: '❎', O: '⭕',
+            1: '1️⃣', 2: '2️⃣', 3: '3️⃣',
+            4: '4️⃣', 5: '5️⃣', 6: '6️⃣',
+            7: '7️⃣', 8: '8️⃣', 9: '9️⃣',
+        }[v]))
+
+        let status = winner
+            ? `🏆 @${winner.split('@')[0]} فاز! الجائزة 4999 اكس بي`
+            : isTie
+                ? `🤝 تعادل`
+                : `دور @${room.game.currentTurn.split('@')[0]}`
+
         let str = `
-${isWin ? `@${winner.split('@')[0]} انت الفائز 🎉 *+${winScore} XP*` : isTie ? `انتهت اللعبة, بالتعادل *+${playScore} XP*` : `لقد حان دورك ${['❎', '⭕'][1 * room.game._currentTurn]} (@${room.game.currentTurn.split('@')[0]})`} 
+${status}
 
 ${arr.slice(0, 3).join('')}
 ${arr.slice(3, 6).join('')}
 ${arr.slice(6).join('')}
 
-▩ *اللاعب 1* ❎ : @${room.game.playerX.split('@')[0]} 
-▩ *اللاعب 2* ⭕ : @${room.game.playerO.split('@')[0]}
-
-اكتب *surrender* للانسحاب 
+▢ *Room ID* ${room.id}
 `.trim()
-        let users = global.global.db.data.users
-        if ((room.game._currentTurn ^ isSurrender ? room.x : room.o) !== m.chat)
-            room[room.game._currentTurn ^ isSurrender ? 'x' : 'o'] = m.chat
-        const btn = isTie ? ['TicTacToe', '/ttt'] : ['Surrender', 'surrender']
-        if (room.x !== room.o)
-            await this.reply(room.x, str, m, {
-                mentions: this.parseMention(str)
-            })
-            await this.reply(room.o, str, m, {
-            mentions: this.parseMention(str)
-        })
-        if (isTie || isWin) {
-            users[room.game.playerX].exp += playScore
-            users[room.game.playerO].exp += playScore
-            if (isWin)
-                users[winner].exp += winScore - playScore
-            if (debugMode)
-                m.reply('[DEBUG]\n' + format(room))
-            delete this.game[room.id]
+
+        let mentions = parseMention(str)
+
+        if (room.x !== room.o) await conn.sendMessage(room.x, { text: str, mentions })
+        await conn.sendMessage(room.o, { text: str, mentions })
+
+        if (winner) {
+            // لو عندك نظام اكس بي عدله هنا
+            try { global.db.data.users[winner].exp += 4999 } catch {}
         }
+
+        if (winner || isTie) delete conn.game[room.id]
+    } catch (e) {
+        console.error('TTT MOVE ERROR:', e)
     }
-    return !0
+    return true
 }
+
+module.exports = handler
