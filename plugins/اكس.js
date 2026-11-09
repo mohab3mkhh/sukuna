@@ -5,68 +5,84 @@ const reply = (conn, chat, text, quoted, mentions) =>
 
 let handler = async (m, { conn, usedPrefix, command, text }) => {
     conn.game = conn.game ? conn.game : {}
-    if (Object.values(conn.game).find(room => room.id.startsWith('tictactoe') && [room.game.playerX, room.game.playerO].includes(m.sender)))
-        throw `❏ انت ماذلت في الجيم, لحذف الجيم اكتب : *${usedPrefix}حذففف*`
-    if (!text) throw `✳️ اختر رقم الغرفه`
 
-    let room = Object.values(conn.game).find(room => room.state === 'WAITING' && (text ? room.name === text : true))
+    // لو اللاعب في جيم قائم
+    if (Object.values(conn.game).find(room =>
+        room.id.startsWith('tictactoe') &&
+        [room.game.playerX, room.game.playerO].includes(m.sender)
+    )) throw `❏ انت ماذلت في الجيم، لحذف الجيم اكتب : *${usedPrefix}حذف_لعبه*`
+
+    if (!text) throw `✳️ اختر رقم الغرفة أو اسمها`
+
+    // دور على غرفة منتظرة باسم معين
+    let room = Object.values(conn.game).find(room =>
+        room.id.startsWith('tictactoe') &&
+        room.state === 'WAITING' &&
+        room.name === text
+    )
+
+    const renderBoard = (game) => game.render().map(v => ({
+        X: '❎', O: '⭕',
+        1: '1️⃣', 2: '2️⃣', 3: '3️⃣',
+        4: '4️⃣', 5: '5️⃣', 6: '6️⃣',
+        7: '7️⃣', 8: '8️⃣', 9: '9️⃣',
+    }[v]))
 
     if (room) {
-        await reply(conn, m.chat, '*تم ايجاد الشخص الاخر*', m)
+        // لقى غرفة → اللاعب التاني يدخل كـ O
         room.o = m.chat
         room.game.playerO = m.sender
         room.state = 'PLAYING'
-        let arr = room.game.render().map(v => {
-            return {
-                X: '❎',
-                O: '⭕',
-                1: '1️⃣',
-                2: '2️⃣',
-                3: '3️⃣',
-                4: '4️⃣',
-                5: '5️⃣',
-                6: '6️⃣',
-                7: '7️⃣',
-                8: '8️⃣',
-                9: '9️⃣',
-            }[v]
-        })
+
+        let arr = renderBoard(room.game)
         let str = `
-انتظر @${room.game.currentTurn.split('@')[0]} هو اللاعب الاول
+✅ *تم بدء اللعبة!*
+
+@${room.game.currentTurn.split('@')[0]} ابدأ أنت (❎)
 
 ${arr.slice(0, 3).join('')}
 ${arr.slice(3, 6).join('')}
 ${arr.slice(6).join('')}
 
-▢ *Room ID* ${room.id}
+▢ *Room ID:* ${room.name || room.id}
 
 ❏ *القوانين*
-‣ اصنع 3 صفوف من الرموز عموديا, أفقيا او انحرافي للفوز ‣ اكتب *surrender* للانسحاب
+‣ اصنع 3 صفوف من الرموز عموديًا أو أفقيًا أو قطريًا للفوز
+‣ اكتب رقم من 1-9 لتضع رمزك
+‣ اكتب *surrender* للانسحاب
 `.trim()
         const mentions = conn.parseMention(str)
         if (room.x !== room.o) await reply(conn, room.x, str, m, mentions)
         await reply(conn, room.o, str, m, mentions)
+
     } else {
-        room = {
+        // إنشاء غرفة جديدة — اللاعب الأول هو X
+        let newRoom = {
             id: 'tictactoe-' + (+new Date),
+            name: text,
             x: m.chat,
             o: '',
-            game: new TicTacToe(m.sender, 'o'),
+            game: new TicTacToe(m.sender, 'x'),  // ← المهم: 'x' مش 'o'
             state: 'WAITING'
         }
-        if (text) room.name = text
+        newRoom.game.playerX = m.sender  // ← تأكيد تسجيل اللاعب الأول
 
-        const waitMsg = `❏ *توقع الشريك*\nاكتب الامر التالي للدخول في نفس الجيم
-❏ *${usedPrefix + command} ${text}*
+        const waitMsg = `
+❏ *تم إنشاء الغرفة!*
+▢ *Room ID:* ${text}
 
-❏ *الجائزه: 4999* اكس بي`
+انتظر شريك يكتب:
+*${usedPrefix + command} ${text}*
 
-        await reply(conn, m.chat, waitMsg, m, conn.parseMention(text))
-        conn.game[room.id] = room
+❏ *الجائزة: 4999 اكس بي*
+`.trim()
+
+        await reply(conn, m.chat, waitMsg, m)
+        conn.game[newRoom.id] = newRoom
     }
 }
 
-handler.help = ['tictactoe <tag number>']
+handler.help = ['xo <room_name>']
 handler.tags = ['game']
 handler.command = ['tictactoe', 'ttc', 'اكس', 'xo']
 
