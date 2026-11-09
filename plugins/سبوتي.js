@@ -1,11 +1,16 @@
 import axios from 'axios';
 import * as cheerio from 'cheerio';
 import FormData from 'form-data';
-import pkg from 'angularsockets';
-const { generateWAMessageFromContent, proto, prepareWAMessageMedia } = pkg;
 
 const UA = 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Mobile Safari/537.36';
 const LIST_IMAGE = 'https://files.catbox.moe/i6q798.jpg';
+
+// الموقع غيّر رابط الصفحة (ar4 → ar5)، فبنجرب أكتر من رابط
+const PAGE_CANDIDATES = [
+  'https://spotidown.app/ar5',
+  'https://spotidown.app/en7',
+  'https://spotidown.app/',
+];
 
 const SYSTEM_NAME = '◜⏤͟͟͞͞ 𝙈𝙤𝙝𝙖𝙗 ✦ 𝙎𝙋𝙊𝙏𝙄𝙁𝙔 ✦ 𝘿𝙊𝙒𝙉𝙇𝙊𝘼𝘿 ˖࣪⃟⛩️ ◞';
 
@@ -30,73 +35,86 @@ const setPendingWithTimeout = (userId, tracks) => {
   pendingTimeouts.set(userId, t);
 };
 
-const sendTrackList = async (conn, message, tracks) => {
-  const rows = tracks.map((t, i) => ({
-    header:      `🎵 ${i + 1}`,
-    title:       (t.name || 'Unknown').substring(0, 50),
-    description: `👤 ${t.artist || ''}${t.duration ? `  •  ⏱️ ${t.duration}` : ''}`,
-    id:          `.سبوتي_dl ${i + 1}`
-  }));
+// ═══ استخراج الـ CSRF من الصفحة ═══
+const extractToken = (html) => {
+  if (!html) return { field: '', value: '' };
+  const $ = cheerio.load(html);
+  const excluded = ['url', 'g-recaptcha-response', 'no-name'];
 
-  try {
-    const media = await prepareWAMessageMedia(
-      { image: { url: LIST_IMAGE } },
-      { upload: conn.waUploadToServer }
-    );
+  // الأول ندور جوه الفورم اللي فيه حقل url، لو مش لاقيه ندور في الصفحة كلها
+  const form = $('input[name="url"]').first().closest('form');
+  const scope = form.length ? form : $('body');
 
-    const msg = generateWAMessageFromContent(message.chat, {
-      viewOnceMessage: {
-        message: {
-          interactiveMessage: proto.Message.InteractiveMessage.create({
-            body: proto.Message.InteractiveMessage.Body.create({
-              text: sukunaStyle('🎵 𝑺 𝑷 𝑶 𝑻 𝑰 𝑭 𝒀', [
-                `🔢 عدد النتائج : ${tracks.length} أغنية`,
-                `📌 اضغط الزر أدناه لاختيار أغنية`
-              ])
-            }),
-            header: proto.Message.InteractiveMessage.Header.create({
-              hasMediaAttachment: true,
-              imageMessage: media.imageMessage
-            }),
-            footer: proto.Message.InteractiveMessage.Footer.create({
-              text: SYSTEM_NAME
-            }),
-            nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.create({
-              buttons: [{
-                name: 'single_select',
-                buttonParamsJson: JSON.stringify({
-                  title: '🎵 اختر أغنية للتحميل',
-                  sections: [{
-                    title: `✨ ${tracks.length} أغنية متاحة`,
-                    rows
-                  }]
-                })
-              }]
-            })
-          })
+  let field = '', value = '';
+  scope.find('input[type="hidden"]').each((_, el) => {
+    const name = $(el).attr('name') || '';
+    const val  = $(el).val() || '';
+    if (name && !excluded.includes(name) && val) {
+      field = name;
+      value = val;
+    }
+  });
+  return { field, value };
+};
+
+// ═══ فتح جلسة مع الموقع (كوكيز + توكن) ═══
+const getSession = async () => {
+  let lastInfo = '';
+
+  for (const pageUrl of PAGE_CANDIDATES) {
+    try {
+      const res = await axios.get(pageUrl, {
+        headers: {
+          'User-Agent': UA,
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+          'Accept-Language': 'ar-EG,ar;q=0.9,en-US;q=0.8,en;q=0.7',
+        },
+        timeout: 30000,
+        maxRedirects: 5,
+      });
+
+      const html = typeof res.data === 'string' ? res.data : '';
+      const referer = res.request?.res?.responseUrl || pageUrl;
+      const { field, value } = extractToken(html);
+
+      if (value) {
+        let cookies = '';
+        const raw = res.headers['set-cookie'];
+        if (raw) {
+          cookies = (Array.isArray(raw) ? raw : [raw]).map(c => c.split(';')[0]).join('; ');
         }
+        return { cookies, csrfFieldName: field, csrfToken: value, referer };
       }
-    }, { userJid: message.sender });
 
-    await conn.relayMessage(message.chat, msg.message, { messageId: msg.key.id });
-
-  } catch (e) {
-    console.error('[sendTrackList]', e.message);
-    const text = tracks.map((t, i) =>
-      `*${i + 1}.* ${t.name} — ${t.artist}${t.duration ? ` (${t.duration})` : ''}`
-    ).join('\n');
-    await conn.reply(
-      message.chat,
-      sukunaStyle('🎵 𝑺 𝑷 𝑶 𝑻 𝑰 𝑭 𝒀', [
-        `🔢 عدد النتائج : ${tracks.length} أغنية`
-      ]) + '\n\n' + text + '\n\nرد بـ: `.سبوتي_dl <رقم>`',
-      message
-    );
+      const blocked = /cloudflare|just a moment|challenge|captcha/i.test(html);
+      lastInfo = `${pageUrl} → HTTP ${res.status}, ${html.length} bytes${blocked ? ' (حماية ضد السيرفر)' : ''}`;
+      console.log('[spotidown] no token:', lastInfo, '|', html.slice(0, 200).replace(/\s+/g, ' '));
+    } catch (e) {
+      lastInfo = `${pageUrl} → ${e?.response?.status || e.message}`;
+      console.log('[spotidown] page fail:', lastInfo);
+    }
   }
+
+  throw new Error('NO_TOKEN: ' + lastInfo);
+};
+
+// ═══ قائمة النتائج كنص (بتظهر على الواتس العادي والبيزنس) ═══
+const sendTrackList = async (conn, message, tracks) => {
+  const list = tracks.map((t, i) =>
+    `*${i + 1}.* ${t.name} — ${t.artist}${t.duration ? ` (${t.duration})` : ''}`
+  ).join('\n');
+
+  await conn.reply(
+    message.chat,
+    sukunaStyle('🎵 𝑺 𝑷 𝑶 𝑻 𝑰 𝑭 𝒀', [
+      `🔢 عدد النتائج : ${tracks.length} أغنية`
+    ]) + '\n\n' + list + '\n\n📌 للتحميل اكتب: *.سبوتي_dl <رقم>*\nمثال: .سبوتي_dl 1',
+    message
+  );
 };
 
 const downloadAndSend = async (conn, message, track) => {
-  const { name, artist, album, duration, cover, extractedData, extractedBase, extractedToken, cookies } = track;
+  const { name, artist, album, duration, cover, extractedData, extractedBase, extractedToken, cookies, referer } = track;
 
   await conn.reply(message.chat, sukunaStyle('⬇️ 𝑫 𝑶 𝑾 𝑵 𝑳 𝑶 𝑨 𝑫', [
     `جاري تحميل : ${name}`,
@@ -115,7 +133,7 @@ const downloadAndSend = async (conn, message, track) => {
         ...form2.getHeaders(),
         'User-Agent': UA,
         'Origin': 'https://spotidown.app',
-        'Referer': 'https://spotidown.app/ar4',
+        'Referer': referer || 'https://spotidown.app/ar5',
         'Accept': 'application/json, text/javascript, */*; q=0.01',
         'Accept-Language': 'ar-EG,ar;q=0.9,en-US;q=0.8,en;q=0.7',
         'X-Requested-With': 'XMLHttpRequest',
@@ -215,25 +233,7 @@ const downloadAndSend = async (conn, message, track) => {
 const handler = async (message, { conn, command, text }) => {
   const userId = message.sender || message.key?.participant || message.key?.remoteJid;
 
-  const nativeId = message?.message?.interactiveResponseMessage
-                            ?.nativeFlowResponseMessage?.paramsJson;
-  if (nativeId) {
-    try {
-      const parsed = JSON.parse(nativeId);
-      const id = parsed?.id || '';
-      if (id.startsWith('.سبوتي_dl ')) {
-        const index  = parseInt(id.replace('.سبوتي_dl ', '')) - 1;
-        const tracks = pendingSelections.get(userId);
-        if (!tracks || !tracks[index]) {
-          return conn.reply(message.chat, sukunaStyle('⚠️ 𝑬 𝑿 𝑷 𝑰 𝑹 𝑬 𝑫', [
-            'انتهت صلاحية القائمة، ابحث مجدداً'
-          ]), message);
-        }
-        return downloadAndSend(conn, message, tracks[index]);
-      }
-    } catch {}
-  }
-
+  // اختيار أغنية من القائمة: .سبوتي_dl <رقم>
   if (/^سبوتي_dl$/i.test(command)) {
     const index  = parseInt(text?.trim()) - 1;
     const tracks = pendingSelections.get(userId);
@@ -264,50 +264,7 @@ const handler = async (message, { conn, command, text }) => {
       'جاري البحث عن الأغنية...'
     ]), message);
 
-    let initialRes;
-    try {
-      initialRes = await axios.get('https://spotidown.app/ar4', {
-        headers: {
-          'User-Agent': UA,
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-          'Accept-Language': 'ar-EG,ar;q=0.9,en-US;q=0.8,en;q=0.7',
-        },
-        timeout: 30000,
-        maxRedirects: 5,
-      });
-    } catch (e) {
-      return conn.reply(message.chat, sukunaStyle('❌ 𝑬 𝑹 𝑹 𝑶 𝑹', [
-        'فشل الاتصال الأولي بالموقع'
-      ]), message);
-    }
-
-    const pageHtml   = initialRes.data || '';
-    let cookies      = '';
-    const rawCookies = initialRes.headers['set-cookie'];
-    if (rawCookies) {
-      cookies = (Array.isArray(rawCookies) ? rawCookies : [rawCookies])
-        .map(c => c.split(';')[0]).join('; ');
-    }
-
-    let csrfToken = '', csrfFieldName = '';
-    if (pageHtml) {
-      const $ = cheerio.load(pageHtml);
-      const excluded = ['url', 'g-recaptcha-response', 'no-name'];
-      $('input[type="hidden"]').each((_, el) => {
-        const name = $(el).attr('name') || '';
-        const val  = $(el).val()  || '';
-        if (name && !excluded.includes(name) && val) {
-          csrfFieldName = name;
-          csrfToken     = val;
-        }
-      });
-    }
-
-    if (!csrfToken) {
-      return conn.reply(message.chat, sukunaStyle('❌ 𝑬 𝑹 𝑹 𝑶 𝑹', [
-        'لم يتم العثور على CSRF Token'
-      ]), message);
-    }
+    const { cookies, csrfFieldName, csrfToken, referer } = await getSession();
 
     const form1 = new FormData();
     form1.append('url', spotifyUrl);
@@ -321,7 +278,7 @@ const handler = async (message, { conn, command, text }) => {
           ...form1.getHeaders(),
           'User-Agent': UA,
           'Origin': 'https://spotidown.app',
-          'Referer': 'https://spotidown.app/ar4',
+          'Referer': referer,
           'Accept': 'application/json, text/javascript, */*; q=0.01',
           'X-Requested-With': 'XMLHttpRequest',
           ...(cookies ? { Cookie: cookies } : {}),
@@ -360,6 +317,7 @@ const handler = async (message, { conn, command, text }) => {
           extractedBase: extractedBase || spotifyUrl,
           extractedToken,
           cookies,
+          referer,
         });
       });
     }
@@ -381,6 +339,7 @@ const handler = async (message, { conn, command, text }) => {
     console.error('[spoti handler]', err);
     const status = err?.response?.status;
     const msg =
+      err.message?.startsWith('NO_TOKEN') ? 'مش قادر أفتح صفحة الموقع (ممكن يكون حاطط حماية ضد السيرفر أو غيّر شكله)' :
       status === 429 ? 'تم تجاوز الحد، انتظر دقيقة' :
       status === 403 ? 'تم حظر الطلب (403)'          :
       status === 404 ? 'الأغنية غير موجودة'          :
@@ -390,7 +349,6 @@ const handler = async (message, { conn, command, text }) => {
 };
 
 handler.command = /^(سبوتي|سبوتي_dl)$/i;
-handler.all      = true;
-handler.group    = false;
+handler.group   = false;
 
 export default handler;
