@@ -128,7 +128,7 @@ const sendTrackList = async (conn, message, tracks) => {
 };
 
 const downloadAndSend = async (conn, message, track) => {
-  const { name, artist, album, duration, cover, extractedData, extractedBase, extractedToken, cookies, referer } = track;
+  const { name, artist, album, duration, cover, extractedData, extractedBase, extractedToken, fields, cookies, referer } = track;
 
   await conn.reply(message.chat, sukunaStyle('⬇️ 𝑫 𝑶 𝑾 𝑵 𝑳 𝑶 𝑨 𝑫', [
     `جاري تحميل : ${name}`,
@@ -136,9 +136,13 @@ const downloadAndSend = async (conn, message, track) => {
   ]), message);
 
   const form2 = new FormData();
-  form2.append('data',  extractedData);
-  form2.append('base',  extractedBase);
-  form2.append('token', extractedToken);
+  if (fields && Object.keys(fields).length) {
+    for (const [k, v] of Object.entries(fields)) form2.append(k, v);
+  } else {
+    form2.append('data',  extractedData);
+    form2.append('base',  extractedBase);
+    form2.append('token', extractedToken);
+  }
 
   let trackRes;
   try {
@@ -323,6 +327,14 @@ const handler = async (message, { conn, command, text }) => {
     const actionData = actionRes.data;
     const tracks = [];
 
+    // دمج الكوكيز اللي رجعت من /action مع كوكيز الصفحة
+    let allCookies = cookies;
+    const setCk = actionRes.headers['set-cookie'];
+    if (setCk) {
+      const extra = (Array.isArray(setCk) ? setCk : [setCk]).map(c => c.split(';')[0]).join('; ');
+      allCookies = [cookies, extra].filter(Boolean).join('; ');
+    }
+
     if (actionData?.data && typeof actionData.data === 'string') {
       const $a = cheerio.load(actionData.data);
       $a('form[name="submitspurl"]').each((_, formEl) => {
@@ -330,6 +342,13 @@ const handler = async (message, { conn, command, text }) => {
         const extractedBase  = $a(formEl).find('input[name="base"]').val()  || '';
         const extractedToken = $a(formEl).find('input[name="token"]').val() || '';
         if (!extractedData || !extractedToken) return;
+
+        const fields = {};
+        $a(formEl).find('input').each((_, inp) => {
+          const n = $a(inp).attr('name');
+          if (n) fields[n] = $a(inp).attr('value') || '';
+        });
+        console.log('[spotidown] result form fields:', Object.keys(fields).join(', '));
 
         let info = {};
         try {
@@ -345,7 +364,8 @@ const handler = async (message, { conn, command, text }) => {
           extractedData,
           extractedBase: extractedBase || spotifyUrl,
           extractedToken,
-          cookies,
+          fields,
+          cookies: allCookies,
           referer,
         });
       });
