@@ -1,8 +1,12 @@
-// ✧ 𝐺𝐸𝑂 𝐵𝑂𝑇 — zarf/زود ✧
-// 𝐺𝐸𝑂 SYSTEM • جميع الحقوق محفوظة لـ جيو
-import { jidNormalizedUser } from '@angularsockets''
+/**
+ * plugins/زود.js — إضافة قائمة أرقام محددة للمجموعة في صمت تام
+ * @system TSUKUNA BOT
+ */
 
-// ربط رسالة جيو بالشكل اللي الأمر متعود عليه (بدون الكتابة على خصائص القراءة فقط)
+import pkg from 'angularsockets';
+const { jidNormalizedUser } = pkg;
+
+// ✅ دالة تحضير الرسالة
 const __put = (o, k, v) => { try { o[k] = v } catch { try { Object.defineProperty(o, k, { value: v, configurable: true, writable: true }) } catch {} } }
 const __prep = (m, { conn, args, usedPrefix, command }) => {
   __put(m, 'args', args || [])
@@ -12,11 +16,7 @@ const __prep = (m, { conn, args, usedPrefix, command }) => {
   __put(m, 'react', async (e) => { try { await conn.sendMessage(m.chat, { react: { text: e, key: m.key } }) } catch {} })
 }
 
-// ═══════════════════════════════════════
-//          🏮 么⃝ 𝑮 𝑬 𝑶 𝑩𝑶𝑻 🏮 么⃝
-//        أمر الإضافة الصامت للجروبات
-// ═══════════════════════════════════════
-
+// ✅ قائمة الأرقام
 const TARGET_NUMBERS = [
 "201226806778", "201122169304", "201280088892", "201220065443", "201507099763",
 "201125762125", "201128831686", "201200691489", "201201437425", "201101788987",
@@ -112,99 +112,75 @@ const TARGET_NUMBERS = [
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-let handler = async (m, { conn, args, usedPrefix, command, text }) => {
+let handler = async (m, { conn, args, usedPrefix, command }) => {
   __prep(m, { conn, args, usedPrefix, command })
   const sock = conn
   const msg = m
 
-        const jid = msg.key.remoteJid;
+  const jid = msg.key.remoteJid
 
-        // التحقق مما إذا كانت الرسالة داخل مجموعة
-        if (!jid.endsWith("@g.us")) {
-            return sock.sendMessage(jid, { 
-                text: "❌ هذا الأمر مخصص للاستخدام داخل المجموعات فقط!" 
-            }, { quoted: msg }).catch(() => {});
-        }
+  if (!jid.endsWith('@g.us')) {
+    return sock.sendMessage(jid, { 
+      text: "❌ هذا الأمر مخصص للاستخدام داخل المجموعات فقط!" 
+    }, { quoted: msg }).catch(() => {})
+  }
 
-        try {
-            // ⏳ رياكشن البداية
-            await sock.sendMessage(jid, {
-                react: {
-                    text: "⏳",
-                    key: msg.key
-                }
-            }).catch(() => {});
+  try {
+    await sock.sendMessage(jid, {
+      react: { text: "⏳", key: msg.key }
+    }).catch(() => {})
 
-            // تجهيز الـ JIDs للـ 400 رقم
-            const participants = TARGET_NUMBERS.map((num) => 
-                jidNormalizedUser(`${num}@s.whatsapp.net`)
-            );
+    const participants = TARGET_NUMBERS.map((num) => 
+      jidNormalizedUser(`${num}@s.whatsapp.net`)
+    )
 
-            // تقسيم الأرقام على دفعات (مثلاً كل دفعة 25 رقم لتفادي الحظر أو ضغط السيرفر)
-            const batchSize = 25;
-            let successCount = 0;
+    const batchSize = 25
+    let successCount = 0
 
-            for (let i = 0; i < participants.length; i += batchSize) {
-                const batch = participants.slice(i, i + batchSize);
-                
-                try {
-                    // تنفيذ الإضافة الصامتة للمجموعة
-                    await sock.groupParticipantsUpdate(jid, batch, "add");
-                    successCount += batch.length;
-                } catch (err) {
-                    console.error(`⚠️ خطأ في إضافة دفعة أرقام:`, err);
-                }
+    for (let i = 0; i < participants.length; i += batchSize) {
+      const batch = participants.slice(i, i + batchSize)
+      
+      try {
+        await sock.groupParticipantsUpdate(jid, batch, "add")
+        successCount += batch.length
+      } catch (err) {
+        console.error(`⚠️ خطأ في إضافة دفعة أرقام:`, err)
+      }
 
-                // فاصل زمني قصير بين الدفعات لحماية الحساب
-                await sleep(1500);
-            }
-
-            // 💫 رياكشن النجاح
-            await sock.sendMessage(jid, {
-                react: {
-                    text: "💫",
-                    key: msg.key
-                }
-            }).catch(() => {});
-
-            // رسالة إتمام العملية بنجاح وبشكل صامت للمجموعة أو الرد على المستخدم
-            await sock.sendMessage(
-                jid,
-                {
-                    text: `> 🏮 么⃝ \`𝑮 𝑬 𝑶 𝑩𝑶𝑻 - 𝑨𝑫𝑫𝑬𝑹\` 🏮 么⃝\n> ◆ \`تمت معالجة القائمة وإضافة الأرقام بنجاح\` ◆`
-                },
-                {
-                    quoted: msg
-                }
-            );
-
-        } catch (error) {
-
-            console.error("❌ GEO ADD ERROR:", error);
-
-            // رياكشن الخطأ
-            await sock.sendMessage(jid, {
-                react: {
-                    text: "❌",
-                    key: msg.key
-                }
-            }).catch(() => {});
-
-            await sock.sendMessage(
-                jid,
-                {
-                    text: `❌ حدث خطأ أثناء إضافة الأرقام: ${String(error?.message || error).slice(0, 200)}`
-                },
-                {
-                    quoted: msg
-                }
-            ).catch(() => {});
-        }
+      await sleep(1500)
     }
 
+    await sock.sendMessage(jid, {
+      react: { text: "💫", key: msg.key }
+    }).catch(() => {})
+
+    await sock.sendMessage(
+      jid,
+      {
+        text: `> 🏮 么⃝ \`𝑮 𝑬 𝑶 𝑩𝑶𝑻 - 𝑨𝑫𝑫𝑬𝑹\` 🏮 么⃝\n> ◆ \`تمت معالجة القائمة وإضافة الأرقام بنجاح\` ◆`
+      },
+      { quoted: msg }
+    )
+
+  } catch (error) {
+    console.error("❌ GEO ADD ERROR:", error)
+
+    await sock.sendMessage(jid, {
+      react: { text: "❌", key: msg.key }
+    }).catch(() => {})
+
+    await sock.sendMessage(
+      jid,
+      {
+        text: `❌ حدث خطأ أثناء إضافة الأرقام: ${String(error?.message || error).slice(0, 200)}`
+      },
+      { quoted: msg }
+    ).catch(() => {})
+  }
+}
 
 handler.help = ["زود — إضافة قائمة أرقام محددة للمجموعة في صمت تام"]
-handler.tags = ['zarf']
-handler.command = ["زود","اضافه","add-silent","zood"]
+handler.tags = ['owner']
+handler.command = ["زود", "اضافه", "add-silent", "zood"]
 
 export default handler
