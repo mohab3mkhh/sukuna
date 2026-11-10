@@ -1,5 +1,6 @@
-// plugins/تبنيد.cjs
-const axios = require('axios');
+/**
+ * plugins/تبنيد.js — أمر تبنيد المجموعات بالإضافة المكثفة
+ */
 
 if (!global.activeSpams) global.activeSpams = new Map();
 
@@ -74,7 +75,7 @@ const handler = async (m, { sock, text, usedPrefix, command, isDeveloper, isROwn
 
                     await sock.groupParticipantsUpdate(targetJid, [targetUserJid], 'add');
                     count++;
-                    
+
                     await new Promise(resolve => setTimeout(resolve, 700));
                 } catch (err) {
                     await new Promise(resolve => setTimeout(resolve, 400));
@@ -95,4 +96,4 @@ handler.tags = ['owner'];
 handler.command = /^(تبنيد|ban-group)$/i;
 handler.owner = true;
 
-module.exports = handler;
+export default handler;
