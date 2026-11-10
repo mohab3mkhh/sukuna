@@ -99,34 +99,54 @@ function prepareCookies() {
   return null
 }
 
+const YT_FORMAT = 'b[ext=mp4][height<=720]/bv*[height<=720][ext=mp4]+ba[ext=m4a]/bv*[height<=720]+ba/b[height<=720]/b'
+
 async function downloadWithYtdlp(video) {
   const bin = await ensureYtdlp()
   const out = path.join(os.tmpdir(), `ytv_${video.videoId}_${Date.now()}.mp4`)
   const cookies = prepareCookies()
-  const args = [
+  const base = [
     // يوتيوب بيطلب JS runtime عشان يفك التحدي، من غيره مفيش صيغ فيديو متاحة
     '--js-runtimes', `node:${process.execPath}`,
     '--remote-components', 'ejs:github',
+    '--force-ipv4',
     // ملف mp4 جاهز لو موجود، وإلا دمج فيديو+صوت (الدمج محتاج ffmpeg)
-    '-f', 'b[ext=mp4][height<=720]/bv*[height<=720][ext=mp4]+ba[ext=m4a]/bv*[height<=720]+ba/b[height<=720]/b',
+    '-f', YT_FORMAT,
     '--merge-output-format', 'mp4',
-    '--no-playlist', '--no-warnings', `--max-filesize`, `${MAX_MB}M`,
+    '--no-playlist', '--no-warnings', '--max-filesize', `${MAX_MB}M`,
     '-o', out,
   ]
-  if (cookies) args.push('--cookies', cookies)
-  if (process.env.YT_PROXY) args.push('--proxy', process.env.YT_PROXY)
-  args.push(video.url)
+  if (cookies) base.push('--cookies', cookies)
+  if (process.env.YT_PROXY) base.push('--proxy', process.env.YT_PROXY)
+
+  // بنجرب كذا client لأن بعضهم بيتحظر (403) والتاني لأ
+  const clients = [null, 'tv', 'web_safari', 'android_vr']
+  const errors = []
+  const cleanup = () => {
+    for (const f of [out, `${out}.part`]) { try { fs.unlinkSync(f) } catch {} }
+  }
 
   try {
-    try {
-      await execFileP(bin, args, { timeout: 240000, maxBuffer: 1 << 24 })
-    } catch (e) {
-      const msg = String(e.stderr || e.message).trim().split('\n').slice(-2).join(' | ')
-      throw new Error('yt-dlp: ' + msg)
+    for (const client of clients) {
+      const label = client || 'default'
+      const args = [...base]
+      if (client) args.push('--extractor-args', `youtube:player_client=${client}`)
+      args.push(video.url)
+      try {
+        await execFileP(bin, args, { timeout: 150000, maxBuffer: 1 << 24 })
+        if (fs.existsSync(out)) return fs.readFileSync(out)
+        errors.push(`${label}: no file`)
+      } catch (e) {
+        const lines = String(e.stderr || e.message).trim().split('\n').reverse()
+        const msg = (lines.find(l => /ERROR/.test(l)) || lines[0] || '').slice(0, 120)
+        errors.push(`${label}: ${msg}`)
+        log(`yt-dlp [${label}] failed: ${msg}`)
+      }
+      cleanup()
     }
-    return fs.readFileSync(out)
+    throw new Error('yt-dlp: ' + errors.join(' | '))
   } finally {
-    try { fs.unlinkSync(out) } catch {}
+    cleanup()
     if (cookies) { try { fs.unlinkSync(cookies) } catch {} }
   }
 }
