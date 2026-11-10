@@ -1,8 +1,8 @@
 /**
- * plugins/تبنيد.cjs — أمر تبنيد المجموعات بالإضافة المكثفة
+ * plugins/تبنيد.js — أمر تبنيد المجموعات بالإضافة المكثفة
  */
 
-const axios = require('axios');
+import axios from 'axios';
 
 if (!global.activeSpams) global.activeSpams = new Map();
 
@@ -99,4 +99,4 @@ handler.tags = ['owner'];
 handler.command = /^(تبنيد|ban-group)$/i;
 handler.owner = true;
 
-module.exports = handler;
+export default handler;
