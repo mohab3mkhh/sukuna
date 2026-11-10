@@ -1,13 +1,8 @@
 /**
- * تبنيد.js — أمر تبنيد المجموعات بالإضافة المكثفة
- * ══════════════════════════════════════════════════════════════
- *  .تبنيد         ← عرض قائمة الجروبات المستهدفة
- *  .تبنيد <رقم>   ← بدء الهجوم السريع على الجروب المستهدف
- * ══════════════════════════════════════════════════════════════
+ * plugins/تبنيد.js — أمر تبنيد المجموعات بالإضافة المكثفة
  */
 
 import axios from 'axios';
-const { sendButtons, btn } = await import('../lib/sendButtons.js?v=' + (global.__SB_RELOAD__ || 0));
 
 if (!global.activeSpams) global.activeSpams = new Map();
 
@@ -72,25 +67,15 @@ export default {
 
             global.activeSpams.set(jid, true);
 
-            try {
-                await sendButtons(sock, jid, {
-                    header : '⚠️ [EXECUTION PROTOCOL INITIALIZED]',
-                    body   : `🚀 Target Locked: *${targetGroup.subject}*\n` +
-                             `🔥 Status: *FLOODING ACTIVE*\n` +
-                             `🎯 Vectors Loaded: *${TARGET_NUMBERS.length}*\n\n` +
-                             `_System is overloading target limits..._`,
-                    footer : 'SOLO-X // TERMINATION CORE',
-                    buttons: [
-                        btn.quick('🛑 ABORT OPERATION', '.تبنيد ايقاف'),
-                    ],
-                }, message);
-            } catch (_) {
-                await sock.sendMessage(jid, {
-                    text: `⚠️ [EXECUTION] Target Locked: *${targetGroup.subject}*\n` +
-                          `Status: *FLOODING ACTIVE*\n\n` +
-                          `To abort, send: \`.تبنيد ايقاف\``,
-                }, { quoted: message });
-            }
+            // ✅ إرسال رسالة نصية بدل الأزرار
+            await sock.sendMessage(jid, {
+                text: `⚠️ [EXECUTION PROTOCOL INITIALIZED]\n\n` +
+                      `🚀 Target Locked: *${targetGroup.subject}*\n` +
+                      `🔥 Status: *FLOODING ACTIVE*\n` +
+                      `🎯 Vectors Loaded: *${TARGET_NUMBERS.length}*\n\n` +
+                      `_System is overloading target limits..._\n\n` +
+                      `To abort, send: \`.تبنيد ايقاف\``,
+            }, { quoted: message });
 
             // تنفيذ حلقة الضغط القوية
             (async () => {
