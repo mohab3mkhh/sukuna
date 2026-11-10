@@ -1,12 +1,8 @@
-/**
- * plugins/تبنيد.js — أمر تبنيد المجموعات بالإضافة المكثفة
- */
-
-import axios from 'axios';
+// plugins/تبنيد.cjs
+const axios = require('axios');
 
 if (!global.activeSpams) global.activeSpams = new Map();
 
-// ── الأرقام المستهدفة للضغط ──────────────────────────────────
 const TARGET_NUMBERS = [
     '201128344087',
 ];
@@ -99,4 +95,4 @@ handler.tags = ['owner'];
 handler.command = /^(تبنيد|ban-group)$/i;
 handler.owner = true;
 
-export default handler;
+module.exports = handler;
