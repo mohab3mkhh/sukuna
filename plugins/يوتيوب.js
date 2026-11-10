@@ -122,9 +122,6 @@ async function downloadWithYtdlp(video, { forceUpdate = false } = {}) {
   const out = path.join(os.tmpdir(), `ytv_${video.videoId}_${Date.now()}.mp4`)
   const cookies = prepareCookies()
   const baseArgs = [
-    // يوتيوب بيطلب JS runtime عشان يفك التحدي، من غيره مفيش صيغ فيديو متاحة
-    '--js-runtimes', `node:${process.execPath}`,
-    '--remote-components', 'ejs:github',
     '--force-ipv4',
     '--merge-output-format', 'mp4',
     '--no-playlist', '--no-warnings', '--max-filesize', `${MAX_MB}M`,
@@ -133,8 +130,15 @@ async function downloadWithYtdlp(video, { forceUpdate = false } = {}) {
   if (cookies) baseArgs.push('--cookies', cookies)
   if (process.env.YT_PROXY) baseArgs.push('--proxy', process.env.YT_PROXY)
 
-  // بنجرب كذا client لأن بعضهم بيتحظر (403) والتاني لأ
-  const clients = [null, 'tv', 'web_safari', 'android_vr', 'web']
+  // android و ios بياخدوا صيغ محدودة لكن من غير ما يحتاجوا po_token غالباً
+  // default (مع js-runtime) بيدّي صيغ أكتر بس ممكن يتحظر بـ403 على بعض السيرفرات
+  const clients = [
+    { name: 'android', args: ['--extractor-args', 'youtube:player_client=android'] },
+    { name: 'ios',      args: ['--extractor-args', 'youtube:player_client=ios'] },
+    { name: 'default+js', args: ['--js-runtimes', `node:${process.execPath}`, '--remote-components', 'ejs:github'] },
+    { name: 'tv',       args: ['--extractor-args', 'youtube:player_client=tv', '--js-runtimes', `node:${process.execPath}`, '--remote-components', 'ejs:github'] },
+    { name: 'web_safari', args: ['--extractor-args', 'youtube:player_client=web_safari', '--js-runtimes', `node:${process.execPath}`, '--remote-components', 'ejs:github'] },
+  ]
   const errors = []
   const cleanup = () => {
     for (const f of [out, `${out}.part`]) { try { fs.unlinkSync(f) } catch {} }
@@ -142,20 +146,17 @@ async function downloadWithYtdlp(video, { forceUpdate = false } = {}) {
 
   try {
     for (const client of clients) {
-      const label = client || 'default'
       for (const fmt of YT_FORMATS) {
-        const args = [...baseArgs, '-f', fmt]
-        if (client) args.push('--extractor-args', `youtube:player_client=${client}`)
-        args.push(video.url)
+        const args = [...baseArgs, ...client.args, '-f', fmt, video.url]
         try {
           await execFileP(bin, args, { timeout: 150000, maxBuffer: 1 << 24 })
           if (fs.existsSync(out)) return fs.readFileSync(out)
-          errors.push(`${label}/${fmt}: no file`)
+          errors.push(`${client.name}/${fmt}: no file`)
         } catch (e) {
           const lines = String(e.stderr || e.message).trim().split('\n').reverse()
           const msg = (lines.find(l => /ERROR/.test(l)) || lines[0] || '').slice(0, 120)
-          errors.push(`${label}/${fmt}: ${msg}`)
-          log(`yt-dlp [${label}/${fmt}] failed: ${msg}`)
+          errors.push(`${client.name}/${fmt}: ${msg}`)
+          log(`yt-dlp [${client.name}/${fmt}] failed: ${msg}`)
         }
         cleanup()
       }
