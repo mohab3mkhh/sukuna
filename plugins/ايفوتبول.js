@@ -3,7 +3,7 @@
  * لعبة خمن مهارة اللاعب من الصورة - كل شخص له لعبة مستقلة
  */
 
-import pkg from '@whiskeysockets/baileys';
+import * as pkg from '@whiskeysockets/baileys';
 const { generateWAMessageFromContent, prepareWAMessageMedia } = pkg;
 
 // ✅ قائمة المهارات مع صور اللاعبين (تم التحديث)
