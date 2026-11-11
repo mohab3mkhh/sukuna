@@ -1,5 +1,9 @@
-import pkg from 'angularsockets';
-const { generateWAMessageFromContent, prepareWAMessageMedia } = pkg;
+/**
+ * plugins/كورة.js
+ * لعبة تخمين اللاعب من عينه
+ */
+
+import { sendButtons, btn, getButtonId } from '../lib/buttons.js';
 
 const questions = [
   {
@@ -315,39 +319,25 @@ let handler = async (m, { conn }) => {
   const q = questions[Math.floor(Math.random() * questions.length)];
   const shuffled = shuffleChoices(q.choices);
 
-  const imageMessage = await prepareWAMessageMedia(
-    { image: { url: q.eye } },
-    { upload: conn.waUploadToServer }
+  // ✅ بناء الأزرار باستخدام btn.reply
+  const buttons = shuffled.map((c, i) => 
+    btn.reply(`${['1️⃣','2️⃣','3️⃣','4️⃣'][i]} ${c}`, `كورة_اجابة_${c}`)
   );
 
-  const buttons = shuffled.map((c, i) => ({
-    name: 'quick_reply',
-    buttonParamsJson: JSON.stringify({
-      display_text: `${['1️⃣','2️⃣','3️⃣','4️⃣'][i]} ${c}`,
-      id: `كورة_اجابة_${c}`
-    })
-  }));
-
-  const message = {
-    viewOnceMessage: {
-      message: {
-        interactiveMessage: {
-          header: { hasMediaAttachment: true, ...imageMessage },
-          body: { text: `👁️ *احزر اللاعب من عينيه!*\n\n⏱️ عندك 60 ثانية\n💰 الإجابة الصح = *5000 XP*` },
-          nativeFlowMessage: { buttons }
-        }
-      }
-    }
-  };
-
-  const msg = generateWAMessageFromContent(id, message, { userJid: conn.user.id });
-  await conn.relayMessage(id, msg.message, { messageId: msg.key.id });
+  // ✅ إرسال باستخدام sendButtons
+  const sentMsg = await sendButtons(conn, id, {
+    text: `👁️ *احزر اللاعب من عينيه!*\n\n⏱️ عندك 60 ثانية\n💰 الإجابة الصح = *5000 XP*`,
+    footer: '⚽ لعبة كورة',
+    image: q.eye,
+    buttons,
+    mentions: [m.sender]
+  }, m);
 
   activeGames[id] = {
     answer: q.answer,
     full: q.full,
-    msgId: msg.key.id,
-    answeredUsers: new Set(), // ✅ تتبع اللي جاوبوا
+    msgId: sentMsg.key.id,
+    answeredUsers: new Set(),
     timeout: setTimeout(() => {
       if (activeGames[id]) {
         conn.sendMessage(id, {
@@ -368,19 +358,35 @@ handler.before = async function (m) {
 
   const game = activeGames[id];
 
+  // ✅ استخدام getButtonId
+  const buttonId = getButtonId(m);
+  const isButtonPress = buttonId && buttonId.includes('كورة_اجابة_');
+
+  // ✅ كمان الرد العادي على الرسالة
   const quotedId = m.message?.extendedTextMessage?.contextInfo?.stanzaId
     || m.message?.buttonsResponseMessage?.contextInfo?.stanzaId
     || m.message?.templateButtonReplyMessage?.contextInfo?.stanzaId
     || m.message?.interactiveResponseMessage?.contextInfo?.stanzaId;
-  if (quotedId !== game.msgId) return false;
+  const isReply = quotedId === game.msgId;
 
-  // ✅ لو جاوب قبل كده، تجاهله بصمت
+  if (!isButtonPress && !isReply) return false;
+
   if (game.answeredUsers.has(m.sender)) return false;
-
-  // ✅ سجل إنه جاوب فوراً
   game.answeredUsers.add(m.sender);
 
-  const userAnswer = m.text.replace('كورة_اجابة_', '').toLowerCase().trim();
+  let userAnswer = null;
+
+  if (isButtonPress) {
+    userAnswer = buttonId.replace('كورة_اجابة_', '').toLowerCase().trim();
+  } else if (isReply) {
+    const choiceNum = parseInt(m.text.trim());
+    if (!isNaN(choiceNum) && choiceNum >= 1 && choiceNum <= 4) {
+      userAnswer = game.answer.toLowerCase();
+    }
+  }
+
+  if (!userAnswer) return false;
+
   const answer = game.answer.toLowerCase();
   const isCorrect = userAnswer.includes(answer) || answer.includes(userAnswer);
 
