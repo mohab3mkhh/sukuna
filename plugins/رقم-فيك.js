@@ -1,6 +1,6 @@
 import fetch from "node-fetch";
 import cheerio from "cheerio";
-import { prepareWAMessageMedia, generateWAMessageFromContent } from 'angularsockets';
+import { prepareWAMessageMedia, generateWAMessageFromContent } from '@whiskeysockets/baileys';
 
 const BASE = 'https://receive-sms-online.info'
 const pp = 'https://files.catbox.moe/9qxiwh.jpg'
