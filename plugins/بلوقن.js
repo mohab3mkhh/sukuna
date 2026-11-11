@@ -113,47 +113,22 @@ async function readQuotedBuffer(quoted, doc) {
 
 async function sendCodePreview(conn, chat, quoted, relativePath, code) {
   const lines = code.split('\n')
-  const blocks = []
-  let current = ''
-  let type = 1
-  for (const line of lines) {
-    const isComment = /^\s*(\/\/|\/\*|\*)/.test(line)
-    const isDeclaration = /handler\.|\bexport\b/.test(line)
-    const nextType = isComment ? 3 : isDeclaration ? 2 : (line.trim() ? 4 : 1)
-    if (current && nextType !== type) {
-      blocks.push({ highlightType: type, codeContent: current })
-      current = ''
-    }
-    type = nextType
-    current += line + '\n'
-  }
-  if (current) blocks.push({ highlightType: type, codeContent: current })
+  const sizeKB = (Buffer.byteLength(code, 'utf8') / 1024).toFixed(2)
+  const header = `📄 *${relativePath}*\n📦 ${sizeKB} KB | 📝 ${lines.length} سطر\n`
 
-  const richMessage = {
-    richResponseMessage: {
-      messageType: 1,
-      submessages: [
-        { messageType: 2, messageText: `\n📄 *${relativePath}*\n📦 ${(Buffer.byteLength(code, 'utf8') / 1024).toFixed(2)} KB | 📝 ${lines.length} سطر\n` },
-        { messageType: 2, messageText: '\n💻 *الكود:*\n' },
-        { messageType: 5, codeMetadata: { codeLanguage: path.extname(relativePath).slice(1) || 'javascript', codeBlocks: blocks } }
-      ],
-      contextInfo: { isForwarded: true, forwardingScore: 1, forwardOrigin: 4 }
-    }
-  }
-  try {
-    const sent = await generateWAMessageFromContent(chat, { botForwardedMessage: { message: richMessage } }, {
-      senderId: conn.user.id,
-      userJid: conn.user.id,
-      messageId: generateMessageIDV2(conn.user.id)
-    })
-    await conn.relayMessage(chat, sent.message, { messageId: sent.key.id })
-  } catch {
-    await conn.sendMessage(chat, {
+  // لو الكود كبير أو هيطول عن حد الرسالة، ابعته كملف بدل النص
+  const MAX_TEXT = 3500
+  if (code.length > MAX_TEXT) {
+    return conn.sendMessage(chat, {
       document: Buffer.from(code, 'utf8'),
       fileName: path.basename(relativePath),
-      mimetype: 'text/plain'
+      mimetype: 'text/plain',
+      caption: header
     }, quoted ? { quoted } : {})
   }
+
+  const text = `${header}\n\`\`\`${code}\`\`\``
+  await conn.sendMessage(chat, { text }, quoted ? { quoted } : {})
 }
 
 const navigation = new Map()
