@@ -1,7 +1,7 @@
 import fs from 'fs'
 import similarity from 'similarity'
 
-const { generateWAMessageFromContent, prepareWAMessageMedia } = await import('angularsockets')
+const { generateWAMessageFromContent, prepareWAMessageMedia } = await import('@whiskeysockets/baileys')
 
 const threshold = 0.72
 const activeGames = {}
