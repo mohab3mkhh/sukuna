@@ -1,6 +1,6 @@
 // plugins/neko.js
 import fetch from 'node-fetch'
-import pkg from 'angularsockets'
+import pkg from '@whiskeysockets/baileys'
 const { generateWAMessageFromContent, prepareWAMessageMedia } = pkg
 
 let handler = async (m, { conn, command, usedPrefix }) => {
