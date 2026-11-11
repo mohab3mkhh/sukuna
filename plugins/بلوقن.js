@@ -116,7 +116,8 @@ async function sendCodePreview(conn, chat, quoted, relativePath, code) {
   const sizeKB = (Buffer.byteLength(code, 'utf8') / 1024).toFixed(2)
   const header = `📄 *${relativePath}*\n📦 ${sizeKB} KB | 📝 ${lines.length} سطر\n`
 
-  // لو الكود كبير أو هيطول عن حد الرسالة، ابعته كملف بدل النص
+  // ملحوظة: رسالة الكود الملوّن (richResponseMessage) غير مدعومة في مكتبتك،
+  // فبنبعت الكود كنص عادي داخل ``` بدل ما نخاطر برسالة ما توصلش
   const MAX_TEXT = 3500
   if (code.length > MAX_TEXT) {
     return conn.sendMessage(chat, {
