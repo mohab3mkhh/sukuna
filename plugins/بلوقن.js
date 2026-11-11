@@ -3,24 +3,8 @@ import fs from 'fs'
 import path from 'path'
 import crypto from 'crypto'
 import { fileURLToPath } from 'url'
-import pkg from 'angularsockets'
-
-
-// بديل بسيط لـ theme.js: يبني نص من مصفوفة "كروت"
-const theme = {
-  build(cards) {
-    return cards.map(c => {
-      if (c.type === 'title') return `*${c.text}*`
-      if (c.type === 'divider') return '───────────────'
-      if (c.type === 'info') return `• *${c.label}:* ${c.value}`
-      if (c.type === 'warning') return `⚠️ ${c.text}`
-      if (c.type === 'line') return c.text
-      return ''
-    }).filter(Boolean).join('\n')
-  }
-}
-
-const { downloadContentFromMessage, generateWAMessageFromContent, generateMessageIDV2 } = pkg
+import { theme } from '../core/theme.js'
+import { downloadContentFromMessage, generateWAMessageFromContent, generateMessageIDV2 } from '@whiskeysockets/baileys'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const BACKUP_DIR = path.join(ROOT, '.file-manager-backups')
@@ -113,23 +97,47 @@ async function readQuotedBuffer(quoted, doc) {
 
 async function sendCodePreview(conn, chat, quoted, relativePath, code) {
   const lines = code.split('\n')
-  const sizeKB = (Buffer.byteLength(code, 'utf8') / 1024).toFixed(2)
-  const header = `📄 *${relativePath}*\n📦 ${sizeKB} KB | 📝 ${lines.length} سطر\n`
+  const blocks = []
+  let current = ''
+  let type = 1
+  for (const line of lines) {
+    const isComment = /^\s*(\/\/|\/\*|\*)/.test(line)
+    const isDeclaration = /handler\.|\bexport\b/.test(line)
+    const nextType = isComment ? 3 : isDeclaration ? 2 : (line.trim() ? 4 : 1)
+    if (current && nextType !== type) {
+      blocks.push({ highlightType: type, codeContent: current })
+      current = ''
+    }
+    type = nextType
+    current += line + '\n'
+  }
+  if (current) blocks.push({ highlightType: type, codeContent: current })
 
-  // ملحوظة: رسالة الكود الملوّن (richResponseMessage) غير مدعومة في مكتبتك،
-  // فبنبعت الكود كنص عادي داخل ``` بدل ما نخاطر برسالة ما توصلش
-  const MAX_TEXT = 3500
-  if (code.length > MAX_TEXT) {
-    return conn.sendMessage(chat, {
+  const richMessage = {
+    richResponseMessage: {
+      messageType: 1,
+      submessages: [
+        { messageType: 2, messageText: `\n📄 *${relativePath}*\n📦 ${(Buffer.byteLength(code, 'utf8') / 1024).toFixed(2)} KB | 📝 ${lines.length} سطر\n` },
+        { messageType: 2, messageText: '\n💻 *الكود:*\n' },
+        { messageType: 5, codeMetadata: { codeLanguage: path.extname(relativePath).slice(1) || 'javascript', codeBlocks: blocks } }
+      ],
+      contextInfo: { isForwarded: true, forwardingScore: 1, forwardOrigin: 4 }
+    }
+  }
+  try {
+    const sent = await generateWAMessageFromContent(chat, { botForwardedMessage: { message: richMessage } }, {
+      senderId: conn.user.id,
+      userJid: conn.user.id,
+      messageId: generateMessageIDV2(conn.user.id)
+    })
+    await conn.relayMessage(chat, sent.message, { messageId: sent.key.id })
+  } catch {
+    await conn.sendMessage(chat, {
       document: Buffer.from(code, 'utf8'),
       fileName: path.basename(relativePath),
-      mimetype: 'text/plain',
-      caption: header
+      mimetype: 'text/plain'
     }, quoted ? { quoted } : {})
   }
-
-  const text = `${header}\n\`\`\`${code}\`\`\``
-  await conn.sendMessage(chat, { text }, quoted ? { quoted } : {})
 }
 
 const navigation = new Map()
