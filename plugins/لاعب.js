@@ -4,15 +4,10 @@
  */
 
 import pkg from '@whiskeysockets/baileys';
-const { generateWAMessageFromContent, prepareWAMessageMedia } = pkg;
+const { generateWAMessageFromContent } = pkg;
 
-// ✅ محاولة استيراد ملف الأزرار اللي عملته
-let sendButtonsModule = null;
-try {
-  sendButtonsModule = await import('../lib/buttons.js');
-} catch (e) {
-  console.log('[لاعب] ملف buttons.js مش موجود، هنستخدم الطريقة الافتراضية');
-}
+// ✅ استخدام ملف الأزرار
+import { sendButtons, btn, getButtonId } from '../lib/buttons.js';
 
 const PLAYERS = [
   { name: 'اوزيل', img: 'https://files.catbox.moe/gb8lop.jpg', hair: 'black', skin: 'white' },
@@ -113,95 +108,40 @@ const handler = async (m, { conn }) => {
     if (!imgRes.ok) throw new Error(`HTTP ${imgRes.status}`);
     const imgBuffer = Buffer.from(await imgRes.arrayBuffer());
 
-    // ✅ تجربة استخدام ملف buttons لو موجود
-    let sent = false;
-    if (sendButtonsModule?.sendButtons) {
-      try {
-        const buttons = choices.map((p, i) => ({
-          text: `${['1️⃣','2️⃣','3️⃣','4️⃣'][i]} ${p.name}`,
-          id: `لاعب_اجابة_${p.name}`
-        }));
+    // ✅ بناء الأزرار باستخدام btn.reply من ملف buttons
+    const buttons = choices.map((p, i) => 
+      btn.reply(`${['1️⃣','2️⃣','3️⃣','4️⃣'][i]} ${p.name}`, `لاعب_اجابة_${p.name}`)
+    );
 
-        await sendButtonsModule.sendButtons(conn, chatId, {
-          image: imgBuffer,
-          caption: `🏟️ *@${userId.split('@')[0]} بدأ اللعبة!*\n\n⏱️ عندك 60 ثانية\n💰 الجائزة: 5000 XP`,
-          footer: '⚽ لعبة التخمين',
-          buttons
-        });
+    // ✅ إرسال الرسالة باستخدام sendButtons
+    const sentMsg = await sendButtons(conn, chatId, {
+      text: `🏟️ *@${userId.split('@')[0]} بدأ اللعبة!*\n\n⏱️ عندك 60 ثانية\n💰 الجائزة: 5000 XP`,
+      footer: '⚽ لعبة التخمين',
+      image: imgBuffer,
+      buttons,
+      mentions: [userId]
+    }, m);
 
-        sent = true;
-        // حفظ اللعبة
-        global._playerGames[gameKey] = {
-          answer: correct.name,
-          choices: choices.map(c => c.name),
-          starter: userId,
-          chatId: chatId,
-          timeout: setTimeout(() => {
-            if (global._playerGames[gameKey]) {
-              conn.sendMessage(chatId, {
-                text: `⏰ *انتهى وقت @${userId.split('@')[0]}!*\n\n✅ *الإجابة الصحيحة:* ${correct.name}`,
-                mentions: [userId]
-              });
-              delete global._playerGames[gameKey];
-            }
-          }, 60000)
-        };
-      } catch (e) {
-        console.log('[لاعب] فشل استخدام sendButtons:', e.message);
-        sent = false;
-      }
-    }
-
-    // ✅ الطريقة الافتراضية (interactiveMessage)
-    if (!sent) {
-      const imageMessage = await prepareWAMessageMedia(
-        { image: imgBuffer },
-        { upload: conn.waUploadToServer }
-      );
-
-      const buttons = choices.map((p, i) => ({
-        name: 'quick_reply',
-        buttonParamsJson: JSON.stringify({
-          display_text: `${['1️⃣','2️⃣','3️⃣','4️⃣'][i]} ${p.name}`,
-          id: `لاعب_اجابة_${p.name}`
-        })
-      }));
-
-      const msg = generateWAMessageFromContent(chatId, {
-        viewOnceMessage: {
-          message: {
-            interactiveMessage: {
-              header: { hasMediaAttachment: true, ...imageMessage },
-              body: { text: `🏟️ *@${userId.split('@')[0]} بدأ اللعبة!*\n\n⏱️ عندك 60 ثانية\n💰 الجائزة: 5000 XP` },
-              footer: { text: '⚽ لعبة التخمين' },
-              nativeFlowMessage: { buttons }
-            }
-          }
+    // ✅ حفظ اللعبة
+    global._playerGames[gameKey] = {
+      answer: correct.name,
+      choices: choices.map(c => c.name),
+      starter: userId,
+      messageId: sentMsg.key.id,
+      chatId: chatId,
+      timeout: setTimeout(() => {
+        if (global._playerGames[gameKey]) {
+          conn.sendMessage(chatId, {
+            text: `⏰ *انتهى وقت @${userId.split('@')[0]}!*\n\n✅ *الإجابة الصحيحة:* ${correct.name}\n\n🎯 استخدم .لاعب للعب مرة أخرى`,
+            mentions: [userId]
+          });
+          delete global._playerGames[gameKey];
         }
-      }, { userJid: conn.user.id });
-
-      await conn.relayMessage(chatId, msg.message, { messageId: msg.key.id });
-
-      global._playerGames[gameKey] = {
-        answer: correct.name,
-        choices: choices.map(c => c.name),
-        starter: userId,
-        messageId: msg.key.id,
-        chatId: chatId,
-        timeout: setTimeout(() => {
-          if (global._playerGames[gameKey]) {
-            conn.sendMessage(chatId, {
-              text: `⏰ *انتهى وقت @${userId.split('@')[0]}!*\n\n✅ *الإجابة الصحيحة:* ${correct.name}`,
-              mentions: [userId]
-            });
-            delete global._playerGames[gameKey];
-          }
-        }, 60000)
-      };
-    }
+      }, 60000)
+    };
     
   } catch (error) {
-    console.error('[خطأ في التحميل]', error.message);
+    console.error('[خطأ في اللعبة]', error.message);
     await m.reply(`❌ فشل تحميل صورة اللاعب ${correct.name}. حاول مرة أخرى.`);
   }
 };
@@ -224,16 +164,19 @@ handler.before = async function (m) {
   
   if (!activeGame) return false;
   
+  // ✅ استخدام getButtonId من ملف buttons
+  const buttonId = getButtonId(m);
+  const isButtonPress = buttonId && buttonId.includes('لاعب_اجابة_');
+  
   const isReplyingToGame = m.quoted && m.quoted.key && m.quoted.key.id === activeGame.messageId;
-  const isButtonPress = m.text && m.text.includes('لاعب_اجابة_');
-  const isNumberReply = isReplyingToGame && /^[1-4]$/.test(m.text?.trim());
+  const isNumberReply = isReplyingToGame && /^[1-4]$/.test((m.text || '').trim());
   
   if (!isButtonPress && !isNumberReply) return false;
   
   let userAnswer = null;
   
   if (isButtonPress) {
-    userAnswer = m.text.replace('لاعب_اجابة_', '').toLowerCase().trim();
+    userAnswer = buttonId.replace('لاعب_اجابة_', '').toLowerCase().trim();
   } else if (isNumberReply) {
     const choiceNum = parseInt(m.text.trim());
     if (activeGame.choices && activeGame.choices[choiceNum - 1]) {
@@ -247,7 +190,7 @@ handler.before = async function (m) {
   
   if (!isCorrect) {
     await this.sendMessage(chatId, {
-      text: `❌ *إجابة غلط يا @${userId.split('@')[0]}!*\n\n✅ الإجابة الصحيحة: *${activeGame.answer}*`,
+      text: `❌ *إجابة غلط يا @${userId.split('@')[0]}!*\n\n✅ الإجابة الصحيحة: *${activeGame.answer}*\n\n💡 حاول تاني المرة الجاية`,
       mentions: [userId]
     });
     clearTimeout(activeGame.timeout);
@@ -265,7 +208,7 @@ handler.before = async function (m) {
   }
 
   await this.sendMessage(chatId, {
-    text: `✅ *إجابة صحيحة من @${userId.split('@')[0]}!*\n\n🏆 *اللاعب:* ${activeGame.answer}\n💰 *ربحت:* 5000 XP`,
+    text: `✅ *إجابة صحيحة من @${userId.split('@')[0]}!*\n\n🏆 *اللاعب:* ${activeGame.answer}\n💰 *ربحت:* 5000 XP\n\n🎯 استخدم .لاعب للعب مرة أخرى`,
     mentions: [userId]
   });
 
