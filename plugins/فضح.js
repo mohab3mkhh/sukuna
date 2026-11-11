@@ -1,4 +1,4 @@
-import { downloadMediaMessage } from 'angularsockets'
+import { downloadMediaMessage } from '@whiskeysockets/baileys'
 
 let handler = async (m, { conn }) => {
   try {
