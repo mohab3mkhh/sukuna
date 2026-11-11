@@ -1,4 +1,4 @@
-import pkg from 'angularsockets';
+import pkg from '@whiskeysockets/baileys';
 const { generateWAMessageFromContent, prepareWAMessageMedia } = pkg;
 
 const handler = async (m, { conn, usedPrefix }) => {
