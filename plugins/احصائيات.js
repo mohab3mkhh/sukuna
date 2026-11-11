@@ -1,5 +1,5 @@
 import moment from 'moment-timezone';
-import pkg from 'angularsockets';
+import pkg from '@whiskeysockets/baileys';
 const { generateWAMessageFromContent } = pkg;
 
 global.groupStats = global.groupStats || {};
