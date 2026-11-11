@@ -9,7 +9,7 @@ const handler = async (m, { conn, text }) => {
     "201016855501@s.whatsapp.net",
     "201036547166@s.whatsapp.net",
     "201150572826@s.whatsapp.net",
-    "201066036607@s.whatsapp.net"
+    "201515023210@s.whatsapp.net"
   ];
 
   if (!allowedUsers.includes(m.sender)) {
