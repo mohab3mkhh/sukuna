@@ -1,4 +1,4 @@
-import pkg from 'angularsockets';
+import pkg from '@whiskeysockets/baileys';
 const { generateWAMessageFromContent, prepareWAMessageMedia } = pkg;
 import * as cheerio from 'cheerio'
 import yts from 'yt-search'
