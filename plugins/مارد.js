@@ -1,5 +1,5 @@
 import axios from "axios";
-import pkg from 'angularsockets'
+import pkg from '@whiskeysockets/baileys'
 const { generateWAMessageFromContent, proto, prepareWAMessageMedia } = pkg
 
 const api_obito = "https://mr-obito-api.vercel.app/api";
