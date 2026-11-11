@@ -1,5 +1,5 @@
 import fetch from 'node-fetch';
-import { generateWAMessageFromContent } from 'angularsockets';
+import { generateWAMessageFromContent } from '@whiskeysockets/baileys';
 
 const handler = async (m, { conn, text, usedPrefix, command }) => {
     if (!text) throw `❌ *يرجى إدخال النص الذي تريد ترجمته.*\n\n📌 *مثال:* \n> ${usedPrefix + command} مرحبا`;
