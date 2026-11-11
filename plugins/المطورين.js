@@ -1,5 +1,5 @@
 import fetch from 'node-fetch';
-import pkg from '@whiskeysockets/baileys';
+import * as pkg from '@whiskeysockets/baileys';
 const { generateWAMessageFromContent, prepareWAMessageMedia } = pkg;
 
 const VIDEO_URL = 'https://files.catbox.moe/97or2g.mp4';
