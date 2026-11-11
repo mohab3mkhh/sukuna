@@ -1,4 +1,4 @@
-import { prepareWAMessageMedia, generateWAMessageFromContent } from 'angularsockets';
+import { prepareWAMessageMedia, generateWAMessageFromContent } from '@whiskeysockets/baileys';
 import axios from 'axios';
 
 let handler = async (m, { conn, text, usedPrefix, command }) => {
