@@ -1,14 +1,15 @@
 // plugins/menu.js
-import { sendList } from '../lib/buttons.js'
+import { sendButtons } from '../lib/buttons.js'
 
 function clockString(ms) {
-  let h = Math.floor(ms / 3600000)
-  let m = Math.floor((ms % 3600000) / 60000)
-  let s = Math.floor((ms % 60000) / 1000)
+  const h = Math.floor(ms / 3600000)
+  const m = Math.floor((ms % 3600000) / 60000)
+  const s = Math.floor((ms % 60000) / 1000)
   return [h, m, s].map(v => v.toString().padStart(2, '0')).join(':')
 }
 
 const VIDEO_URL = 'https://files.catbox.moe/2bi3iw.mp4'
+const CHANNEL_URL = 'https://whatsapp.com/channel/0029VbBilcVAO7RNV5OlOI0j'
 
 const rows = [
   { header: '🎮 الألعاب',          title: '「 مَيْدَانُ الصِّرَاع 」',       id: '.ق1' },
@@ -72,22 +73,31 @@ const handler = async (m, { conn }) => {
       text: menuText,
       footer: '⛩️ SUKUNA BOT ⛩️',
       title: '🩸 SUKUNA BOT',
-      buttonText: '🩸 اخْتَرْ قِسْمَكَ أَيُّهَا الضَّعِيف',
-      sections: [{ title: '👿 مَمَالِكُ سُوكُونَا', rows }],
       mentions: [mentionId],
       quoted: m,
+      buttons: [
+        {
+          list: {
+            title: '🩸 اخْتَرْ قِسْمَكَ أَيُّهَا الضَّعِيف',
+            sections: [{ title: '👿 مَمَالِكُ سُوكُونَا', rows }],
+          },
+        },
+        { url: CHANNEL_URL, text: '🩸 مَمْلَكَةُ المُطَوِّر' },
+        { id: '.تواصل', text: '☠️ تَحَدَّثْ إِلَى الصَّانِع' },
+      ],
     }
 
     try {
       try {
         // مع الفيديو
-        await sendList(conn, m.chat, { ...payload, video: { url: VIDEO_URL }, gifPlayback: true })
+        await sendButtons(conn, m.chat, { ...payload, video: { url: VIDEO_URL }, gifPlayback: true })
       } catch (e) {
-        console.log('[menu] list with video failed:', e.message)
-        await sendList(conn, m.chat, payload)
+        console.log('[menu] with video failed:', e.message)
+        // من غير فيديو
+        await sendButtons(conn, m.chat, payload)
       }
     } catch (e) {
-      // بديل نصي
+      // بديل نصي لو الأزرار فشلت خالص
       console.log('[menu] interactive failed, text fallback:', e.message)
       const list = rows.map(r => `${r.header} ⟶ ${r.id}`).join('\n')
       await conn.sendMessage(
