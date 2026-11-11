@@ -3,7 +3,7 @@ import fs from 'fs'
 import path from 'path'
 import crypto from 'crypto'
 import { fileURLToPath } from 'url'
-import pkg from 'angularsockets'
+import pkg from '@whiskeysockets/baileys'
 
 
 // بديل بسيط لـ theme.js: يبني نص من مصفوفة "كروت"
@@ -131,7 +131,7 @@ async function sendCodePreview(conn, chat, quoted, relativePath, code) {
 
   try {
     // لازم نبني الرسالة عن طريق proto.Message.fromObject صراحةً،
-    // لأن angularsockets محتاج ترميز بروتوبف واضح لرسائل الكود الملوّن
+    // لأن @whiskeysockets/baileys محتاج ترميز بروتوبف واضح لرسائل الكود الملوّن
     const richMessage = proto.Message.fromObject({
       richResponseMessage: {
         messageType: 1,
