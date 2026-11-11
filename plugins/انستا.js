@@ -65,12 +65,22 @@ const jsonApi = (buildUrl) => async (url) => {
     return links
 }
 
+// حزمة btch-downloader: بتتحدّث لوحدها مع تغيّر المواقع. لازم تتضاف في package.json:  "btch-downloader": "latest"
+const btch = async (url) => {
+    let mod
+    try { mod = await import('btch-downloader') } catch { throw new Error('الحزمة btch-downloader مش متثبتة (ضيفها في package.json)') }
+    const igdl = mod.igdl || mod.default?.igdl
+    if (typeof igdl !== 'function') throw new Error('btch-downloader: مفيش igdl')
+    const data = await igdl(url)
+    const links = extractMedia(data)
+    if (!links.length) throw new Error('مفيش روابط: ' + snippet(data))
+    return links
+}
+
 const PROVIDERS = [
-    { name: 'SaveIG',   run: ajaxSearch('saveig.app') },
+    { name: 'btch',      run: btch },
+    { name: 'SaveIG',    run: ajaxSearch('saveig.app') },
     { name: 'SnapInsta', run: ajaxSearch('snapinsta.app') },
-    { name: 'Delirius', run: jsonApi(u => `https://delirius-apiofc.vercel.app/download/igv2?url=${u}`) },
-    { name: 'Siputzx',  run: jsonApi(u => `https://api.siputzx.my.id/api/d/igdl?url=${u}`) },
-    { name: 'Ryzen',    run: jsonApi(u => `https://api.ryzendesu.vip/api/downloader/igdl?url=${u}`) },
 ]
 
 const shortErr = e => e.response?.status ? `HTTP ${e.response.status}` : (e.code || e.message || 'unknown').toString().slice(0, 140)
