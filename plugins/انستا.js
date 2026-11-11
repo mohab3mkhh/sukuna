@@ -5,7 +5,6 @@ import axios from 'axios'
 import fs from 'fs'
 import path from 'path'
 import os from 'os'
-import { proto, generateWAMessageFromContent, generateWAMessageContent } from '@whiskeysockets/baileys'
 
 const TMP = os.tmpdir()
 const API_BASE = 'https://api.savefromins.com/api/contentsite_api'
@@ -45,7 +44,6 @@ async function fetchAuth() {
                     const auth = match[1] || match[0]
                     SFI_SESSION.auth = auth
                     SFI_SESSION.lastFetch = Date.now()
-                    console.log('[SaveFromIns] Auth fetched:', auth)
                     return auth
                 }
             } catch (e) {}
@@ -97,7 +95,6 @@ async function getDownloadLink(resource) {
     }
 
     const auth = await fetchAuth()
-
     const params = new URLSearchParams({
         auth,
         domain: DOMAIN_VIDEO,
@@ -144,7 +141,6 @@ async function getDownloadLink(resource) {
             response.data.on('data', chunk => {
                 if (resolved) return
                 fullText += chunk.toString()
-
                 const match = fullText.match(/"download_link"\s*:\s*"([^"]+)"/)
                 if (match) {
                     resolved = true
@@ -152,7 +148,6 @@ async function getDownloadLink(resource) {
                     response.data.destroy()
                     resolve(match[1])
                 }
-
                 if (fullText.includes('"status":"failed"')) {
                     resolved = true
                     clearTimeout(timeout)
@@ -162,21 +157,15 @@ async function getDownloadLink(resource) {
             }).on('end', () => {
                 if (resolved) return
                 const match = fullText.match(/"download_link"\s*:\s*"([^"]+)"/)
-                if (match) {
-                    resolved = true
-                    clearTimeout(timeout)
-                    resolve(match[1])
-                }
+                if (match) { resolved = true; clearTimeout(timeout); resolve(match[1]) }
             }).on('error', (e) => {
                 if (resolved) return
-                resolved = true
-                clearTimeout(timeout)
+                resolved = true; clearTimeout(timeout)
                 reject(new Error('خطأ في الاتصال: ' + e.message))
             })
         }).catch(e => {
             if (resolved) return
-            resolved = true
-            clearTimeout(timeout)
+            resolved = true; clearTimeout(timeout)
             reject(new Error('فشل الاتصال بـ SSE: ' + e.message))
         })
     })
@@ -184,11 +173,7 @@ async function getDownloadLink(resource) {
 
 async function downloadBuffer(url) {
     const r = await axios.get(url, {
-        headers: {
-            'User-Agent': UA,
-            'Referer': 'https://savefromins.com/',
-            'Accept': '*/*'
-        },
+        headers: { 'User-Agent': UA, 'Referer': 'https://savefromins.com/', 'Accept': '*/*' },
         timeout: 120000,
         responseType: 'arraybuffer',
         maxRedirects: 10
@@ -196,19 +181,21 @@ async function downloadBuffer(url) {
     return Buffer.from(r.data)
 }
 
+const send = (conn, chat, text, quoted) =>
+    conn.sendMessage(chat, { text }, { quoted })
+
 async function handleDownload(m, conn, url) {
     const react = async (emoji) => {
         try { await conn.sendMessage(m.chat, { react: { text: emoji, key: m.key } }) } catch {}
     }
 
     await react('⏳')
-    const statusMsg = await m.reply('⏳ *جاري التحميل...*')
+    await send(conn, m.chat, '⏳ *جاري التحميل...*', m)
 
     try {
         const parsed = await parseInstagram(url)
-        try { await conn.sendMessage(m.chat, { delete: statusMsg.key }) } catch {}
 
-        if (!parsed.resources.length) throw new Error('مفيش محتوى')
+        if (!parsed.resources.length) throw new Error('مفيش محتوى في هذا الرابط')
 
         const videos = parsed.resources.filter(r => r.type === 'video')
         const audios = parsed.resources.filter(r => r.type === 'audio')
@@ -219,7 +206,6 @@ async function handleDownload(m, conn, url) {
             return false
         })
 
-        // ✅ بعت الـ thumbnail أول (لو موجود ولو مش نفس الصورة)
         if (parsed.thumbnail && !images.length) {
             try {
                 const thumbBuf = await downloadBuffer(parsed.thumbnail)
@@ -229,14 +215,11 @@ async function handleDownload(m, conn, url) {
                         caption: `🎬 ${parsed.title.slice(0, 80)}`
                     }, { quoted: m })
                 }
-            } catch (e) {
-                console.error('[thumbnail]', e.message)
-            }
+            } catch (e) { console.error('[thumbnail]', e.message) }
         }
 
         let sent = 0
 
-        // ═══ فيديوهات ═══
         for (let i = 0; i < videos.length; i++) {
             try {
                 const link = await getDownloadLink(videos[i])
@@ -254,7 +237,6 @@ async function handleDownload(m, conn, url) {
             } catch (e) { console.error('[video]', e.message) }
         }
 
-        // ═══ صور ═══
         for (let i = 0; i < images.length; i++) {
             try {
                 const link = await getDownloadLink(images[i])
@@ -268,7 +250,6 @@ async function handleDownload(m, conn, url) {
             } catch (e) { console.error('[image]', e.message) }
         }
 
-        // ═══ أصوات ═══
         for (let i = 0; i < audios.length; i++) {
             try {
                 const link = await getDownloadLink(audios[i])
@@ -298,9 +279,8 @@ async function handleDownload(m, conn, url) {
         await react('✅')
     } catch (e) {
         console.error('Instagram error:', e.message)
-        try { await conn.sendMessage(m.chat, { delete: statusMsg.key }) } catch {}
         await react('❌')
-        m.reply('❌ ' + e.message)
+        await send(conn, m.chat, '❌ ' + e.message, m)
     }
 }
 
@@ -308,14 +288,14 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
     const input = (text || '').trim()
 
     if (!input) {
-        return m.reply(`📷 *Instagram*\n\n${usedPrefix}${command} <رابط>`)
+        return send(conn, m.chat, `📷 *Instagram Downloader*\n\nمثال:\n${usedPrefix}${command} https://www.instagram.com/p/...`, m)
     }
 
     if (input.includes('instagram.com')) {
         return handleDownload(m, conn, input)
     }
 
-    return m.reply('❌ ابعت رابط Instagram')
+    return send(conn, m.chat, '❌ ابعت رابط Instagram صحيح', m)
 }
 
 handler.help = ['انستا <رابط>']
