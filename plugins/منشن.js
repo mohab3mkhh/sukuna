@@ -1,4 +1,4 @@
-import pkg from 'angularsockets';
+import pkg from '@whiskeysockets/baileys';
 import moment from 'moment-timezone';
 const { generateWAMessageFromContent, prepareWAMessageMedia, proto } = pkg;
 
