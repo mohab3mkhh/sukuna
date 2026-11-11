@@ -1,7 +1,7 @@
 import axios from 'axios'
 import crypto from 'crypto'
 import yts from 'yt-search'
-import { generateWAMessageFromContent, prepareWAMessageMedia } from 'angularsockets'
+import { generateWAMessageFromContent, prepareWAMessageMedia } from '@whiskeysockets/baileys'
 
 /* إعدادات */
 const VIDEO_QUALITIES = ['144','240','360','480','720','1080']
