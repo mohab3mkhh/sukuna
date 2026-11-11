@@ -12,7 +12,7 @@ Contenido adaptado por:
 - elrebelde21 >> https://github.com/elrebelde21
 */ 
 
-import { useMultiFileAuthState, DisconnectReason, makeCacheableSignalKeyStore, fetchLatestBaileysVersion } from 'angularsockets';
+import { useMultiFileAuthState, DisconnectReason, makeCacheableSignalKeyStore, fetchLatestBaileysVersion } from '@whiskeysockets/baileys';
 import qrcode from "qrcode"
 import NodeCache from "node-cache"
 import fs from "fs"
@@ -21,7 +21,7 @@ import pino from 'pino'
 import chalk from 'chalk'
 import util from 'util' 
 import * as ws from 'ws'
-import { getDevice } from 'angularsockets'
+import { getDevice } from '@whiskeysockets/baileys'
 // تأكد من أن دالة tr تكون معرفة وقادرة على إرجاع قيمة افتراضية إذا لم تكن موجودة
 const tr = text => text || "نص افتراضي";  // قيمة افتراضية
 const { child, spawn, exec } = await import('child_process')
