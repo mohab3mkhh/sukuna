@@ -1,5 +1,3 @@
-import fetch from "node-fetch";
-
 let handler = async (m, { conn, text, usedPrefix }) => {
   const send = (t) => conn.sendMessage(m.chat, { text: t });
 
@@ -7,13 +5,19 @@ let handler = async (m, { conn, text, usedPrefix }) => {
     return send(`أدخل نصًا بعد الأمر.\nمثال: *${usedPrefix}انطق مرحبًا بك في البوت*`);
   }
 
+  if (text.length > 200) {
+    return send('النص طويل جداً، اكتب أقل من 200 حرف.');
+  }
+
   try {
-    const audioUrl = await generateAudio(text);
-    if (audioUrl) {
-      await send(`تم توليد الصوت، يمكنك الاستماع إليه: ${audioUrl}`);
-    } else {
-      await send("لم يتم العثور على الصوت. حاول مرة أخرى.");
-    }
+    const audioUrl =
+      `https://translate.google.com/translate_tts?ie=UTF-8&tl=ar&client=tw-ob&q=${encodeURIComponent(text)}`;
+
+    await conn.sendMessage(m.chat, {
+      audio: { url: audioUrl },
+      mimetype: 'audio/mpeg',
+      ptt: true,
+    });
   } catch (e) {
     console.error("حدث خطأ:", e);
     await send("حدث خطأ أثناء معالجة طلبك. يرجى المحاولة لاحقًا.");
@@ -25,25 +29,3 @@ handler.tags = ["tools"];
 handler.command = /^انطق$/i;
 
 export default handler;
-
-async function generateAudio(text) {
-  const url = `https://bk9.fun/tools/tts-voices?q=${encodeURIComponent(text)}&voice=`;
-
-  try {
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error("فشل الاتصال بالخدمة.");
-    }
-
-    const data = await response.json();
-
-    if (data?.audioUrl) {
-      return data.audioUrl;  // سيتم إرجاع رابط الصوت من الـ API
-    } else {
-      throw new Error("لم يتم العثور على رابط الصوت في الرد.");
-    }
-  } catch (error) {
-    console.error("خطأ في التواصل مع API:", error);
-    throw new Error("فشل في الحصول على الصوت من الـ API.");
-  }
-}
