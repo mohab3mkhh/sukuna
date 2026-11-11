@@ -1,4 +1,4 @@
-import fetch from "node-fetch"; import pkg from 'angularsockets'; const { prepareWAMessageMedia } = pkg;
+import fetch from "node-fetch"; import pkg from '@whiskeysockets/baileys'; const { prepareWAMessageMedia } = pkg;
 
 const handler = async (m, { conn, text }) => { if (!text) return m.reply(`*╮┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅*
 ❌ يُرجى كتابة اسم أو رقم السورة! 
