@@ -1,11 +1,22 @@
 import axios from 'axios';
 import { pinterest } from '../lib/scraper.js';
+import pkg from '@whiskeysockets/baileys';
+
+const { generateWAMessageContent, generateWAMessageFromContent, proto } = pkg;
 
 let handler = async (m, { conn, usedPrefix, command, text }) => {
     if (!text) throw `⚠️ أدخل مصطلح البحث.\n\nمثال: *${usedPrefix + command} nayeon*`;
 
     await m.react("⌛");
     await conn.sendMessage(m.chat, { text: '> ⏳ جاري البحث عن الصور...' }, { quoted: m });
+
+    async function createImageMessage(url) {
+        const { imageMessage } = await generateWAMessageContent(
+            { image: { url } },
+            { upload: conn.waUploadToServer }
+        );
+        return imageMessage;
+    }
 
     const sources = [
         async () => {
@@ -37,19 +48,47 @@ let handler = async (m, { conn, usedPrefix, command, text }) => {
         return conn.sendMessage(m.chat, { text: `❌ لم يتم العثور على نتائج لـ *"${text}"*.` }, { quoted: m });
     }
 
+    let imagesList = [];
+    let counter = 1;
+
+    for (let imageUrl of images) {
+        imagesList.push({
+            body: proto.Message.InteractiveMessage.Body.fromObject({
+                text: `🔎 *نتيجة البحث عن:* ${text}\n📸 𝐏𝐇𝐎𝐓𝐎 ${counter++}`
+            }),
+            header: proto.Message.InteractiveMessage.Header.fromObject({
+                hasMediaAttachment: true,
+                imageMessage: await createImageMessage(imageUrl)
+            }),
+            nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.fromObject({
+                buttons: [{
+                    name: "cta_url",
+                    buttonParamsJson: JSON.stringify({
+                        "display_text": "🔗 فتح في Pinterest",
+                        "Url": `https://www.pinterest.com/search/pins/?q=${encodeURIComponent(text)}`
+                    })
+                }]
+            })
+        });
+    }
+
+    const finalMessage = generateWAMessageFromContent(m.chat, {
+        viewOnceMessage: {
+            message: {
+                interactiveMessage: proto.Message.InteractiveMessage.fromObject({
+                    body: proto.Message.InteractiveMessage.Body.create({
+                        text: "> 🔍 *للحصول على نتائج أفضل، ابحث باللغة الإنجليزية مع وصف للصورة.*"
+                    }),
+                    carouselMessage: proto.Message.InteractiveMessage.CarouselMessage.fromObject({
+                        cards: imagesList
+                    })
+                })
+            }
+        }
+    }, { quoted: m });
+
     await m.react("✅");
-
-    // بناء قائمة الصور للـ Album
-    const mediaList = images.map((url, i) => ({
-        type: 'image',
-        data: { url },
-        caption: i === 0
-            ? `🔎 *نتيجة البحث عن:* ${text}\n\n🔗 https://www.pinterest.com/search/pins/?q=${encodeURIComponent(text)}`
-            : ''
-    }));
-
-    // sendAdonix = Album بيبعت الصور جنب بعض
-    await conn.sendAdonix(m.chat, mediaList, { quoted: m });
+    await conn.relayMessage(m.chat, finalMessage.message, { messageId: finalMessage.key.id });
 };
 
 handler.help = ['pinterest <keyword>'];
