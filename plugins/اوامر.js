@@ -7,8 +7,7 @@ function clockString(ms) {
   return [h, m, s].map(v => v.toString().padStart(2, '0')).join(':');
 }
 
-import pkg from '@whiskeysockets/baileys';
-const { generateWAMessageFromContent, prepareWAMessageMedia } = pkg;
+import { sendButtons, btn } from '../lib/buttons.js';
 
 const handler = async (m, { conn }) => {
   try {
@@ -24,17 +23,6 @@ const handler = async (m, { conn }) => {
     let mentionId = m.sender;
 
     await conn.sendMessage(m.chat, { react: { text: '🩸', key: m.key } });
-
-    const mediaPrepared = await prepareWAMessageMedia(
-      {
-        video: {
-          url: 'https://files.catbox.moe/2bi3iw.mp4',
-          gifPlayback: true,
-          ptv: true
-        }
-      },
-      { upload: conn.waUploadToServer }
-    );
 
     const gojoText = `
 ┏━━━━━━━━━━━━━━━━━━━━━━┓
@@ -63,67 +51,38 @@ const handler = async (m, { conn }) => {
 ━━━━━━━━━━━━━━━━━━━━━━━
 `.trim();
 
-    const message = {
-      viewOnceMessage: {
-        message: {
-          interactiveMessage: {
-            header: {
-              hasMediaAttachment: true,
-              ...mediaPrepared
-            },
-            body: { text: gojoText },
-            contextInfo: { mentionedJid: [mentionId] },
-            nativeFlowMessage: {
-              buttons: [
-                {
-                  name: 'single_select',
-                  buttonParamsJson: JSON.stringify({
-                    title: '🩸 اخْتَرْ قِسْمَكَ أَيُّهَا الضَّعِيف',
-                    sections: [
-                      {
-                        title: '👿 مَمَالِكُ سُوكُونَا',
-                        rows: [
-                          { header: '🎮 الألعاب',           title: '「 مَيْدَانُ الصِّرَاع 」',      id: '.ق1'  },
-                          { header: '⚙️ المشرفين',          title: '「 أَدَوَاتُ الحُكَّام 」',      id: '.ق2'  },
-                          { header: '🧰 الأدوات',           title: '「 تَرْسَانَةُ القُوَّة 」',      id: '.ق3'  },
-                          { header: '⬇️ التحميل',           title: '「 نَهْبُ الملفات 」',           id: '.ق4'  },
-                          { header: '💰 الاقتصاد',          title: '「 خَزِينَةُ اللَّعَنَات 」',     id: '.ق5'  },
-                          { header: '🤖 الذكاء الاصطناعي',  title: '「 عَقْلُ الشَّيطَان 」',        id: '.ق6'  },
-                          { header: '😈 التسلية',           title: '「 مَلاهِي الجَحِيم 」',         id: '.ق7'  },
-                          { header: '🕌 الدين',             title: '「 النُّور وَسْط الظَّلام 」',    id: '.ق8'  },
-                          { header: '🖼️ الصور',             title: '「 عَيْنُ المَلِك 」',            id: '.ق11' },
-                          { header: '👿 المطور',            title: '「 صَانِعُ اللَّعْنَة 」',        id: '.ق12' },
-                          { header: '🤲 الادعية',           title: 'ادعي الي ربك',                  id: '.ق20' },
-                          { header: '⚽ الكورة',            title: '「 آلَکْوٌرةّ مًعٌ سِوٌکْوٌنِآ 」',   id: '.ق21' },
-                          { header: '📋 كل الأوامر',        title: '「 سِجِلُّ القُوَّة كَامِلاً 」', id: '.كل_الاوامر' }
-                        ]
-                      }
-                    ]
-                  })
-                },
-                {
-                  name: 'cta_url',
-                  buttonParamsJson: JSON.stringify({
-                    display_text: '🩸 مَمْلَكَةُ المُطَوِّر',
-                    url: 'https://whatsapp.com/channel/0029VbBilcVAO7RNV5OlOI0j'
-                  })
-                },
-                {
-                  name: 'quick_reply',
-                  buttonParamsJson: JSON.stringify({
-                    display_text: '☠️ تَحَدَّثْ إِلَى الصَّانِع',
-                    id: '.تواصل'
-                  })
-                }
-              ]
-            }
-          }
-        }
+    const sections = [
+      {
+        title: '👿 مَمَالِكُ سُوكُونَا',
+        rows: [
+          { header: '🎮 الألعاب',          title: '「 مَيْدَانُ الصِّرَاع 」',         id: '.ق1'  },
+          { header: '⚙️ المشرفين',         title: '「 أَدَوَاتُ الحُكَّام 」',        id: '.ق2'  },
+          { header: '🧰 الأدوات',          title: '「 تَرْسَانَةُ القُوَّة 」',       id: '.ق3'  },
+          { header: '⬇️ التحميل',          title: '「 نَهْبُ الملفات 」',             id: '.ق4'  },
+          { header: '💰 الاقتصاد',         title: '「 خَزِينَةُ اللَّعَنَات 」',      id: '.ق5'  },
+          { header: '🤖 الذكاء الاصطناعي', title: '「 عَقْلُ الشَّيطَان 」',         id: '.ق6'  },
+          { header: '😈 التسلية',          title: '「 مَلاهِي الجَحِيم 」',           id: '.ق7'  },
+          { header: '🕌 الدين',            title: '「 النُّور وَسْط الظَّلام 」',     id: '.ق8'  },
+          { header: '🖼️ الصور',           title: '「 عَيْنُ المَلِك 」',             id: '.ق11' },
+          { header: '👿 المطور',          title: '「 صَانِعُ اللَّعْنَة 」',         id: '.ق12' },
+          { header: '🤲 الادعية',         title: 'ادعي الي ربك',                    id: '.ق20' },
+          { header: '⚽ الكورة',          title: '「 آلَکْوٌرةّ مًعٌ سِوٌکْوٌنِآ 」',   id: '.ق21' },
+          { header: '📋 كل الأوامر',      title: '「 سِجِلُّ القُوَّة كَامِلاً 」',   id: '.كل_الاوامر' }
+        ]
       }
-    };
+    ];
 
-    const msg = generateWAMessageFromContent(m.chat, message, { userJid: m.sender });
-    await conn.relayMessage(m.chat, msg.message, { messageId: msg.key.id });
+    await sendButtons(conn, m.chat, {
+      text: gojoText,
+      video: { url: 'https://files.catbox.moe/2bi3iw.mp4' },
+      gif: true,
+      mentions: [mentionId],
+      buttons: [
+        btn.list('🩸 اخْتَرْ قِسْمَكَ أَيُّهَا الضَّعِيف', sections),
+        btn.url('🩸 مَمْلَكَةُ المُطَوِّر', 'https://whatsapp.com/channel/0029VbBilcVAO7RNV5OlOI0j'),
+        btn.reply('☠️ تَحَدَّثْ إِلَى الصَّانِع', '.تواصل')
+      ]
+    }, m);
 
   } catch (err) {
     console.error('[ SUKUNA BOT ] خطأ في القائمة:', err);
