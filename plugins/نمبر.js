@@ -1,290 +1,268 @@
-/**
- * plugins/numbers.js
- * جلب أرقام من @Allnumbersultraplus_Bot
- */
+// lib/buttons.js
+// دعم كامل: quick_reply / single_select / cta_url / cta_copy / cta_call
+// + هيدر ميديا (صورة/فيديو/GIF/مستند) + جروبات + تحويل تلقائي للأوامر القديمة
 
-import { TelegramClient } from 'telegram';
-import { StringSession } from 'telegram/sessions/index.js';
-import { NewMessage } from 'telegram/events/index.js';
+import {
+  generateWAMessageFromContent,
+  prepareWAMessageMedia,
+  proto
+} from '@whiskeysockets/baileys'
 
-// ✅ استخدام ملف الأزرار
-import { sendButtons, btn, getButtonId } from '../lib/buttons.js';
+const json = (o) => JSON.stringify(o)
 
-const API_ID   = parseInt(process.env.TG_API_ID);
-const API_HASH = process.env.TG_API_HASH;
-const BOT_USER = 'Allnumbersultraplus_Bot';
-
-let _client = null;
-
-async function getClient() {
-  if (_client?.connected) return _client;
-
-  const session = new StringSession(process.env.TG_SESSION || '');
-  const client  = new TelegramClient(session, API_ID, API_HASH, {
-    connectionRetries: 5,
-  });
-
-  await client.connect();
-  console.log('[TG] ✅ Connected');
-  _client = client;
-  return client;
+/* ───────────── بناة الأزرار ───────────── */
+export const btn = {
+  reply: (text, id) => ({
+    name: 'quick_reply',
+    buttonParamsJson: json({ display_text: text, id })
+  }),
+  url: (text, url) => ({
+    name: 'cta_url',
+    buttonParamsJson: json({ display_text: text, url, merchant_url: url })
+  }),
+  copy: (text, code) => ({
+    name: 'cta_copy',
+    buttonParamsJson: json({ display_text: text, copy_code: code, id: code })
+  }),
+  call: (text, phone) => ({
+    name: 'cta_call',
+    buttonParamsJson: json({ display_text: text, phone_number: phone })
+  }),
+  list: (title, sections) => ({
+    name: 'single_select',
+    buttonParamsJson: json({ title, sections })
+  })
 }
 
-function waitForReply(client, timeout = 20000) {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      client.removeEventHandler(handler);
-      reject(new Error('انتهى الوقت'));
-    }, timeout);
+/* ───────────── مساعدات ───────────── */
+const toMedia = (x) =>
+  typeof x === 'string' ? { url: x } : x
 
-    const handler = async (event) => {
-      const msg = event.message;
-      if (!msg) return;
-      try {
-        const sender = await msg.getSender();
-        if (sender?.username?.toLowerCase() === BOT_USER.toLowerCase()) {
-          clearTimeout(timer);
-          client.removeEventHandler(handler);
-          resolve(msg);
-        }
-      } catch (e) {}
-    };
+async function buildHeader(conn, o) {
+  const header = {
+    title: o.title || '',
+    subtitle: o.subtitle || '',
+    hasMediaAttachment: false
+  }
 
-    client.addEventHandler(handler, new NewMessage({}));
-  });
-}
-
-async function sendAndWait(client, message, timeout = 20000) {
-  const replyPromise = waitForReply(client, timeout);
-  await client.sendMessage(BOT_USER, { message });
-  return replyPromise;
-}
-
-async function clickButton(client, msg, btnData) {
-  const replyPromise = waitForReply(client, 20000);
-  await msg.click({ data: btnData });
-  return replyPromise;
-}
-
-// ══════════════════════════════════════════════════
-//  Handler
-// ══════════════════════════════════════════════════
-const handler = async (m, { conn, text, usedPrefix, command }) => {
-  const input = (text || '').trim();
-  const userId = m.sender;
-
-  // ✅ الأول: لو في اختيار محفوظ من قائمة سابقة
-  if (global._tgButtons?.[userId]) {
-    const saved = global._tgButtons[userId];
-    const idx = parseInt(input) - 1;
-    let targetBtn = null;
-
-    if (!isNaN(idx) && saved.buttons[idx]) {
-      targetBtn = saved.buttons[idx];
-    } else {
-      targetBtn = saved.buttons.find(b => b.text?.toLowerCase().includes(input.toLowerCase()));
-    }
-
-    if (targetBtn) {
-      try {
-        await m.react('⏳');
-        const client = await getClient();
-        console.log('[TG] Clicking:', targetBtn.text);
-
-        const numbersMsg = await clickButton(client, saved.msg, targetBtn.data);
-        const text2 = numbersMsg.text || numbersMsg.message || 'مفيش رد';
-
-        await sendButtons(conn, m.chat, {
-          title: '📱 نتيجة البحث',
-          subtitle: targetBtn.text,
-          text: text2,
-          footer: '⛩️ SUKUNA BOT',
-          buttons: [
-            btn.reply('🔄 طلب جديد', `.${command}`),
-            btn.reply('📋 القائمة', `.${command} قائمة`)
-          ]
-        }, m);
-
-        await m.react('✅');
-
-        // حفظ الأزرار الجديدة لو في
-        const newBtns = numbersMsg.replyMarkup?.rows?.flatMap(r => r.buttons) || [];
-        if (newBtns.length) {
-          global._tgButtons[userId] = { buttons: newBtns, msg: numbersMsg };
-        } else {
-          delete global._tgButtons[userId];
-        }
-
-        return;
-      } catch (e) {
-        console.error('[Numbers]', e.message);
-        await m.react('❌');
-        await m.reply(`❌ *فشل*\n\n⚠️ ${e.message}`);
-        return;
-      }
+  let media = null
+  if (o.image) media = { image: toMedia(o.image) }
+  else if (o.video) media = { video: toMedia(o.video), gifPlayback: !!o.gif }
+  else if (o.document) {
+    media = {
+      document: toMedia(o.document),
+      mimetype: o.mimetype || 'application/octet-stream',
+      fileName: o.fileName || 'file'
     }
   }
 
-  // ✅ لو مفيش input، بعت /start وبعت القائمة
-  if (!input || input === 'قائمة') {
+  if (media) {
     try {
-      await m.react('⏳');
-      const client = await getClient();
-      const startMsg = await sendAndWait(client, '/start');
-      const buttons = startMsg.replyMarkup?.rows?.flatMap(r => r.buttons) || [];
-
-      if (!buttons.length) {
-        await m.react('❌');
-        return m.reply(startMsg.text || 'مفيش أزرار');
+      const prepared = await prepareWAMessageMedia(media, {
+        upload: conn.waUploadToServer
+      })
+      Object.assign(header, prepared)
+      header.hasMediaAttachment = true
+      if (o.video && o.gif && header.videoMessage) {
+        header.videoMessage.gifPlayback = true
       }
-
-      // ✅ حفظ الأزرار
-      if (!global._tgButtons) global._tgButtons = {};
-      global._tgButtons[userId] = { buttons, msg: startMsg };
-
-      // ✅ بناء أزرار القائمة باستخدام btn.list
-      const rows = buttons.map((b, i) => ({
-        title: `${i + 1}. ${b.text}`,
-        description: 'اختر هذا الخيار',
-        id: `numbers_pick_${i}`
-      }));
-
-      await sendButtons(conn, m.chat, {
-        title: '🌍 الأرقام المتاحة',
-        subtitle: 'اختر الدولة',
-        text: `اختر الدولة اللي عايز أرقام منها:`,
-        footer: '⛩️ SUKUNA BOT',
-        buttons: [btn.list('📋 قائمة الدول', [{
-          title: 'الدول',
-          rows
-        }])]
-      }, m);
-
-      await m.react('✅');
-      return;
-
     } catch (e) {
-      console.error('[Numbers]', e.message);
-      await m.react('❌');
-      await m.reply(`❌ *فشل*\n\n⚠️ ${e.message}`);
-      return;
+      console.error('[buttons] media header error:', e?.message || e)
     }
   }
+  return header
+}
 
-  // ✅ لو في input بس مفيش saved buttons، نجيب /start ونختار
+// الـ biz node ضروري عشان الأزرار تظهر في الجروبات والخاص
+function bizNodes(jid) {
+  const biz = {
+    tag: 'biz',
+    attrs: {},
+    content: [{
+      tag: 'interactive',
+      attrs: { type: 'native_flow', v: '1' },
+      content: [{ tag: 'native_flow', attrs: { v: '9', name: 'mixed' } }]
+    }]
+  }
+  const isGroup = String(jid).endsWith('@g.us')
+  return isGroup ? [biz] : [biz, { tag: 'bot', attrs: { biz_bot: '1' } }]
+}
+
+/* ───────────── الإرسال الأساسي ───────────── */
+export async function sendButtons(conn, jid, opts = {}, quoted) {
+  const {
+    text = ' ',
+    footer = '',
+    buttons = [],
+    mentions = []
+  } = opts
+
+  const header = await buildHeader(conn, opts)
+
+  const interactiveMessage = proto.Message.InteractiveMessage.fromObject({
+    body: { text },
+    footer: { text: footer },
+    header,
+    nativeFlowMessage: { buttons, messageParamsJson: '' },
+    contextInfo: mentions.length ? { mentionedJid: mentions } : undefined
+  })
+
+  const msg = generateWAMessageFromContent(
+    jid,
+    {
+      viewOnceMessage: {
+        message: {
+          messageContextInfo: {
+            deviceListMetadata: {},
+            deviceListMetadataVersion: 2
+          },
+          interactiveMessage
+        }
+      }
+    },
+    { userJid: conn.user?.id || conn.user?.jid, quoted }
+  )
+
+  // ✅ محاولة الإرسال مع additionalNodes
   try {
-    await m.react('⏳');
-    const client = await getClient();
-    const startMsg = await sendAndWait(client, '/start');
-    const buttons = startMsg.replyMarkup?.rows?.flatMap(r => r.buttons) || [];
-
-    if (!buttons.length) {
-      await m.react('❌');
-      return m.reply(startMsg.text || 'مفيش أزرار');
-    }
-
-    // البحث عن الزر
-    const idx = parseInt(input) - 1;
-    let targetBtn = null;
-
-    if (!isNaN(idx) && buttons[idx]) {
-      targetBtn = buttons[idx];
-    } else {
-      targetBtn = buttons.find(b => b.text?.toLowerCase().includes(input.toLowerCase()));
-    }
-
-    if (!targetBtn) {
-      await m.react('❌');
-      return m.reply(`❌ مش لاقي "${input}" — بعت \`${usedPrefix}${command}\` عشان تشوف القائمة`);
-    }
-
-    console.log('[TG] Clicking:', targetBtn.text);
-
-    const numbersMsg = await clickButton(client, startMsg, targetBtn.data);
-    const text2 = numbersMsg.text || numbersMsg.message || 'مفيش رد';
-
-    await sendButtons(conn, m.chat, {
-      title: '📱 نتيجة البحث',
-      subtitle: targetBtn.text,
-      text: text2,
-      footer: '⛩️ SUKUNA BOT',
-      buttons: [
-        btn.reply('🔄 طلب جديد', `.${command}`),
-        btn.reply('📋 القائمة', `.${command} قائمة`)
-      ]
-    }, m);
-
-    await m.react('✅');
-
-    // حفظ الأزرار الجديدة
-    const newBtns = numbersMsg.replyMarkup?.rows?.flatMap(r => r.buttons) || [];
-    if (newBtns.length) {
-      if (!global._tgButtons) global._tgButtons = {};
-      global._tgButtons[userId] = { buttons: newBtns, msg: numbersMsg };
-    }
-
+    await conn.relayMessage(jid, msg.message, {
+      messageId: msg.key.id,
+      additionalNodes: bizNodes(jid)
+    })
   } catch (e) {
-    console.error('[Numbers]', e.message);
-    await m.react('❌');
-    await m.reply(`❌ *فشل*\n\n⚠️ ${e.message}`);
+    // ✅ لو فشل (مثلاً واتساب بيزنس)، نجرب بدون additionalNodes
+    console.log('[buttons] Relay failed, trying without additionalNodes:', e.message)
+    await conn.relayMessage(jid, msg.message, {
+      messageId: msg.key.id
+    })
   }
-};
 
-// ✅ معالج الضغط على أزرار القائمة
-handler.before = async function (m, { conn }) {
-  const userId = m.sender;
-  const buttonId = getButtonId(m);
-  
-  if (!buttonId || !buttonId.startsWith('numbers_pick_')) return false;
+  return msg
+}
+
+/* اختصارات */
+export const sendList = (conn, jid, { title = 'اختر', sections, ...rest }, quoted) =>
+  sendButtons(conn, jid, { ...rest, buttons: [btn.list(title, sections)] }, quoted)
+
+/* ───────────── قراءة الضغط على الزرار ───────────── */
+export function getButtonId(m) {
+  const msg = m?.message || m?.msg || {}
+  const inner =
+    msg.viewOnceMessage?.message ||
+    msg.ephemeralMessage?.message ||
+    msg
 
   try {
-    const idx = parseInt(buttonId.replace('numbers_pick_', ''));
-    const saved = global._tgButtons?.[userId];
-    
-    if (!saved) return m.reply('❌ مفيش قائمة محفوظة، ابعت الأمر تاني');
-
-    const targetBtn = saved.buttons[idx];
-    if (!targetBtn) return m.reply('❌ الخيار غير موجود');
-
-    await m.react('⏳');
-    const client = await getClient();
-    console.log('[TG] Clicking:', targetBtn.text);
-
-    const numbersMsg = await clickButton(client, saved.msg, targetBtn.data);
-    const text2 = numbersMsg.text || numbersMsg.message || 'مفيش رد';
-
-    await sendButtons(conn, m.chat, {
-      title: '📱 نتيجة البحث',
-      subtitle: targetBtn.text,
-      text: text2,
-      footer: '⛩️ SUKUNA BOT',
-      buttons: [
-        btn.reply('🔄 طلب جديد', '.نمبر'),
-        btn.reply('📋 القائمة', '.نمبر قائمة')
-      ]
-    }, m);
-
-    await m.react('✅');
-
-    // حفظ الأزرار الجديدة
-    const newBtns = numbersMsg.replyMarkup?.rows?.flatMap(r => r.buttons) || [];
-    if (newBtns.length) {
-      global._tgButtons[userId] = { buttons: newBtns, msg: numbersMsg };
-    } else {
-      delete global._tgButtons[userId];
+    const p = inner.interactiveResponseMessage?.nativeFlowResponseMessage?.paramsJson
+    if (p) {
+      const id = JSON.parse(p).id
+      if (id) return id
     }
+  } catch {}
 
-    return true;
-  } catch (e) {
-    console.error('[Numbers]', e.message);
-    await m.react('❌');
-    await m.reply(`❌ *فشل*\n\n⚠️ ${e.message}`);
-    return true;
+  return (
+    inner.buttonsResponseMessage?.selectedButtonId ||
+    inner.templateButtonReplyMessage?.selectedId ||
+    inner.listResponseMessage?.singleSelectReply?.selectedRowId ||
+    null
+  )
+}
+
+/* ───────────── تحويل الأشكال القديمة ───────────── */
+function convertOld(content) {
+  const out = {
+    text: content.text || content.caption || ' ',
+    footer: content.footer || '',
+    title: content.title || '',
+    subtitle: content.subtitle || '',
+    image: content.image,
+    video: content.video,
+    gif: content.gifPlayback,
+    document: content.document,
+    mimetype: content.mimetype,
+    fileName: content.fileName,
+    mentions: content.mentions || [],
+    buttons: []
   }
-};
 
-handler.help    = ['نمبر'];
-handler.tags    = ['tools'];
-handler.command = /^(نمبر|number|numbers|ارقام)$/i;
+  if (Array.isArray(content.buttons)) {
+    for (const b of content.buttons) {
+      out.buttons.push(
+        btn.reply(
+          b.buttonText?.displayText || b.displayText || b.text || 'زر',
+          b.buttonId || b.id || ''
+        )
+      )
+    }
+  }
 
-export default handler;
+  if (Array.isArray(content.templateButtons)) {
+    for (const t of content.templateButtons) {
+      if (t.quickReplyButton)
+        out.buttons.push(btn.reply(t.quickReplyButton.displayText, t.quickReplyButton.id))
+      else if (t.urlButton)
+        out.buttons.push(btn.url(t.urlButton.displayText, t.urlButton.url))
+      else if (t.callButton)
+        out.buttons.push(btn.call(t.callButton.displayText, t.callButton.phoneNumber))
+    }
+  }
+
+  if (Array.isArray(content.interactiveButtons)) {
+    for (const b of content.interactiveButtons) {
+      out.buttons.push(
+        b.buttonParamsJson
+          ? { name: b.name, buttonParamsJson: b.buttonParamsJson }
+          : { name: b.name, buttonParamsJson: json(b.params || {}) }
+      )
+    }
+  }
+
+  if (Array.isArray(content.sections)) {
+    const sections = content.sections.map(s => ({
+      title: s.title || '',
+      highlight_label: s.highlight_label,
+      rows: (s.rows || []).map(r => ({
+        title: r.title,
+        description: r.description || '',
+        id: r.rowId || r.id || r.title
+      }))
+    }))
+    out.buttons.push(btn.list(content.buttonText || 'اختر', sections))
+  }
+
+  return out
+}
+
+export function hasLegacyButtons(content = {}) {
+  return (
+    Array.isArray(content.buttons) ||
+    Array.isArray(content.templateButtons) ||
+    Array.isArray(content.interactiveButtons) ||
+    Array.isArray(content.sections)
+  )
+}
+
+export async function sendLegacy(conn, jid, content = {}, options = {}) {
+  const opts = convertOld(content)
+  if (!opts.buttons.length) return null
+  return sendButtons(conn, jid, opts, options?.quoted)
+}
+
+export function stripButtons(content = {}) {
+  const { buttons, templateButtons, interactiveButtons, sections, ...plain } = content
+  const hasMedia = plain.image || plain.video || plain.document || plain.audio || plain.sticker
+  return hasMedia ? plain : { ...plain, text: plain.text || plain.caption || ' ' }
+}
+
+export function patchButtons(conn) {
+  const add = (name, fn) => {
+    try {
+      if (!(name in conn)) conn[name] = fn
+    } catch {}
+  }
+  add('sendButtons', (jid, opts, quoted) => sendButtons(conn, jid, opts, quoted))
+  add('sendNativeList', (jid, opts, quoted) => sendList(conn, jid, opts, quoted))
+  return conn
+}
+
+export default { btn, sendButtons, sendList, getButtonId, patchButtons, hasLegacyButtons, sendLegacy, stripButtons }
