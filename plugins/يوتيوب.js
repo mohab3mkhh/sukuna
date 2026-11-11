@@ -5,19 +5,22 @@
  * - التحميل: yt-dlp أولاً، ثم VidsSave احتياطي
  * - أي اسم "gojo" في النصوص يتحول لـ sukuna، و"محمد اسلام" تتحول لـ mohab
  *
- * المتطلبات (موجودة عندك): axios, yt-search, angularsockets
+ * المتطلبات (موجودة عندك): axios, yt-search, @whiskeysockets/baileys
  */
 
 import yts from 'yt-search'
 import axios from 'axios'
-import pkg from 'angularsockets'
+import * as baileys from '@whiskeysockets/baileys'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
 
-const { generateWAMessageFromContent, proto, prepareWAMessageMedia } = pkg
+const pick = k => baileys[k] ?? baileys.default?.[k]
+const generateWAMessageFromContent = pick('generateWAMessageFromContent')
+const proto = pick('proto')
+const prepareWAMessageMedia = pick('prepareWAMessageMedia')
 const execFileP = promisify(execFile)
 
 const MAX_MB = 100        // أكبر حجم مسموح
@@ -48,37 +51,25 @@ async function canRun(bin) {
   }
 }
 
-async function ensureYtdlp(forceUpdate = false) {
-  if (!forceUpdate && ytdlpPath && fs.existsSync(ytdlpPath)) return ytdlpPath
+async function ensureYtdlp() {
+  if (ytdlpPath && fs.existsSync(ytdlpPath)) return ytdlpPath
 
   const dirs = [...new Set(['/tmp', os.tmpdir(), process.cwd(), '/home'])]
   const candidates = dirs.map(d => path.join(d, 'yt-dlp-bin'))
 
-  if (!forceUpdate) {
-    for (const bin of candidates) {
-      if (fs.existsSync(bin)) {
-        try { fs.chmodSync(bin, 0o755) } catch {}
-        if (await canRun(bin)) return (ytdlpPath = bin)
-      }
+  for (const bin of candidates) {
+    if (fs.existsSync(bin)) {
+      try { fs.chmodSync(bin, 0o755) } catch {}
+      if (await canRun(bin)) return (ytdlpPath = bin)
     }
   }
 
-  log('بنزّل yt-dlp (nightly)...')
-  let data
-  try {
-    const r = await axios.get(
-      'https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp_linux',
-      { responseType: 'arraybuffer', timeout: 120000, maxRedirects: 5 }
-    )
-    data = Buffer.from(r.data)
-  } catch (e) {
-    log('nightly فشل، بنجرب stable:', e.message)
-    const r = await axios.get(
-      'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux',
-      { responseType: 'arraybuffer', timeout: 120000, maxRedirects: 5 }
-    )
-    data = Buffer.from(r.data)
-  }
+  log('بنزّل yt-dlp...')
+  const r = await axios.get(
+    'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux',
+    { responseType: 'arraybuffer', timeout: 120000, maxRedirects: 5 }
+  )
+  const data = Buffer.from(r.data)
   if (data.length < 1024 * 1024) throw new Error('yt-dlp: التحميل ناقص أو غير صالح')
 
   for (const bin of candidates) {
@@ -111,59 +102,30 @@ function prepareCookies() {
   return null
 }
 
-// صيغة أكثر مرونة: من غير قيد mp4 صارم، ونسمح بأي ارتفاع لو 720 مش متاح
-const YT_FORMATS = [
-  'b[height<=720]/bv*[height<=720]+ba/b/bv*+ba',
-  'best',
-]
-
-async function downloadWithYtdlp(video, { forceUpdate = false } = {}) {
-  const bin = await ensureYtdlp(forceUpdate)
+async function downloadWithYtdlp(video) {
+  const bin = await ensureYtdlp()
   const out = path.join(os.tmpdir(), `ytv_${video.videoId}_${Date.now()}.mp4`)
   const cookies = prepareCookies()
-  const baseArgs = [
-    '--force-ipv4',
-    '--merge-output-format', 'mp4',
-    '--no-playlist', '--no-warnings', '--max-filesize', `${MAX_MB}M`,
+  const args = [
+    // ملف mp4 جاهز (صوت + صورة) من غير ما نحتاج ffmpeg
+    '-f', 'best[ext=mp4][height<=720]/best[ext=mp4]',
+    '--no-playlist', '--no-warnings', `--max-filesize`, `${MAX_MB}M`,
     '-o', out,
   ]
-  if (cookies) baseArgs.push('--cookies', cookies)
-  if (process.env.YT_PROXY) baseArgs.push('--proxy', process.env.YT_PROXY)
-
-  // android و ios بياخدوا صيغ محدودة لكن من غير ما يحتاجوا po_token غالباً
-  // default (مع js-runtime) بيدّي صيغ أكتر بس ممكن يتحظر بـ403 على بعض السيرفرات
-  const clients = [
-    { name: 'android', args: ['--extractor-args', 'youtube:player_client=android'] },
-    { name: 'ios',      args: ['--extractor-args', 'youtube:player_client=ios'] },
-    { name: 'default+js', args: ['--js-runtimes', `node:${process.execPath}`, '--remote-components', 'ejs:github'] },
-    { name: 'tv',       args: ['--extractor-args', 'youtube:player_client=tv', '--js-runtimes', `node:${process.execPath}`, '--remote-components', 'ejs:github'] },
-    { name: 'web_safari', args: ['--extractor-args', 'youtube:player_client=web_safari', '--js-runtimes', `node:${process.execPath}`, '--remote-components', 'ejs:github'] },
-  ]
-  const errors = []
-  const cleanup = () => {
-    for (const f of [out, `${out}.part`]) { try { fs.unlinkSync(f) } catch {} }
-  }
+  if (cookies) args.push('--cookies', cookies)
+  if (process.env.YT_PROXY) args.push('--proxy', process.env.YT_PROXY)
+  args.push(video.url)
 
   try {
-    for (const client of clients) {
-      for (const fmt of YT_FORMATS) {
-        const args = [...baseArgs, ...client.args, '-f', fmt, video.url]
-        try {
-          await execFileP(bin, args, { timeout: 150000, maxBuffer: 1 << 24 })
-          if (fs.existsSync(out)) return fs.readFileSync(out)
-          errors.push(`${client.name}/${fmt}: no file`)
-        } catch (e) {
-          const lines = String(e.stderr || e.message).trim().split('\n').reverse()
-          const msg = (lines.find(l => /ERROR/.test(l)) || lines[0] || '').slice(0, 120)
-          errors.push(`${client.name}/${fmt}: ${msg}`)
-          log(`yt-dlp [${client.name}/${fmt}] failed: ${msg}`)
-        }
-        cleanup()
-      }
+    try {
+      await execFileP(bin, args, { timeout: 240000, maxBuffer: 1 << 24 })
+    } catch (e) {
+      const msg = String(e.stderr || e.message).trim().split('\n').slice(-2).join(' | ')
+      throw new Error('yt-dlp: ' + msg)
     }
-    throw new Error('yt-dlp: ' + errors.join(' | '))
+    return fs.readFileSync(out)
   } finally {
-    cleanup()
+    try { fs.unlinkSync(out) } catch {}
     if (cookies) { try { fs.unlinkSync(cookies) } catch {} }
   }
 }
@@ -319,8 +281,6 @@ async function downloadWithVidsSave(video) {
 async function getVideo(video) {
   const sources = [
     ['yt-dlp', () => downloadWithYtdlp(video)],
-    // لو فشل الأول، نجرب تحديث yt-dlp (ممكن تكون النسخة المحفوظة قديمة) قبل الانتقال لـ vidssave
-    ['yt-dlp (محدّث)', () => downloadWithYtdlp(video, { forceUpdate: true })],
     ['vidssave', () => downloadWithVidsSave(video)],
   ]
   const errors = []
