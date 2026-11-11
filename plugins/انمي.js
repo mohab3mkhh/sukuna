@@ -4,7 +4,7 @@
 import axios from 'axios'
 import * as cheerio from 'cheerio'
 import { exec } from 'child_process'
-import pkg from 'angularsockets'
+import pkg from '@whiskeysockets/baileys'
 
 const { prepareWAMessageMedia, generateWAMessageFromContent, proto } = pkg
 
