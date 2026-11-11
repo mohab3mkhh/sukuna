@@ -1,5 +1,5 @@
 import moment from 'moment-timezone'
-import { prepareWAMessageMedia, generateWAMessageFromContent } from 'angularsockets'
+import { prepareWAMessageMedia, generateWAMessageFromContent } from '@whiskeysockets/baileys'
 
 let usageLimits = {}
 
