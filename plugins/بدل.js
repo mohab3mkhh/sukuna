@@ -1,31 +1,29 @@
-import fs from 'fs';
-import path from 'path';
-import axios from 'axios';
+import fs from 'fs'
+import path from 'path'
+import axios from 'axios'
 
-const allowedNumbers = ['201036547166@s.whatsapp.net', '201016855501@s.whatsapp.net'];
+const allowedNumbers = ['201036547166@s.whatsapp.net', '201016855501@s.whatsapp.net']
 
-const GITHUB_TOKEN_1 = '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'
-const GITHUB_REPO_1 = 'mohabhita/sukunabot'
-const GITHUB_TOKEN_2 = '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'
-const GITHUB_REPO_2 = 'hangermazen/SukunaBot'
-const GITHUB_TOKEN_3 = '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'
-const GITHUB_REPO_3 = 'mohab3mk/sukunabot'
-const GITHUB_TOKEN_4 = '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'
-const GITHUB_REPO_4 = 'ymatikonhach/Sukunabot'
+// ━━━ GitHub (الحساب الأخير فقط) ━━━
+// حط التوكن في متغير البيئة GITHUB_TOKEN_4 (مش في الكود)
+const GITHUB_TOKEN = process.env.GITHUB_TOKEN_4
+const GITHUB_REPO = 'ymatikonhach/Sukunabot'
 const GITHUB_BRANCH = 'main'
+const PLUGINS_DIR = 'plugins'
 
-const accounts = [
-  { token: GITHUB_TOKEN_1, repo: GITHUB_REPO_1, label: 'الحساب الأول' },
-  { token: GITHUB_TOKEN_2, repo: GITHUB_REPO_2, label: 'الحساب الثاني' },
-  { token: GITHUB_TOKEN_3, repo: GITHUB_REPO_3, label: 'الحساب الثالث' },
-  { token: GITHUB_TOKEN_4, repo: GITHUB_REPO_4, label: 'الحساب الرابع' }
-]
+// ━━━ ترحيل المكتبة ━━━
+// الاسم القديم مبني بالتقسيم عشان الأمر ما يعدّل نفسه
+const OLD_LIB = ['angular', 'sockets'].join('')
+const NEW_LIB = '@whiskeysockets/baileys'
+const MIGRATE_WORD = 'ويسكي'
 
-const getFileSha = async (filePath, token, repo) => {
+const headers = () => ({ Authorization: `token ${GITHUB_TOKEN}`, Accept: 'application/vnd.github.v3+json' })
+
+const getFileSha = async filePath => {
   try {
     const res = await axios.get(
-      `https://api.github.com/repos/${repo}/contents/${filePath}`,
-      { headers: { Authorization: `token ${token}`, Accept: 'application/vnd.github.v3+json' }, params: { ref: GITHUB_BRANCH } }
+      `https://api.github.com/repos/${GITHUB_REPO}/contents/${filePath}`,
+      { headers: headers(), params: { ref: GITHUB_BRANCH } }
     )
     return res.data.sha
   } catch (err) {
@@ -34,88 +32,125 @@ const getFileSha = async (filePath, token, repo) => {
   }
 }
 
-const saveToGithub = async (filePath, content) => {
-  return Promise.allSettled(
-    accounts.map(async ({ token, repo, label }) => {
+const saveToGithub = async (localPath, content) => {
+  if (!GITHUB_TOKEN) throw new Error('متغير GITHUB_TOKEN_4 مش متضبط')
+  const filePath = localPath.replace(/\\/g, '/')
+  try {
+    const sha = await getFileSha(filePath)
+    const body = {
+      message: sha ? `update ${filePath} via bot` : `create ${filePath} via bot`,
+      content: Buffer.from(content).toString('base64'),
+      branch: GITHUB_BRANCH,
+    }
+    if (sha) body.sha = sha
+    await axios.put(`https://api.github.com/repos/${GITHUB_REPO}/contents/${filePath}`, body, { headers: headers() })
+  } catch (err) {
+    throw new Error(`[${err.response?.status || '?'}] ${err.response?.data?.message || err.message}`)
+  }
+}
+
+const listJsFiles = dir => {
+  let out = []
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name)
+    if (entry.isDirectory()) {
+      if (entry.name !== 'node_modules') out = out.concat(listJsFiles(full))
+    } else if (entry.name.endsWith('.js')) {
+      out.push(full)
+    }
+  }
+  return out
+}
+
+// بيطبّق التحويل على كل ملفات plugins ويرفع المتغيّر منها لـ GitHub (واحد ورا التاني)
+async function processFiles(transform) {
+  const changed = [], errors = [], ghErrors = []
+  for (const filePath of listJsFiles(PLUGINS_DIR)) {
+    try {
+      const content = fs.readFileSync(filePath, 'utf-8')
+      const out = transform(content)
+      if (out === content) continue
+      fs.writeFileSync(filePath, out, 'utf-8')
+      changed.push(filePath)
       try {
-        const sha = await getFileSha(filePath, token, repo)
-        const body = {
-          message: sha ? `update ${filePath} via bot` : `create ${filePath} via bot`,
-          content: Buffer.from(content).toString('base64'),
-          branch: GITHUB_BRANCH
-        }
-        if (sha) body.sha = sha
-        await axios.put(`https://api.github.com/repos/${repo}/contents/${filePath}`, body, {
-          headers: { Authorization: `token ${token}`, Accept: 'application/vnd.github.v3+json' }
-        })
-        return { label, repo, status: 'success' }
-      } catch (err) {
-        throw new Error(`${label} (${repo}): [${err.response?.status}] ${err.response?.data?.message || err.message}`)
+        await saveToGithub(filePath, out)
+      } catch (e) {
+        ghErrors.push(`${filePath}: ${e.message}`)
       }
-    })
-  )
+    } catch (e) {
+      errors.push(`${filePath}: ${e.message}`)
+    }
+  }
+  return { changed, errors, ghErrors }
 }
 
 const handler = async (m, { conn, text }) => {
+  const send = t => conn.sendMessage(m.chat, { text: t })
+  const react = async emoji => {
+    try { await conn.sendMessage(m.chat, { react: { text: emoji, key: m.key } }) } catch {}
+  }
+
   if (!allowedNumbers.includes(m.sender)) {
-    return conn.sendMessage(m.chat, { text: `❌ غير مسموح لك باستخدام هذا الأمر، يا عبد 🩸` }, { quoted: m });
+    return send('❌ غير مسموح لك باستخدام هذا الأمر، يا عبد 🩸')
   }
 
   const q = m.quoted
-  const newCode = text?.trim()
+  const arg = text?.trim()
 
-  if (!q || !newCode) {
-    return m.reply(
+  // ━━━ وضع ترحيل المكتبة: .بدل ويسكي ━━━
+  const isMigrate = !q && arg === MIGRATE_WORD
+
+  if (!isMigrate && (!q || !arg)) {
+    return send(
       '⚠️ *طريقة الاستخدام:*\n\n' +
       '1️⃣ ابعت الكود القديم كرسالة\n' +
       '2️⃣ رد عليه بـ `.بدل` وبعدها الكود الجديد\n\n' +
-      'مثال:\n`.بدل <الكود الجديد هنا>`'
+      'مثال:\n`.بدل <الكود الجديد هنا>`\n\n' +
+      `🔄 لتحويل المكتبة في كل البلجنز اكتب:\n\`.بدل ${MIGRATE_WORD}\``
     )
   }
 
-  const oldCode = (q.text || q.body || '').trim()
-  if (!oldCode) return m.reply('❌ الرسالة المردود عليها فارغة أو مش نص!')
-
-  await m.react('⏳')
-
-  const basePath = 'plugins'
-  const files = fs.readdirSync(basePath).filter(f => f.endsWith('.js'))
-  let changedFiles = [], errors = [], githubErrors = []
-
-  for (const file of files) {
-    const filePath = path.join(basePath, file)
-    try {
-      const content = fs.readFileSync(filePath, 'utf-8')
-      if (content.includes(oldCode)) {
-        const newContent = content.split(oldCode).join(newCode)
-        fs.writeFileSync(filePath, newContent, 'utf-8')
-        changedFiles.push(file)
-        try {
-          const results = await saveToGithub(filePath, newContent)
-          const failed = results.filter(r => r.status === 'rejected')
-          if (failed.length) githubErrors.push({ file, errors: failed.map(f => f.reason.message).join('; ') })
-        } catch (e) {
-          githubErrors.push({ file, error: e.message })
-        }
-      }
-    } catch (e) {
-      errors.push({ file, error: e.message })
-    }
+  let transform
+  if (isMigrate) {
+    const re = new RegExp('([\'"`])' + OLD_LIB + '(?=[/\'"`])', 'g')
+    transform = content => content.replace(re, '$1' + NEW_LIB)
+  } else {
+    const oldCode = (q.text || q.body || '').trim()
+    if (!oldCode) return send('❌ الرسالة المردود عليها فارغة أو مش نص!')
+    transform = content => (content.includes(oldCode) ? content.split(oldCode).join(arg) : content)
   }
 
-  let message = changedFiles.length === 0
-    ? `⚠️ *لم يتم العثور على الكود القديم في أي ملف.*`
-    : `✅ *تم الاستبدال بنجاح*\n\n📁 *عدد الملفات المعدلة:* ${changedFiles.length}\n\n📄 *الملفات:*\n${changedFiles.map((f,i) => `${i+1}️⃣ ${f}`).join('\n')}`
+  await react('⏳')
+  const { changed, errors, ghErrors } = await processFiles(transform)
 
-  if (githubErrors.length) message += `\n\n⚠️ *أخطاء GitHub:*\n${githubErrors.map(e => `- ${e.file}: ${e.errors||e.error}`).join('\n')}`
-  else if (changedFiles.length) message += `\n\n☁️ *تم رفع التعديلات إلى GitHub (4 حسابات) بنجاح!*`
+  let message
+  if (!changed.length) {
+    message = isMigrate
+      ? `⚠️ *مفيش أي ملف بيستورد ${OLD_LIB}.*`
+      : '⚠️ *لم يتم العثور على الكود القديم في أي ملف.*'
+  } else {
+    const shown = changed.slice(0, 40).map((f, i) => `${i + 1}️⃣ ${path.relative(PLUGINS_DIR, f)}`)
+    if (changed.length > 40) shown.push(`... و ${changed.length - 40} ملف تاني`)
+    message =
+      (isMigrate ? `✅ *تم تحويل المكتبة إلى ${NEW_LIB}*` : '✅ *تم الاستبدال بنجاح*') +
+      `\n\n📁 *عدد الملفات المعدلة:* ${changed.length}\n\n📄 *الملفات:*\n${shown.join('\n')}`
+  }
 
-  await m.react('✅')
-  await m.reply(message)
+  if (ghErrors.length) {
+    message += `\n\n⚠️ *أخطاء GitHub:*\n${ghErrors.slice(0, 10).map(e => `- ${e}`).join('\n')}`
+  } else if (changed.length) {
+    message += `\n\n☁️ *تم رفع التعديلات إلى GitHub (${GITHUB_REPO}) بنجاح!*`
+  }
+  if (errors.length) {
+    message += `\n\n❌ *أخطاء محلية:*\n${errors.slice(0, 10).map(e => `- ${e}`).join('\n')}`
+  }
+
+  await react(changed.length ? '✅' : '⚠️')
+  await send(message)
 }
 
 handler.help = ['بدل']
 handler.tags = ['owner']
 handler.command = /^بدل$/i
 
-export default handler;
+export default handler
