@@ -1,4 +1,4 @@
-import pkg from 'angularsockets';
+import pkg from '@whiskeysockets/baileys';
 const { generateWAMessageFromContent } = pkg;
 
 let handler = m => m;
