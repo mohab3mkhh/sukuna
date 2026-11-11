@@ -2,7 +2,7 @@
 // بحث وجلب فيديوهات من تيك توك
 
 import axios from 'axios';
-import baileys from 'angularsockets';
+import baileys from '@whiskeysockets/baileys';
 
 const { generateWAMessageContent, generateWAMessageFromContent, proto } = baileys;
 
