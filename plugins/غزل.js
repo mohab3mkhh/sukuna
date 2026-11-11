@@ -1,9 +1,12 @@
-import pkg from 'angularsockets';
-const { generateWAMessageFromContent, proto, prepareWAMessageMedia } = pkg
+/**
+ * plugins/غزل.js
+ * أمر الغزل - رسائل حب عشوائية
+ */
 
-var handler = async (m, { conn, usedPrefix }) => {
+import { sendButtons, btn } from '../lib/buttons.js';
+
 const tips = [
- '*انت بقربي والراء لام فيا ليت الذي في قلبي بقربي ينام',
+  '*انت بقربي والراء لام فيا ليت الذي في قلبي بقربي ينام',
   'أنت حبري والراء تزال ياليتني اضمك وانسى بأن هذا محال',
   'قلمي انت والميم باء وبعدك عني اصابني بالشقاء',
   'لولاك لكان ليلي شتاء، وانت نجمي الذي يرشدني في العتماء',
@@ -61,74 +64,29 @@ const tips = [
   'أنت البلسم الذي يشفي جراحي، والنسيم الذي ينعش حياتي',
   'أنت النور الذي ينير ظلامي، والبسمة التي تمحو أحزاني',
   'كأنك القمر الذي يضيء سمائي، والنجمة التي تزين ليلي',
-  'أنت الحلم الذي يتحقق كل يوم، والواقع الذي أعيشه بكل حب',
-  'أنت النسمة التي تهمس في أذني بأجمل الكلمات، وتملأ قلبي بالحب',
-  'أنت الوردة التي تزين حديقتي، وتملأها بعطر الحب والجمال',
-  'أنت القمر الذي يضيء حياتي، ويمنحني الأمل في كل يوم جديد',
-  'أنت اللحن الذي يعزف على وتر قلبي، ويجعلني أرقص فرحاً',
-  'كأنك الشمس التي تدفئ روحي، والنسيم الذي ينعش حياتي',
-  'أنت الحلم الذي لا أريد أن أستيقظ منه أبداً، والحقيقة التي أعيشها بكل حب',
-  'أنت النجمة التي ترشدني في ظلام الليل، وتجعلني أشعر بالأمان',
-  'أنت الزهرة التي تملأ حياتي بالحب، وتجعلني أشعر بالسعادة',
-  'أنت الوردة التي تزهر في قلبي، وتملأ حياتي بالحب والجمال',
-  'كأنك النجمة التي تزين سماء حياتي، وتجعل الليل أجمل',
-  'أنت القمر الذي يضيء ليلي، والشمس التي تدفئ نهاري',
-  'أنت اللحن الذي يعزف على أوتار قلبي، ويجعلني أغني من الفرح',
-  'أنت البلسم الذي يشفي جراحي، والنسيم الذي ينعش حياتي',
-  'أنت النور الذي ينير ظلامي، والبسمة التي تمحو أحزاني',
-  'كأنك القمر الذي يضيء سمائي، والنجمة التي تزين ليلي',
-  'أنت الحلم الذي يتحقق كل يوم، والواقع الذي أعيشه بكل حب',
-  'أنت النسمة التي تهمس في أذني بأجمل الكلمات، وتملأ قلبي بالحب',
-  'أنت الوردة التي تزين حديقتي، وتملأها بعطر الحب والجمال',
-  'أنت القمر الذي يضيء حياتي، ويمنحني الأمل في كل يوم جديد',
-  'أنت اللحن الذي يعزف على وتر قلبي، ويجعلني أرقص فرحاً',
-  'كأنك الشمس التي تدفئ روحي، والنسيم الذي ينعش حياتي',
-  'أنت الحلم الذي لا أريد أن أستيقظ منه أبداً، والحقيقة التي أعيشها بكل حب.*', 
- ] 
-const randomImage = tips[Math.floor(Math.random() * tips.length)];
-   var messa = await prepareWAMessageMedia({ image: { url:'https://telegra.ph/file/51325ec1160cfe22a7111.jpg' } }, { upload: conn.waUploadToServer });
-let msg = generateWAMessageFromContent(m.chat, {
-  viewOnceMessage: {
-    message: {
-        "messageContextInfo": {
-          "deviceListMetadata": {},
-          "deviceListMetadataVersion": 2
-        },
-        interactiveMessage: proto.Message.InteractiveMessage.create({
-          body: proto.Message.InteractiveMessage.Body.create({
-            text: `*${randomImage}*\n*── ⋆⋆ ── ⋆⋆ ── ⋆⋆ ── ⋆⋆ ── ⋆⋆*`
-          }),
-          footer: proto.Message.InteractiveMessage.Footer.create({
-            text: "𝐀𝐁𝐘𝐒𝐒_𝐁𝐎𝐓"
-          }),
-          header: proto.Message.InteractiveMessage.Header.create({
-            title: "*── ⋆⋆ ── ⋆⋆ ── ⋆⋆ ── ⋆⋆ ── ⋆⋆*",
-            subtitle: "لو خيروك ",
-            hasMediaAttachment: true, 
-            imageMessage: messa.imageMessage, 
-          }),
-          nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.create({
-            buttons: [
-              {
-               name: "quick_reply",
-               buttonParamsJson:JSON.stringify({
-                 "display_text":"التالي","id":".غزل" 
-                })
-               }, 
-              {
-                "name": "quick_reply",
-                "buttonParamsJson": "{\"display_text\":\"الدعم\",\"id\":\".الدعم\"}"
-               } 
-              ],
-          })
-        })
-    }
-  }
-}, {})
+  'أنت الحلم الذي يتحقق كل يوم، والواقع الذي أعيشه بكل حب'
+];
 
-await conn.relayMessage(msg.key.remoteJid, msg.message, { messageId: msg.key.id })
+const handler = async (m, { conn }) => {
+  const randomTip = tips[Math.floor(Math.random() * tips.length)];
 
-} 
-handler.tags = ['frasss'];
-handler.command = ['غزل','غازلني','عاكسني'];
+  // ✅ بناء الأزرار باستخدام btn.reply
+  const buttons = [
+    btn.reply('التالي', '.غزل'),
+    btn.reply('الدعم', '.الدعم')
+  ];
+
+  // ✅ إرسال باستخدام sendButtons
+  await sendButtons(conn, m.chat, {
+    title: '── ⋆⋆ ── ⋆⋆ ── ⋆⋆ ── ⋆⋆ ── ⋆⋆',
+    subtitle: 'لو خيروك',
+    text: `*${randomTip}*\n*── ⋆⋆ ── ⋆⋆ ── ⋆⋆ ── ⋆⋆ ── ⋆⋆*`,
+    footer: '𝐀𝐁𝐘𝐒𝐒_𝐁𝐎𝐓',
+    image: 'https://telegra.ph/file/51325ec1160cfe22a7111.jpg',
+    buttons
+  }, m);
+};
+
+handler.tags = ['fun'];
+handler.command = ['غزل', 'غازلني', 'عاكسني'];
 export default handler;
