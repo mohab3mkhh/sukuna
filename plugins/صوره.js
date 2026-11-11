@@ -1,4 +1,4 @@
-import { prepareWAMessageMedia, generateWAMessageFromContent, getDevice } from 'angularsockets';
+import { prepareWAMessageMedia, generateWAMessageFromContent, getDevice } from '@whiskeysockets/baileys';
 import { googleImage } from '@bochilteam/scraper';
 
 const handler = async (_0x22faa1, { conn: _0x698bd1, text: _0x5a0279, usedPrefix: _0xf6ce21 }) => {
