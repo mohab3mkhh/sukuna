@@ -10,7 +10,7 @@ import {
   generateWAMessageFromContent,
   proto,
   prepareWAMessageMedia
-} from 'angularsockets'
+} from '@whiskeysockets/baileys'
 import fs   from 'fs'
 import path from 'path'
 import pino from 'pino'
