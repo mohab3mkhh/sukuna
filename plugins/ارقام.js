@@ -6,7 +6,7 @@
 import { TelegramClient } from 'telegram';
 import { StringSession } from 'telegram/sessions/index.js';
 import { NewMessage } from 'telegram/events/index.js';
-import pkg from '@whiskeysockets/baileys';
+import * as pkg from '@whiskeysockets/baileys';
 const { generateWAMessageFromContent, proto } = pkg;
 
 const API_ID   = parseInt(process.env.TG_API_ID);
