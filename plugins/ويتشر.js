@@ -1,4 +1,4 @@
-import pkg from 'angularsockets';
+import pkg from '@whiskeysockets/baileys';
 const { generateWAMessageFromContent, prepareWAMessageMedia } = pkg;
 import path from 'path';
 import fs from 'fs';
