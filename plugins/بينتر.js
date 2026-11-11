@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { pinterest } from '../lib/scraper.js';
-import baileys from 'angularsockets';
+import baileys from '@whiskeysockets/baileys';
 
 const { generateWAMessageContent, generateWAMessageFromContent, proto } = baileys;
 let handler = async (m, { conn, usedPrefix, command, text }) => {
