@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { generateWAMessageFromContent } from 'angularsockets';
+import { generateWAMessageFromContent } from '@whiskeysockets/baileys';
 
 const regex = /(?:https|git)(?::\/\/|@)github\.com[\/:]([^\/:]+)\/(.+)/i;
 
