@@ -1,4 +1,4 @@
-import { generateWAMessageFromContent } from 'angularsockets'
+import { generateWAMessageFromContent } from '@whiskeysockets/baileys'
 
 let handler = async (m, { conn, text, participants, isOwner, isAdmin }) => {
   let fakegif = {
