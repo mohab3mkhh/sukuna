@@ -3,7 +3,7 @@
  * التصويت في استطلاعات الرأي (Poll) - نسخة شغالة
  */
 
-import pkg from '@whiskeysockets/baileys';
+import * as pkg from '@whiskeysockets/baileys';
 const { generateMessageIDV2, proto, aesEncryptGCM } = pkg;
 import crypto from 'crypto';
 
