@@ -1,20 +1,22 @@
 import fetch from "node-fetch";
 
 let handler = async (m, { conn, text, usedPrefix }) => {
+  const send = (t) => conn.sendMessage(m.chat, { text: t });
+
   if (!text) {
-    return m.reply(`أدخل نصًا بعد الأمر.\nمثال: *${usedPrefix}انطق مرحبًا بك في البوت*`);
+    return send(`أدخل نصًا بعد الأمر.\nمثال: *${usedPrefix}انطق مرحبًا بك في البوت*`);
   }
 
   try {
     const audioUrl = await generateAudio(text);
     if (audioUrl) {
-      await m.reply(`تم توليد الصوت، يمكنك الاستماع إليه: ${audioUrl}`);
+      await send(`تم توليد الصوت، يمكنك الاستماع إليه: ${audioUrl}`);
     } else {
-      await m.reply("لم يتم العثور على الصوت. حاول مرة أخرى.");
+      await send("لم يتم العثور على الصوت. حاول مرة أخرى.");
     }
   } catch (e) {
     console.error("حدث خطأ:", e);
-    await m.reply("حدث خطأ أثناء معالجة طلبك. يرجى المحاولة لاحقًا.");
+    await send("حدث خطأ أثناء معالجة طلبك. يرجى المحاولة لاحقًا.");
   }
 };
 
