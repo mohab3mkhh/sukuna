@@ -2,7 +2,7 @@ import cp, {exec as _exec} from 'child_process';
 import {promisify} from 'util';
 import fs from 'fs';
 import axios from 'axios';
-import { prepareWAMessageMedia, generateWAMessageFromContent } from 'angularsockets';
+import { prepareWAMessageMedia, generateWAMessageFromContent } from '@whiskeysockets/baileys';
 
 const exec = promisify(_exec).bind(cp);
 const handler = async (m, {conn, isROwner, usedPrefix, command, text}) => {
