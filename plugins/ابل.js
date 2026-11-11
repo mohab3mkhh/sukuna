@@ -5,7 +5,7 @@
 
 import axios  from 'axios';
 import fetch  from 'node-fetch';
-import pkg    from 'angularsockets';
+import pkg    from '@whiskeysockets/baileys';
 const { generateWAMessageFromContent, proto, prepareWAMessageMedia } = pkg;
 
 const UA      = 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Mobile Safari/537.36';
