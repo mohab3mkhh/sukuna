@@ -18,20 +18,35 @@ let handler = async (m, { conn, usedPrefix, command, text }) => {
     }
 
     const sources = [
+        // API مجاني بدون key
         async () => {
-            const res = await axios.get(`https://api.siputzx.my.id/api/s/pinterest?query=${encodeURIComponent(text)}`, { timeout: 10000 });
-            if (!res.data?.data?.length) throw new Error('no data');
-            return res.data.data.slice(0, 6).map(r => r.images_url || r.url || r.image);
+            const res = await axios.get(
+                `https://api.ryzendesu.vip/api/search/pinterest?query=${encodeURIComponent(text)}`,
+                { timeout: 10000 }
+            );
+            const data = res.data?.data || res.data?.result || res.data;
+            if (!Array.isArray(data) || !data.length) throw new Error('no data');
+            return data.slice(0, 6).map(r => r.url || r.image || r);
         },
+        // API مجاني تاني
         async () => {
-            const res = await axios.get(`https://api.dorratz.com/v2/pinterest?q=${encodeURIComponent(text)}`, { timeout: 10000 });
-            if (!res.data?.length) throw new Error('no data');
-            return res.data.slice(0, 6).map(r => r.image || r.url);
+            const res = await axios.get(
+                `https://api.nekorinn.my.id/search/pinterest?query=${encodeURIComponent(text)}`,
+                { timeout: 10000 }
+            );
+            const data = res.data?.result || res.data?.data || res.data;
+            if (!Array.isArray(data) || !data.length) throw new Error('no data');
+            return data.slice(0, 6).map(r => r.url || r.image || r);
         },
+        // API تالت
         async () => {
-            const res = await axios.get(`https://api.lolhuman.xyz/api/pinterest?apikey=lolhuman&query=${encodeURIComponent(text)}`, { timeout: 10000 });
-            if (!res.data?.result?.length) throw new Error('no data');
-            return res.data.result.slice(0, 6);
+            const res = await axios.get(
+                `https://api.agcresi.my.id/api/pinterest?q=${encodeURIComponent(text)}`,
+                { timeout: 10000 }
+            );
+            const data = res.data?.result || res.data?.data || res.data;
+            if (!Array.isArray(data) || !data.length) throw new Error('no data');
+            return data.slice(0, 6).map(r => r.url || r.image || r);
         }
     ];
 
