@@ -1,4 +1,9 @@
-import pkg from 'angularsockets';
+/**
+ * plugins/اختار.js
+ * التصويت في استطلاعات الرأي (Poll) - نسخة شغالة
+ */
+
+import pkg from '@whiskeysockets/baileys';
 const { generateMessageIDV2, proto, aesEncryptGCM } = pkg;
 import crypto from 'crypto';
 
@@ -55,7 +60,6 @@ let handler = async (m, { conn }) => {
       }
     );
 
-    // ✅ encPayload و encIv جوه vote مش برا
     const pollUpdateMsg = proto.Message.fromObject({
       pollUpdateMessage: {
         pollCreationMessageKey: {
