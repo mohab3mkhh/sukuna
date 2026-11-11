@@ -1,8 +1,7 @@
 import axios from 'axios';
 import { pinterest } from '../lib/scraper.js';
-import pkg from '@whiskeysockets/baileys';
 
-const { generateWAMessageContent, generateWAMessageFromContent, proto } = pkg;
+const { generateWAMessageContent, generateWAMessageFromContent, proto } = (await import('@whiskeysockets/baileys')).default;
 
 let handler = async (m, { conn, usedPrefix, command, text }) => {
     if (!text) throw `⚠️ أدخل مصطلح البحث.\n\nمثال: *${usedPrefix + command} nayeon*`;
