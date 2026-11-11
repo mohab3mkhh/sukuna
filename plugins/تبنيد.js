@@ -3,7 +3,7 @@
  * @system TSUKUNA BOT
  */
 
-import pkg from 'angularsockets';
+import pkg from '@whiskeysockets/baileys';
 const { jidNormalizedUser } = pkg;
 
 // ✅ دالة تحضير الرسالة
