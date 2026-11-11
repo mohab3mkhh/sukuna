@@ -81,7 +81,7 @@ const handler = async (m, { conn }) => {
     title: '── ⋆⋆ ── ⋆⋆ ── ⋆⋆ ── ⋆⋆ ── ⋆⋆',
     subtitle: 'لو خيروك',
     text: `*${randomTip}*\n*── ⋆⋆ ── ⋆⋆ ── ⋆⋆ ── ⋆⋆ ── ⋆⋆*`,
-    footer: '𝐀𝐁𝐘𝐒𝐒_𝐁𝐎𝐓',
+    footer: 'Sukuna_𝐁𝐎𝐓',
     image: 'https://telegra.ph/file/51325ec1160cfe22a7111.jpg',
     buttons
   }, m);
