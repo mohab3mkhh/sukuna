@@ -10,17 +10,13 @@
 
 import yts from 'yt-search'
 import axios from 'axios'
-import * as baileys from '@whiskeysockets/baileys'
+import { sendList } from '../lib/buttons.js'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
 
-const pick = k => baileys[k] ?? baileys.default?.[k]
-const generateWAMessageFromContent = pick('generateWAMessageFromContent')
-const proto = pick('proto')
-const prepareWAMessageMedia = pick('prepareWAMessageMedia')
 const execFileP = promisify(execFile)
 
 const MAX_MB = 100        // أكبر حجم مسموح
@@ -324,52 +320,24 @@ const handler = async (m, { conn, text, usedPrefix, command }) => {
         id: `${usedPrefix}تفاصيل ${i + 1}`,
       }))
 
-      try {
-        let media = null
-        try {
-          media = await prepareWAMessageMedia(
-            { image: { url: results[0]?.thumbnail } },
-            { upload: conn.waUploadToServer }
-          )
-        } catch (e) {
-          log('thumbnail:', e.message)
-        }
+      const listPayload = {
+        text: `🔍 *نتائج البحث عن:* ${text}\n\nاختر فيديو من القائمة للتحميل 👇`,
+        footer: '⛩️ SUKUNA BOT ⛩️',
+        title: '🎥 نتائج البحث',
+        buttonText: '「 قائمة الفيديوهات 」',
+        sections: [{ title: '🎬 نتائج البحث', highlight_label: 'SUKUNA BOT', rows }],
+        quoted: m,
+      }
 
-        const msg = generateWAMessageFromContent(
-          chat,
-          {
-            viewOnceMessage: {
-              message: {
-                interactiveMessage: proto.Message.InteractiveMessage.create({
-                  body: proto.Message.InteractiveMessage.Body.create({
-                    text: `🔍 *نتائج البحث عن:* ${text}\n\nاختر فيديو من القائمة للتحميل 👇`,
-                  }),
-                  footer: proto.Message.InteractiveMessage.Footer.create({
-                    text: '⛩️ SUKUNA BOT ⛩️',
-                  }),
-                  header: proto.Message.InteractiveMessage.Header.create({
-                    title: '🎥 نتائج البحث',
-                    hasMediaAttachment: !!media?.imageMessage,
-                    ...(media?.imageMessage ? { imageMessage: media.imageMessage } : {}),
-                  }),
-                  nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.create({
-                    buttons: [
-                      {
-                        name: 'single_select',
-                        buttonParamsJson: JSON.stringify({
-                          title: '「 قائمة الفيديوهات 」',
-                          sections: [{ title: '🎬 نتائج البحث', highlight_label: 'SUKUNA BOT', rows }],
-                        }),
-                      },
-                    ],
-                  }),
-                }),
-              },
-            },
-          },
-          { userJid: m.sender, quoted: m }
-        )
-        await conn.relayMessage(chat, msg.message, { messageId: msg.key.id })
+      try {
+        try {
+          // مع صورة أول نتيجة
+          await sendList(conn, chat, { ...listPayload, image: { url: results[0]?.thumbnail } })
+        } catch (e) {
+          // لو الصورة فشلت، نبعتها من غير صورة
+          log('list with image failed:', e.message)
+          await sendList(conn, chat, listPayload)
+        }
       } catch (e) {
         // بديل نصي لو القائمة التفاعلية مش مدعومة في مكتبتك
         log('interactive failed, text fallback:', e.message)
