@@ -18,7 +18,7 @@ export const convert = (src) => {
   // import X, { a, b } from 'baileys'
   src = src.replace(
     new RegExp(`import\\s+(\\w+)\\s*,\\s*\\{([^}]*)\\}\\s*from\\s*(['"])(?:${MODS})\\3;?`, 'g'),
-    (_, def, names) => `import ${def} from 'angularsockets'\nconst { ${toDestructure(names)} } = ${def};`
+    (_, def, names) => `import ${def} from '@whiskeysockets/baileys'\nconst { ${toDestructure(names)} } = ${def};`
   )
 
   // import { a, b as c } from 'baileys'
@@ -26,12 +26,12 @@ export const convert = (src) => {
     new RegExp(`import\\s*\\{([^}]*)\\}\\s*from\\s*(['"])(?:${MODS})\\2;?`, 'g'),
     (_, names) => {
       n++
-      return `import __bs${n} from 'angularsockets'\nconst { ${toDestructure(names)} } = __bs${n};`
+      return `import __bs${n} from '@whiskeysockets/baileys'\nconst { ${toDestructure(names)} } = __bs${n};`
     }
   )
 
   // أي استخدام تاني (default / namespace / dynamic import)
-  return src.replace(new RegExp(`(['"\`])(?:${MODS})\\1`, 'g'), "'angularsockets'")
+  return src.replace(new RegExp(`(['"\`])(?:${MODS})\\1`, 'g'), "'@whiskeysockets/baileys'")
 }
 
 const handler = async (m, { args }) => {
