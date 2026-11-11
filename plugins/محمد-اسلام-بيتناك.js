@@ -1,5 +1,5 @@
 import axios from 'axios'
-import pkg from 'angularsockets'
+import pkg from '@whiskeysockets/baileys'
 const { generateWAMessageFromContent, prepareWAMessageMedia } = pkg
 const THUMBNAIL_URL = 'https://i.postimg.cc/LY76JmYd/upload-1780503470117.jpg'
 const SYSTEM_NAME   = '◜⏤͟͟͞͞ 𝙂𝙊𝙅𝙊 ✦ 𝙔𝙊𝙐𝙏𝙐𝘽𝙀 ˖࣪⃟♦️ ◞'
