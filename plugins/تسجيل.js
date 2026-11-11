@@ -1,6 +1,6 @@
 import { createHash } from 'crypto';
 import fetch from 'node-fetch';
-import { generateWAMessageFromContent, proto } from 'angularsockets';
+import { generateWAMessageFromContent, proto } from '@whiskeysockets/baileys';
 
 let Reg = /\|?(.*)([.|] *?)([0-9]*)$/i;
 
