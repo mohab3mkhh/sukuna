@@ -1,5 +1,5 @@
 import fs from 'fs'
-import pkg from 'angularsockets'
+import pkg from '@whiskeysockets/baileys'
 const { generateWAMessageFromContent, proto } = pkg
 
 const timeout = 60000
