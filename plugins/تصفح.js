@@ -1,7 +1,7 @@
 import axios from 'axios';
-import baileys from '@whiskeysockets/baileys';
+import pkg from '@whiskeysockets/baileys';
 
-const { generateWAMessageContent, generateWAMessageFromContent, proto } = baileys;
+const { generateWAMessageContent, generateWAMessageFromContent, proto } = pkg;
 
 let handler = async (m, { conn, usedPrefix, command, text }) => {
     if (!text) throw `⚠️ أدخل مصطلح البحث.\n\nمثال: *${usedPrefix + command} nayeon*`;
@@ -21,12 +21,12 @@ let handler = async (m, { conn, usedPrefix, command, text }) => {
         async () => {
             const res = await axios.get(`https://api.siputzx.my.id/api/s/pinterest?query=${encodeURIComponent(text)}`, { timeout: 10000 });
             if (!res.data?.data?.length) throw new Error('no data');
-            return res.data.data.slice(0, 6).map(result => result.images_url || result.url || result.image);
+            return res.data.data.slice(0, 6).map(r => r.images_url || r.url || r.image);
         },
         async () => {
             const res = await axios.get(`https://api.dorratz.com/v2/pinterest?q=${encodeURIComponent(text)}`, { timeout: 10000 });
             if (!res.data?.length) throw new Error('no data');
-            return res.data.slice(0, 6).map(result => result.image || result.url);
+            return res.data.slice(0, 6).map(r => r.image || r.url);
         },
         async () => {
             const res = await axios.get(`https://api.lolhuman.xyz/api/pinterest?apikey=lolhuman&query=${encodeURIComponent(text)}`, { timeout: 10000 });
@@ -40,10 +40,7 @@ let handler = async (m, { conn, usedPrefix, command, text }) => {
         try {
             const result = await source();
             const filtered = result.filter(url => url && typeof url === 'string' && url.startsWith('http'));
-            if (filtered.length > 0) {
-                images = filtered;
-                break;
-            }
+            if (filtered.length > 0) { images = filtered; break; }
         } catch (e) {
             console.error(`[Pinterest] source failed: ${e.message}`);
         }
@@ -79,7 +76,7 @@ let handler = async (m, { conn, usedPrefix, command, text }) => {
                 })
             });
         } catch (e) {
-            console.error(`[Pinterest] failed to create image message: ${e.message}`);
+            console.error(`[Pinterest] image failed: ${e.message}`);
         }
     }
 
