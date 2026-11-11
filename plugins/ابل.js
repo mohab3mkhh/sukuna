@@ -3,13 +3,14 @@
  * بحث من iTunes + تحميل عن طريق Spotmate
  */
 
-import axios  from 'axios';
-import fetch  from 'node-fetch';
-import pkg    from '@whiskeysockets/baileys';
-const { generateWAMessageFromContent, proto, prepareWAMessageMedia } = pkg;
+import axios from 'axios';
+import fetch from 'node-fetch';
 
-const UA      = 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Mobile Safari/537.36';
-const FB_IMG  = 'https://i.postimg.cc/43Yt2ngB/Gojo-manga.jpg';
+// ✅ استخدام ملف الأزرار
+import { sendButtons, btn } from '../lib/buttons.js';
+
+const UA = 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Mobile Safari/537.36';
+const FB_IMG = 'https://i.postimg.cc/43Yt2ngB/Gojo-manga.jpg';
 
 // ══════════════════════════════════════════════════
 //  مساعدات
@@ -21,7 +22,7 @@ function fmtMs(ms) {
 }
 
 // ══════════════════════════════════════════════════
-//  ✅ iTunes API — بحث بدون توكن
+//  iTunes API
 // ══════════════════════════════════════════════════
 async function searchApple(query) {
   const res = await axios.get('https://itunes.apple.com/search', {
@@ -29,20 +30,20 @@ async function searchApple(query) {
     timeout: 15000,
   });
   return (res.data?.results || []).map(s => ({
-    id:         String(s.trackId),
+    id: String(s.trackId),
     attributes: {
-      name:             s.trackName      || 'Unknown',
-      artistName:       s.artistName     || 'Unknown',
-      albumName:        s.collectionName || 'Unknown',
+      name: s.trackName || 'Unknown',
+      artistName: s.artistName || 'Unknown',
+      albumName: s.collectionName || 'Unknown',
       durationInMillis: s.trackTimeMillis || 0,
-      url:              s.trackViewUrl   || '',
-      artwork:          { url: (s.artworkUrl100 || FB_IMG).replace('100x100bb', '{w}x{h}bb') }
+      url: s.trackViewUrl || '',
+      artwork: { url: (s.artworkUrl100 || FB_IMG).replace('100x100bb', '{w}x{h}bb') }
     }
   }));
 }
 
 // ══════════════════════════════════════════════════
-//  Odesli — Apple URL → Spotify URL + بيانات
+//  Odesli
 // ══════════════════════════════════════════════════
 async function odesliGetSpotify(appleUrl) {
   const res = await axios.get('https://api.song.link/v1-alpha.1/links', {
@@ -53,35 +54,35 @@ async function odesliGetSpotify(appleUrl) {
   if (res.status !== 200) throw new Error(`Odesli ${res.status}`);
   const spotUrl = res.data?.linksByPlatform?.spotify?.url;
   if (!spotUrl) throw new Error('Odesli: ما لقى Spotify URL');
-  const entity  = res.data?.entitiesByUniqueId;
+  const entity = res.data?.entitiesByUniqueId;
   const firstId = entity ? Object.keys(entity)[0] : null;
-  const meta    = firstId ? entity[firstId] : {};
+  const meta = firstId ? entity[firstId] : {};
   return {
-    title:      meta.title        || 'Unknown',
-    artist:     meta.artistName   || 'Unknown',
-    cover:      meta.thumbnailUrl || null,
+    title: meta.title || 'Unknown',
+    artist: meta.artistName || 'Unknown',
+    cover: meta.thumbnailUrl || null,
     spotifyUrl: spotUrl,
   };
 }
 
 // ══════════════════════════════════════════════════
-//  Spotmate — session
+//  Spotmate
 // ══════════════════════════════════════════════════
 async function getSpotmateSession() {
   const res = await fetch('https://spotmate.online/en1', {
     headers: {
-      'user-agent':      UA,
-      'accept':          'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'user-agent': UA,
+      'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
       'accept-language': 'ar-EG,ar;q=0.9,en-US;q=0.8,en;q=0.7',
     }
   });
-  const html      = await res.text();
-  const cookies   = res.headers.raw()['set-cookie'] || [];
+  const html = await res.text();
+  const cookies = res.headers.raw()['set-cookie'] || [];
   const cookieStr = cookies.map(c => c.split(';')[0]).join('; ');
 
   const csrfMatch = html.match(/"csrfToken"\s*:\s*"([^"]+)"/) ||
-                    html.match(/meta.*csrf-token.*content="([^"]+)"/) ||
-                    html.match(/csrf[_-]token['"]\s*:\s*['"]([^'"]+)/)
+    html.match(/meta.*csrf-token.*content="([^"]+)"/) ||
+    html.match(/csrf[_-]token['"]\s*:\s*['"]([^'"]+)/)
   const xsrfMatch = cookies.find(c => c.startsWith('XSRF-TOKEN='))
   let xsrf = ''
   if (xsrfMatch) xsrf = decodeURIComponent(xsrfMatch.split('=')[1].split(';')[0])
@@ -89,45 +90,39 @@ async function getSpotmateSession() {
   return { cookieStr, csrfToken: csrfMatch?.[1] || xsrf }
 }
 
-// ══════════════════════════════════════════════════
-//  Spotmate — تحميل من Spotify URL
-// ══════════════════════════════════════════════════
 async function spotmateDownload(spotifyUrl) {
   const { cookieStr, csrfToken } = await getSpotmateSession();
 
   const headers = {
-    'authority':       'spotmate.online',
-    'accept':          '*/*',
+    'authority': 'spotmate.online',
+    'accept': '*/*',
     'accept-language': 'ar-EG,ar;q=0.9,en-US;q=0.8,en;q=0.7',
-    'content-type':    'application/json',
-    'cookie':          cookieStr,
-    'origin':          'https://spotmate.online',
-    'referer':         'https://spotmate.online/en1',
-    'user-agent':      UA,
-    'x-csrf-token':    csrfToken,
+    'content-type': 'application/json',
+    'cookie': cookieStr,
+    'origin': 'https://spotmate.online',
+    'referer': 'https://spotmate.online/en1',
+    'user-agent': UA,
+    'x-csrf-token': csrfToken,
   };
 
-  // جيب رابط التحميل
-  const cleanUrl   = spotifyUrl.split('?')[0];
+  const cleanUrl = spotifyUrl.split('?')[0];
   const convertRes = await fetch('https://spotmate.online/convert', {
     method: 'POST',
     headers,
     body: JSON.stringify({ urls: cleanUrl })
   });
   const convertData = await convertRes.json();
-  console.log('[Spotmate] convert:', JSON.stringify(convertData).slice(0, 200));
 
   const downloadUrl = convertData?.link ||
-                      convertData?.download_link ||
-                      convertData?.url ||
-                      convertData?.data?.link ||
-                      convertData?.data?.url ||
-                      Object.values(convertData || {}).find(v => typeof v === 'string' && v.startsWith('http'));
+    convertData?.download_link ||
+    convertData?.url ||
+    convertData?.data?.link ||
+    convertData?.data?.url ||
+    Object.values(convertData || {}).find(v => typeof v === 'string' && v.startsWith('http'));
 
   if (!downloadUrl) throw new Error('Spotmate: ما لقى رابط التحميل');
 
-  // تحميل الـ MP3
-  const audioRes    = await fetch(downloadUrl, {
+  const audioRes = await fetch(downloadUrl, {
     headers: { 'user-agent': UA, 'referer': 'https://spotmate.online/' }
   });
   const audioBuffer = Buffer.from(await audioRes.arrayBuffer());
@@ -137,39 +132,34 @@ async function spotmateDownload(spotifyUrl) {
 }
 
 // ══════════════════════════════════════════════════
-//  تحميل كامل من Apple URL
+//  تحميل كامل
 // ══════════════════════════════════════════════════
 async function fullDownload(conn, m, appleUrl) {
   try {
     const loadMsg = await conn.sendMessage(m.chat, { text: '🔍 جاري جلب بيانات الأغنية...' }, { quoted: m });
-    const edit    = t => conn.sendMessage(m.chat, { text: t, edit: loadMsg.key }).catch(() => {});
+    const edit = t => conn.sendMessage(m.chat, { text: t, edit: loadMsg.key }).catch(() => {});
 
-    // المرحلة 1: جلب Spotify URL عن طريق Odesli
     await edit('🔗 جاري البحث عن رابط التحميل...');
     let song;
     try {
       song = await odesliGetSpotify(appleUrl);
-      console.log('[Apple] ✅ Odesli نجح:', song.title);
     } catch (e) {
-      console.warn('[Apple] ⚠️ Odesli فشل:', e.message);
       throw new Error('تعذّر الحصول على بيانات الأغنية — تأكد من الرابط');
     }
 
-    // المرحلة 2: التحميل عن طريق Spotmate
     await edit(`🍎 *${song.title}*\n👤 ${song.artist}\n📥 جاري التحميل...`);
     const buf = await spotmateDownload(song.spotifyUrl);
 
-    // المرحلة 3: الإرسال
     await conn.sendMessage(m.chat, {
-      audio:    buf,
+      audio: buf,
       mimetype: 'audio/mpeg',
       fileName: `${song.title} - ${song.artist}.mp3`,
       contextInfo: song.cover ? {
         externalAdReply: {
-          title:                song.title,
-          body:                 song.artist,
-          thumbnailUrl:         song.cover,
-          mediaType:            1,
+          title: song.title,
+          body: song.artist,
+          thumbnailUrl: song.cover,
+          mediaType: 1,
           renderLargerThumbnail: true
         }
       } : undefined
@@ -185,7 +175,7 @@ async function fullDownload(conn, m, appleUrl) {
 }
 
 // ══════════════════════════════════════════════════
-//  إرسال قائمة نتائج البحث
+//  إرسال قائمة نتائج البحث (بأزرار)
 // ══════════════════════════════════════════════════
 async function sendSearchList(conn, m, songs, query, pre, cmd) {
   const firstArt = songs[0].attributes.artwork;
@@ -195,51 +185,31 @@ async function sendSearchList(conn, m, songs, query, pre, cmd) {
 
   const bodyText = songs.map((s, i) => {
     const a = s.attributes;
-    return `*${i + 1}. ${a.name}*\n   👤 ${a.artistName}  •  ⏱ ${fmtMs(a.durationInMillis)}`;
+    return `*${i + 1}. ${a.name}*\n   👤 ${a.artistName} • ⏱ ${fmtMs(a.durationInMillis)}`;
   }).join('\n\n');
 
+  // ✅ بناء sections لملف الأزرار
   const sections = [{
     title: `🎵 نتائج البحث (${songs.length})`,
     rows: songs.map((s, i) => {
       const a = s.attributes;
       return {
-        header:      `${i + 1}. ${a.name}`,
-        title:       a.artistName,
-        description: `⏱ ${fmtMs(a.durationInMillis)}  •  💿 ${a.albumName}`,
-        id:          `${pre}${cmd} --url ${encodeURIComponent(a.url)}`,
+        title: `${i + 1}. ${a.name}`,
+        description: `👤 ${a.artistName} • ⏱ ${fmtMs(a.durationInMillis)}`,
+        id: `apple_pick_${i}_${encodeURIComponent(a.url)}`
       };
     }),
   }];
 
   try {
-    const media = await prepareWAMessageMedia(
-      { image: { url: coverUrl } },
-      { upload: conn.waUploadToServer }
-    );
-    const msg = generateWAMessageFromContent(m.chat, {
-      viewOnceMessage: {
-        message: {
-          interactiveMessage: proto.Message.InteractiveMessage.create({
-            body:   proto.Message.InteractiveMessage.Body.create({
-              text: `🔍 *نتائج البحث في Apple Music*\n🎤 ${query}\n\n${bodyText}`
-            }),
-            footer: proto.Message.InteractiveMessage.Footer.create({ text: '🍎 اختر أغنية لتحميلها' }),
-            header: proto.Message.InteractiveMessage.Header.create({
-              title: '🍎 Apple Music',
-              hasMediaAttachment: true,
-              imageMessage: media.imageMessage
-            }),
-            nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.create({
-              buttons: [{
-                name: 'single_select',
-                buttonParamsJson: JSON.stringify({ title: '🎵 اختر أغنية', sections })
-              }],
-            }),
-          })
-        }
-      }
-    }, { userJid: m.sender, quoted: m });
-    return conn.relayMessage(m.chat, msg.message, { messageId: msg.key.id });
+    await sendButtons(conn, m.chat, {
+      title: '🍎 Apple Music',
+      subtitle: query,
+      text: `🔍 *نتائج البحث في Apple Music*\n🎤 ${query}\n\n${bodyText}`,
+      footer: '🍎 اختر أغنية لتحميلها',
+      image: coverUrl,
+      buttons: [btn.list('🎵 اختر أغنية', sections)]
+    }, m);
   } catch (e) {
     const txt = songs.map((s, i) => {
       const a = s.attributes;
@@ -265,9 +235,9 @@ const handler = async (m, { conn, text, usedPrefix, command }) => {
     );
   }
 
-  const flags  = {};
+  const flags = {};
   const flagRx = /--(\w+)\s+((?:(?!--).)+)/g;
-  let   fx;
+  let fx;
   while ((fx = flagRx.exec(input)) !== null) flags[fx[1]] = fx[2].trim();
 
   if (flags.url) {
@@ -301,7 +271,28 @@ const handler = async (m, { conn, text, usedPrefix, command }) => {
   }
 };
 
-handler.help    = ['ابل <اسم أغنية أو رابط>'];
-handler.tags    = ['downloader'];
+// ══════════════════════════════════════════════════
+//  معالج اختيار الأغنية من القائمة
+// ══════════════════════════════════════════════════
+handler.before = async function (m, { conn }) {
+  const buttonId = getButtonId(m);
+  if (!buttonId || !buttonId.startsWith('apple_pick_')) return false;
+
+  const parts = buttonId.split('_');
+  const index = parseInt(parts[2]);
+  const appleUrl = decodeURIComponent(parts.slice(3).join('_'));
+
+  await m.react('🍎');
+  await conn.sendMessage(m.chat, {
+    text: `⏳ *جاري تحميل الأغنية رقم ${index + 1}...*`
+  }, { quoted: m });
+
+  await fullDownload(conn, m, appleUrl);
+  return true;
+};
+
+handler.help = ['ابل <اسم أغنية أو رابط>'];
+handler.tags = ['downloader'];
 handler.command = /^(ابل|apple|applemusic|ابلميوزك)$/i;
+
 export default handler;
