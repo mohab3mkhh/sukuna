@@ -1,17 +1,23 @@
-// plugins/quiz-ultimate.js - نسخة مصححة الأزرار
+// plugins/quiz-ultimate.js - أزرار native flow (شغالة مع whiskeysockets)
 // npm i axios
 
 import axios from "axios";
+import * as _baileys from "@whiskeysockets/baileys";
+
+const B = _baileys.generateWAMessageFromContent ? _baileys : (_baileys.default || _baileys);
+const { generateWAMessageFromContent, proto, prepareWAMessageMedia } = B;
 
 const SIGN = " ⛩️ *SUKUNA ⚡️ BOT* ⛩️";
 const SESSION_TTL_MS = 120_000;
+const REWARD_XP = 5000;
+const PREFIX = "quiz_answer::";
 const GIST_URL = "https://gist.githubusercontent.com/Kyutaka101/4e01c190b7d67225ad7a86d388eeedf6/raw/67f0de059cea4b965a3f3bf211c12fc9c48043e5/gistfile1.txt";
 
 function shuffle(a){ for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]] } return a }
 function pick(arr,n=1){ const s = shuffle(arr.slice()); return n===1 ? s[0] : s.slice(0,n) }
 
 const ABILITIES = {
-  "سوكونا": ["تقنية اللاحدود (Limitless)", "المجال اللانهائي (Infinity)"],
+  "غوجو": ["تقنية اللاحدود (Limitless)", "المجال اللانهائي (Infinity)"],
   "سوكونا": ["لعنات متعددة", "تحكم بالأصابع الملعونة"],
   "ناروتو": ["راسينغان", "تحمل شاكرا الهوكاجي"],
   "لوفي": ["جيل-جيلا فاكهة الشيطان", "المطاط"],
@@ -42,58 +48,95 @@ const FALLBACK_LIST = [
 const attached = new WeakSet();
 const sessions = new Map();
 
-// ✅ معالج الأزرار والقوائم (نفس أسلوب celebration)
+// ━━━ إرسال أزرار native flow (quick_reply) ━━━
+async function sendButtons(conn, jid, { imageUrl, body, footer, options }) {
+  let header;
+  if (imageUrl) {
+    const media = await prepareWAMessageMedia({ image: { url: imageUrl } }, { upload: conn.waUploadToServer });
+    header = proto.Message.InteractiveMessage.Header.create({
+      hasMediaAttachment: true,
+      imageMessage: media.imageMessage,
+    });
+  } else {
+    header = proto.Message.InteractiveMessage.Header.create({ hasMediaAttachment: false });
+  }
+
+  const interactiveMessage = proto.Message.InteractiveMessage.fromObject({
+    body: { text: body },
+    footer: { text: footer },
+    header,
+    nativeFlowMessage: {
+      buttons: options.slice(0, 4).map(opt => ({
+        name: "quick_reply",
+        buttonParamsJson: JSON.stringify({ display_text: opt, id: PREFIX + opt }),
+      })),
+    },
+  });
+
+  const msg = generateWAMessageFromContent(jid, {
+    viewOnceMessage: {
+      message: {
+        messageContextInfo: { deviceListMetadata: {}, deviceListMetadataVersion: 2 },
+        interactiveMessage,
+      },
+    },
+  }, { userJid: conn.user?.id || conn.user?.jid });
+
+  // نفس طريقة المنيو: في الجروبات من غير additionalNodes، وفي الخاص بنضيفها
+  const relayOpts = { messageId: msg.key.id };
+  if (!jid.endsWith("@g.us")) {
+    relayOpts.additionalNodes = [
+      { tag: "biz", attrs: {}, content: [{ tag: "interactive", attrs: { type: "native_flow", v: "1" }, content: [{ tag: "native_flow", attrs: { v: "9", name: "mixed" } }] }] },
+      { tag: "bot", attrs: { biz_bot: "1" } },
+    ];
+  }
+
+  console.log("[عين] إرسال أزرار native flow ->", jid);
+  await conn.relayMessage(jid, msg.message, relayOpts);
+}
+
+// لو الأزرار فشلت: قائمة نصية
+async function sendFallback(conn, jid, caption, options) {
+  const txt = [caption, "", ...options.map((o, i) => `${i + 1}. ${o}`)].join("\n");
+  await conn.sendMessage(jid, { text: txt });
+}
+
+// ━━━ استقبال ضغطات الأزرار ━━━
+function extractChoice(message) {
+  let msg = message || {};
+  msg = msg.ephemeralMessage?.message || msg;
+  msg = msg.viewOnceMessage?.message || msg;
+  msg = msg.viewOnceMessageV2?.message || msg;
+  msg = msg.documentWithCaptionMessage?.message || msg;
+
+  // native flow (الجديد)
+  const ir = msg.interactiveResponseMessage;
+  if (ir?.nativeFlowResponseMessage?.paramsJson) {
+    try {
+      const p = JSON.parse(ir.nativeFlowResponseMessage.paramsJson);
+      if (p?.id) return String(p.id);
+    } catch {}
+  }
+  // القديم
+  if (msg.buttonsResponseMessage) return msg.buttonsResponseMessage.selectedButtonId || msg.buttonsResponseMessage.selectedDisplayText;
+  if (msg.listResponseMessage) return msg.listResponseMessage.singleSelectReply?.selectedRowId;
+  if (msg.templateButtonReplyMessage) return msg.templateButtonReplyMessage.selectedId;
+  return null;
+}
+
 export function attachConverter(conn){
   if(!conn || attached.has(conn) || !conn.ev) return;
   attached.add(conn);
-  
+
   conn.ev.on("messages.upsert", async up => {
     try {
-      const msgs = up.messages || [];
-      for(const m of msgs){
+      for(const m of (up.messages || [])){
         if(!m || !m.message || m.key?.fromMe) continue;
-        
-        // ✅ استخراج الزر بطرق متعددة
-        let selectedText = null;
-        let selectedId = null;
 
-        // الطريقة 1: buttonsResponseMessage
-        if (m.message?.buttonsResponseMessage) {
-          selectedText = m.message.buttonsResponseMessage.selectedDisplayText;
-          selectedId = m.message.buttonsResponseMessage.selectedButtonId;
-        }
+        const final = (extractChoice(m.message) || "").toString().trim();
+        if (!final.startsWith(PREFIX)) continue;
 
-        // الطريقة 2: listResponseMessage
-        if (!selectedText && m.message?.listResponseMessage) {
-          selectedText = m.message.listResponseMessage?.singleSelectReply?.selectedDisplayText;
-          selectedId = m.message.listResponseMessage?.singleSelectReply?.selectedRowId;
-        }
-
-        // الطريقة 3: templateButtonReplyMessage
-        if (!selectedText && m.message?.templateButtonReplyMessage) {
-          selectedText = m.message.templateButtonReplyMessage.selectedDisplayText;
-          selectedId = m.message.templateButtonReplyMessage.selectedId;
-        }
-
-        // الطريقة 4: interactiveMessage
-        if (!selectedText && m.message?.interactiveMessage) {
-          const im = m.message.interactiveMessage;
-          if (im.buttonsResponseMessage) {
-            selectedText = im.buttonsResponseMessage.selectedDisplayText;
-            selectedId = im.buttonsResponseMessage.selectedButtonId;
-          } else if (im.listResponseMessage) {
-            selectedText = im.listResponseMessage?.singleSelectReply?.selectedDisplayText;
-            selectedId = im.listResponseMessage?.singleSelectReply?.selectedRowId;
-          }
-        }
-
-        const final = (selectedId || selectedText || '').toString().trim();
-        if (!final) continue;
-
-        // ✅ تحقق من أنه يبدأ بـ "quiz_answer::"
-        if (!final.startsWith("quiz_answer::")) continue;
-
-        const payload = final.slice("quiz_answer::".length).trim();
+        const chosen = final.slice(PREFIX.length).trim();
         const jid = m.key.remoteJid;
         if (!jid) continue;
 
@@ -102,62 +145,43 @@ export function attachConverter(conn){
 
         session.answered = true;
         clearTimeout(session.timeout);
+        sessions.delete(jid);
 
-        const chosen = String(payload);
         const correct = session.answer;
+        const senderJid = m.key.participant || m.key.remoteJid;
 
         if(chosen === correct){
-          // ✅ منح XP
+          let total = null;
           try {
-            const senderJid = m.key.participant || m.key.remoteJid;
-            if (senderJid) {
-              if (!global.db) global.db = { data: { users: {} } };
-              if (!global.db.data) global.db.data = { users: {} };
-              if (!global.db.data.users) global.db.data.users = {};
-              if (!global.db.data.users[senderJid]) global.db.data.users[senderJid] = {};
-
-              const user = global.db.data.users[senderJid];
-              user.exp = (user.exp || 0) + 5000;
-
-              if (typeof global.saveDatabase === 'function') await global.saveDatabase();
-            }
+            if (!global.db) global.db = { data: { users: {} } };
+            if (!global.db.data) global.db.data = { users: {} };
+            if (!global.db.data.users) global.db.data.users = {};
+            if (!global.db.data.users[senderJid]) global.db.data.users[senderJid] = {};
+            const user = global.db.data.users[senderJid];
+            user.exp = (user.exp || 0) + REWARD_XP;
+            total = user.exp;
+            if (typeof global.saveDatabase === 'function') await global.saveDatabase();
           } catch (e) {
             console.warn('quiz xp error:', e?.message);
           }
 
-          let feedback = `✅ إجابة صحيحة!\nالشخصية: *${correct}*\n\n🎉 حصلت على *5000 XP*!`;
-          
-          try {
-            const senderJid = m.key.participant || m.key.remoteJid;
-            if (senderJid && global.db?.data?.users?.[senderJid]) {
-              const newTotal = global.db.data.users[senderJid].exp || 0;
-              feedback += `\nمجموع XP: *${newTotal}*`;
-            }
-          } catch (_) {}
-
+          let feedback = `✅ إجابة صحيحة يا @${senderJid.split('@')[0]}!\nالإجابة: *${correct}*\n\n🎉 حصلت على *${REWARD_XP} XP*!`;
+          if (total !== null) feedback += `\nمجموع XP: *${total}*`;
           feedback += `\n\n${SIGN}`;
-          await conn.sendMessage(jid, { text: feedback }, { quoted: m }).catch(()=>{});
+          await conn.sendMessage(jid, { text: feedback, mentions: [senderJid] }).catch(()=>{});
         } else {
-          await conn.sendMessage(jid, { 
-            text: `❌ إجابة خاطئة.\nإجابتك: *${chosen}*\nالإجابة الصحيحة: *${correct}*\n\n${SIGN}` 
-          }, { quoted: m }).catch(()=>{});
+          await conn.sendMessage(jid, {
+            text: `❌ إجابة خاطئة يا @${senderJid.split('@')[0]}.\nإجابتك: *${chosen}*\nالإجابة الصحيحة: *${correct}*\n\n${SIGN}`,
+            mentions: [senderJid],
+          }).catch(()=>{});
         }
-        sessions.delete(jid);
       }
     } catch(e) {
-      console.error("converter error:", e?.message);
+      console.error("quiz converter error:", e?.message);
     }
   });
 
   console.log("✅ quiz converter attached");
-}
-
-function buildQuickButtons(options){
-  return options.slice(0, 4).map(opt => ({
-    buttonId: `quiz_answer::${opt}`,
-    buttonText: { displayText: opt },
-    type: 1
-  }));
 }
 
 async function loadChoices(){
@@ -169,132 +193,72 @@ async function loadChoices(){
   return FALLBACK_LIST.slice();
 }
 
+function startSession(conn, jid, answer, type) {
+  const timeout = setTimeout(async () => {
+    const s = sessions.get(jid);
+    if (!s) return;
+    if (!s.answered) {
+      await conn.sendMessage(jid, { text: `⌛ انتهى الوقت! الإجابة الصحيحة: *${answer}*\n\n${SIGN}` }).catch(()=>{});
+    }
+    sessions.delete(jid);
+  }, SESSION_TTL_MS);
+
+  const old = sessions.get(jid);
+  if (old) clearTimeout(old.timeout);
+  sessions.set(jid, { answer, timeout, answered: false, type, createdAt: Date.now() });
+}
+
 async function handler(m, { conn }){
   try{
     if(!conn) return;
     attachConverter(conn);
 
+    // ━━━ كويز الصور ━━━
     const choicesList = await loadChoices();
     if(!choicesList || choicesList.length < 4){
-      return conn.sendMessage(m.chat, { text: "❌ فشل تحميل قائمة الشخصيات." }, { quoted: m }).catch(()=>{});
+      return conn.sendMessage(m.chat, { text: "❌ فشل تحميل قائمة الشخصيات." });
     }
 
-    const types = ["image"];
-    const qtype = pick(types);
+    const qtype = "image";
 
     if(qtype === "image"){
-      // ✅ اختيار صحيح
       const correct = pick(choicesList);
       const correctName = correct.name;
-      const imageUrl = correct.img;
 
-      // ✅ اختيار 3 أسماء غلط مختلفة
       const poolNames = choicesList.map(x=>x.name).filter(n=>n !== correctName);
-      const uniqueWrongs = [...new Set(poolNames)];
-      const wrongs = shuffle(uniqueWrongs).slice(0, 3);
+      const wrongs = shuffle([...new Set(poolNames)]).slice(0, 3);
       const options = shuffle([correctName, ...wrongs]);
 
-      // ✅ تأكد من وجود الإجابة الصحيحة
-      if (!options.includes(correctName)) {
-        options[0] = correctName;
-      }
+      const caption = `⛩️ *SUKUNA QUIZ* ⛩️\n\n🎯 من هذه الشخصية؟\n⏳ لديك 120 ثانية`;
 
-      const caption = `⛩️ *SUKUNA QUIZ* ⛩️\n\n🎯 من هذه الشخصية؟\n⏳ لديك 120 ثانية\n\n${SIGN}`;
-
-      // ✅ بناء الأزرار
       try {
-        const buttons = buildQuickButtons(options);
-        await conn.sendMessage(m.chat, {
-          image: { url: imageUrl },
-          caption,
-          buttons,
-          headerType: 4
-        }, { quoted: m });
+        await sendButtons(conn, m.chat, { imageUrl: correct.img, body: caption, footer: SIGN, options });
       } catch (e) {
-        const txt = [caption, "", ...options.map((o, i) => `${i + 1}. ${o}`)].join("\n");
-        await conn.sendMessage(m.chat, { text: txt }, { quoted: m });
+        console.error("quiz buttons error:", e?.message);
+        try {
+          await conn.sendMessage(m.chat, { image: { url: correct.img }, caption: caption + "\n\n" + options.map((o, i) => `${i + 1}. ${o}`).join("\n") });
+        } catch {
+          await sendFallback(conn, m.chat, caption, options);
+        }
       }
 
-      // ✅ حفظ الجلسة
-      const timeout = setTimeout(async () => {
-        const s = sessions.get(m.chat);
-        if(!s) return;
-        if(!s.answered){
-          try { 
-            await conn.sendMessage(m.chat, { 
-              text: `⌛ انتهى الوقت! الإجابة الصحيحة: *${correctName}*\n\n${SIGN}` 
-            }, { quoted: m }); 
-          } catch(_) {}
-        }
-        sessions.delete(m.chat);
-      }, SESSION_TTL_MS);
-
-      sessions.set(m.chat, { 
-        answer: correctName, 
-        timeout, 
-        answered: false, 
-        type: qtype, 
-        createdAt: Date.now() 
-      });
+      startSession(conn, m.chat, correctName, qtype);
       return;
     }
 
-    // === ability quiz ===
-    const namesWithAbilities = Object.keys(ABILITIES);
-    if(namesWithAbilities.length === 0) return;
-
-    const correctName = pick(namesWithAbilities);
-    const correctAbilities = ABILITIES[correctName] || ["قدرة"];
-    const correctAbility = pick(correctAbilities);
-    
-    const otherAbilities = [];
-    for(const [k, arr] of Object.entries(ABILITIES)){
-      if(k === correctName) continue;
-      otherAbilities.push(...arr);
-    }
-    
-    const uniqueAbilities = [...new Set(otherAbilities)];
-    while(uniqueAbilities.length < 3) uniqueAbilities.push(`قدرة سرية ${uniqueAbilities.length}`);
-    const wrongs = shuffle(uniqueAbilities).slice(0, 3);
-    const options = shuffle([correctAbility, ...wrongs]);
-
-    if (!options.includes(correctAbility)) {
-      options[0] = correctAbility;
-    }
-
-    const caption = `⛩️ *ABILITY QUIZ*  ⛩️\n\n💪 قدرة *${correctName}*\n⏳ لديك 120 ثانية\n\n${SIGN}`;
+    // ━━━ كويز القدرات (غير مفعّل حالياً) ━━━
+    const correctName = pick(Object.keys(ABILITIES));
+    const correctAbility = pick(ABILITIES[correctName]);
+    const others = [...new Set(Object.entries(ABILITIES).filter(([k]) => k !== correctName).flatMap(([, v]) => v))];
+    const options = shuffle([correctAbility, ...shuffle(others).slice(0, 3)]);
+    const caption = `⛩️ *ABILITY QUIZ* ⛩️\n\n💪 قدرة *${correctName}*\n⏳ لديك 120 ثانية`;
 
     try {
-      const buttons = buildQuickButtons(options);
-      await conn.sendMessage(m.chat, {
-        text: caption,
-        buttons
-      }, { quoted: m });
+      await sendButtons(conn, m.chat, { body: caption, footer: SIGN, options });
     } catch (e) {
-      const txt = [caption, "", ...options.map((o, i) => `${i + 1}. ${o}`)].join("\n");
-      await conn.sendMessage(m.chat, { text: txt }, { quoted: m });
+      await sendFallback(conn, m.chat, caption, options);
     }
-
-    const timeout = setTimeout(async () => {
-      const s = sessions.get(m.chat);
-      if(!s) return;
-      if(!s.answered){
-        try { 
-          await conn.sendMessage(m.chat, { 
-            text: `⌛ انتهى الوقت! الإجابة الصحيحة: *${correctAbility}*\n\n${SIGN}` 
-          }, { quoted: m }); 
-        } catch(_) {}
-      }
-      sessions.delete(m.chat);
-    }, SESSION_TTL_MS);
-
-    sessions.set(m.chat, { 
-      answer: correctAbility, 
-      timeout, 
-      answered: false, 
-      type: qtype, 
-      createdAt: Date.now() 
-    });
+    startSession(conn, m.chat, correctAbility, "ability");
 
   }catch(err){
     console.error("quiz error:", err?.message);
