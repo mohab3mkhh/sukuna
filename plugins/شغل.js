@@ -126,7 +126,9 @@ async function findFfmpeg() {
 
 const ytdlpLocal = video => async () => {
   const bin = await ensureYtdlp()
-  const ffmpeg = await findFfmpeg()
+  // ffprobe مش موجود على السيرفر، وyt-dlp -x بيحتاجه (ده سبب خطأ "ffprobe and ffmpeg not found")
+  // فبننزّل m4a جاهز من غير أي تحويل
+  const ffmpeg = null
   const ext = ffmpeg ? 'mp3' : 'm4a'
   const out = path.join(os.tmpdir(), `yt_${video.id}_${Date.now()}.${ext}`)
   const cookies = prepareCookies()
@@ -186,10 +188,6 @@ function pickUrl(obj, depth = 0) {
 const apiSources = video => {
   const u = encodeURIComponent(video.url)
   return [
-    ['siputzx', `https://api.siputzx.my.id/api/d/ytmp3?url=${u}`],
-    ['vreden', `https://api.vreden.my.id/api/ytmp3?url=${u}`],
-    ['ryzendesu', `https://api.ryzendesu.vip/api/downloader/ytmp3?url=${u}`],
-    ['nyxs', `https://api.nyxs.pw/dl/yt-direct?url=${u}`],
     ['agatz', `https://api.agatz.xyz/api/ytmp3?url=${u}`],
   ].map(([name, endpoint]) => async () => {
     const r = await axios.get(endpoint, { timeout: 25000, headers: { 'User-Agent': UA } })
@@ -294,7 +292,7 @@ const handler = async (m, { conn, text, usedPrefix, command }) => {
       audio: audio.buffer,
       mimetype: audio.mimetype,
       ptt: false,
-      fileName: `${safeName}.mp3`,
+      fileName: `${safeName}.${audio.mimetype === 'audio/mpeg' ? 'mp3' : 'm4a'}`,
     })
     await react('✅')
   } catch (e) {
