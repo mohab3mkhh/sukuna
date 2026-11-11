@@ -1,23 +1,10 @@
-/**
- * plugins/تصفح.js
- * بحث وجلب صور من Pinterest
- */
-
 import axios from 'axios';
-import pkg from '@whiskeysockets/baileys';
-const { generateWAMessageContent, generateWAMessageFromContent, proto } = pkg;
+import { pinterest } from '../lib/scraper.js';
+import baileys from '@whiskeysockets/baileys';
 
-// ✅ محاولة استيراد pinterest من scraper
-let pinterest = null;
-try {
-  const scraper = await import('../lib/scraper.js');
-  pinterest = scraper.pinterest;
-} catch (e) {
-  console.log('[تصفح] ملف scraper.js مش موجود، هستخدم APIs بس');
-}
-
+const { generateWAMessageContent, generateWAMessageFromContent, proto } = baileys;
 let handler = async (m, { conn, usedPrefix, command, text }) => {
-    if (!text) throw `⚠️ أدخل مصطلح البحث.\n\nمثال: *${usedPrefix + command} cats*`;
+    if (!text) throw `⚠️ أدخل مصطلح البحث.\n\nمثال: *${usedPrefix + command} nayeon*`;
 
     await m.react("⌛");
     conn.reply(m.chat, '> ⏳ جاري البحث عن الصور...', m);
@@ -30,18 +17,11 @@ let handler = async (m, { conn, usedPrefix, command, text }) => {
         return imageMessage;
     }
 
-    const sources = [];
-
-    // ✅ لو pinterest موجودة، استخدمها
-    if (pinterest?.search) {
-        sources.push(async () => {
+    const sources = [
+        async () => {
             const response = await pinterest.search(text, 6);
             return response.result.pins.slice(0, 6).map(pin => pin.media.images.orig.url);
-        });
-    }
-
-    // ✅ APIs بديلة
-    sources.push(
+        },
         async () => {
             const res = await axios.get(`https://api.siputzx.my.id/api/s/pinterest?query=${encodeURIComponent(text)}`);
             return res.data.data.slice(0, 6).map(result => result.images_url);
@@ -49,12 +29,8 @@ let handler = async (m, { conn, usedPrefix, command, text }) => {
         async () => {
             const res = await axios.get(`https://api.dorratz.com/v2/pinterest?q=${encodeURIComponent(text)}`);
             return res.data.slice(0, 6).map(result => result.image);
-        },
-        async () => {
-            const res = await axios.get(`https://pinterest-api-one.vercel.app/?q=${encodeURIComponent(text)}`);
-            return res.data.images?.slice(0, 6) || [];
         }
-    );
+    ];
 
     let images = [];
     for (const source of sources) {
@@ -75,33 +51,24 @@ let handler = async (m, { conn, usedPrefix, command, text }) => {
     let counter = 1;
 
     for (let imageUrl of images) {
-        try {
-            imagesList.push({
-                body: proto.Message.InteractiveMessage.Body.fromObject({
-                    text: `🔎 *نتيجة البحث عن:* ${text}\n📸 صورة ${counter++}`
-                }),
-                header: proto.Message.InteractiveMessage.Header.fromObject({
-                    hasMediaAttachment: true,
-                    imageMessage: await createImageMessage(imageUrl)
-                }),
-                nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.fromObject({
-                    buttons: [{
-                        name: "cta_url",
-                        buttonParamsJson: JSON.stringify({
-                            "display_text": "🔗 فتح في Pinterest",
-                            "Url": `https://www.pinterest.com/search/pins/?q=${encodeURIComponent(text)}`
-                        })
-                    }]
-                })
-            });
-        } catch (e) {
-            console.error(`⚠️ فشل تجهيز صورة: ${e.message}`);
-        }
-    }
-
-    if (imagesList.length === 0) {
-        await m.react("❌");
-        return m.reply(`❌ فشل تجهيز الصور. حاول مرة أخرى.`);
+        imagesList.push({
+            body: proto.Message.InteractiveMessage.Body.fromObject({
+                text: `🔎 *نتيجة البحث عن:* ${text}\n📸 𝐏𝐇𝐎𝐓𝐎 ${counter++}`
+            }),
+            header: proto.Message.InteractiveMessage.Header.fromObject({
+                hasMediaAttachment: true,
+                imageMessage: await createImageMessage(imageUrl)
+            }),
+            nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.fromObject({
+                buttons: [{
+                    name: "cta_url",
+                    buttonParamsJson: JSON.stringify({
+                        "display_text": "🔗 فتح في Pinterest",
+                        "Url": `https://www.pinterest.com/search/pins/?q=${encodeURIComponent(text)}`
+                    })
+                }]
+            })
+        });
     }
 
     const finalMessage = generateWAMessageFromContent(m.chat, {
@@ -110,9 +77,6 @@ let handler = async (m, { conn, usedPrefix, command, text }) => {
                 interactiveMessage: proto.Message.InteractiveMessage.fromObject({
                     body: proto.Message.InteractiveMessage.Body.create({
                         text: "> 🔍 *للحصول على نتائج أفضل، ابحث باللغة الإنجليزية مع وصف للصورة.*"
-                    }),
-                    footer: proto.Message.InteractiveMessage.Footer.create({
-                        text: "Pinterest Image Search"
                     }),
                     carouselMessage: proto.Message.InteractiveMessage.CarouselMessage.fromObject({
                         cards: imagesList
@@ -126,8 +90,10 @@ let handler = async (m, { conn, usedPrefix, command, text }) => {
     await conn.relayMessage(m.chat, finalMessage.message, { messageId: finalMessage.key.id });
 };
 
-handler.help = ['تصفح <كلمة>'];
-handler.tags = ['tools'];
-handler.command = /^(pin|تصفح|pinterest)$/i;
+handler.help = ['pinterest <keyword>'];
+handler.tags = ['بحث'];
+handler.command = /^(pin|تصفح)$/i;
+handler.register = true;
+handler.limit = 1;
 
 export default handler;
