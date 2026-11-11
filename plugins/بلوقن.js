@@ -3,8 +3,22 @@ import fs from 'fs'
 import path from 'path'
 import crypto from 'crypto'
 import { fileURLToPath } from 'url'
-import { theme } from '../core/theme.js'
 import pkg from 'angularsockets'
+
+
+// بديل بسيط لـ theme.js: يبني نص من مصفوفة "كروت"
+const theme = {
+  build(cards) {
+    return cards.map(c => {
+      if (c.type === 'title') return `*${c.text}*`
+      if (c.type === 'divider') return '───────────────'
+      if (c.type === 'info') return `• *${c.label}:* ${c.value}`
+      if (c.type === 'warning') return `⚠️ ${c.text}`
+      if (c.type === 'line') return c.text
+      return ''
+    }).filter(Boolean).join('\n')
+  }
+}
 
 const { downloadContentFromMessage, generateWAMessageFromContent, generateMessageIDV2 } = pkg
 
