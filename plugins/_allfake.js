@@ -1,11 +1,9 @@
 // plugins/_allfake.js
-import pkg from 'angularsockets'
+import { generateWAMessageFromContent, prepareWAMessageMedia, proto } from '@whiskeysockets/baileys'
 import fs from 'fs'
 import fetch from 'node-fetch'
 import axios from 'axios'
 import moment from 'moment-timezone'
-
-const { generateWAMessageFromContent, prepareWAMessageMedia, proto } = pkg
 
 function pickRandom(list) {
   return list[Math.floor(Math.random() * list.length)]
