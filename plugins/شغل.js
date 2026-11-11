@@ -7,7 +7,7 @@ import path from 'path'
 
 const execFileP = promisify(execFile)
 
-const CHANNEL_LINK = 'https://whatsapp.com/channel/0029VbBzSYd0AgW4AHD9j63c'
+const CHANNEL_LINK = 'https://whatsapp.com/channel/0029VbBilcVAO7RNV5OlOI0j'
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
 const MAX_BYTES = 60 * 1024 * 1024
 
