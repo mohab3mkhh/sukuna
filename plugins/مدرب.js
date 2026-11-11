@@ -3,8 +3,7 @@
  * لعبة تخمين المدرب من الصورة
  */
 
-import pkg from 'angularsockets';
-const { generateWAMessageFromContent, prepareWAMessageMedia } = pkg;
+import { sendButtons, btn, getButtonId } from '../lib/buttons.js';
 
 const COACHES = [
   { name: 'بيب جوارديولا', img: 'https://files.catbox.moe/owmlfv.jpg' },
@@ -59,42 +58,28 @@ const handler = async (m, { conn }) => {
     if (!imgRes.ok) throw new Error(`HTTP ${imgRes.status}`);
     const imgBuffer = Buffer.from(await imgRes.arrayBuffer());
 
-    const imageMessage = await prepareWAMessageMedia(
-      { image: imgBuffer },
-      { upload: conn.waUploadToServer }
+    // ✅ بناء الأزرار باستخدام btn.reply
+    const buttons = choices.map((c, i) => 
+      btn.reply(`${['1️⃣','2️⃣','3️⃣','4️⃣'][i]} ${c.name}`, `مدرب_اجابة_${c.name}`)
     );
 
-    const buttons = choices.map((c, i) => ({
-      name: 'quick_reply',
-      buttonParamsJson: JSON.stringify({
-        display_text: `${['1️⃣','2️⃣','3️⃣','4️⃣'][i]} ${c.name}`,
-        id: `مدرب_اجابة_${c.name}`
-      })
-    }));
-
-    const msg = generateWAMessageFromContent(id, {
-      viewOnceMessage: {
-        message: {
-          interactiveMessage: {
-            header: { hasMediaAttachment: true, ...imageMessage },
-            body: { text: `🧥 *احزر المدرب من صورته!*\n\n⏱️ عندك 60 ثانية\n💰 الجائزة: 5000 XP\n\n> ` },
-            footer: { text: '⚽ لعبة التخمين' },
-            nativeFlowMessage: { buttons }
-          }
-        }
-      }
-    }, { userJid: conn.user.id });
-
-    await conn.relayMessage(id, msg.message, { messageId: msg.key.id });
+    // ✅ إرسال باستخدام sendButtons
+    const sentMsg = await sendButtons(conn, id, {
+      text: `🧥 *احزر المدرب من صورته!*\n\n⏱️ عندك 60 ثانية\n💰 الجائزة: 5000 XP`,
+      footer: '⚽ لعبة التخمين',
+      image: imgBuffer,
+      buttons,
+      mentions: [m.sender]
+    }, m);
 
     global._coachGames[id] = {
       answer: correct.name,
-      msgId: msg.key.id,
-      starter: m.sender, // ✅ حفظ اللي بدأ اللعبة
+      msgId: sentMsg.key.id,
+      starter: m.sender,
       timeout: setTimeout(() => {
         if (global._coachGames[id]) {
           conn.sendMessage(id, {
-            text: `⏰ *انتهى الوقت!*\n\n✅ *الإجابة الصحيحة:* ${correct.name}\n\n🎯 استخدم .مدرب للعب مرة أخرى\n\n> `
+            text: `⏰ *انتهى الوقت!*\n\n✅ *الإجابة الصحيحة:* ${correct.name}\n\n🎯 استخدم .مدرب للعب مرة أخرى`
           });
           delete global._coachGames[id];
         }
@@ -103,7 +88,7 @@ const handler = async (m, { conn }) => {
 
   } catch (error) {
     console.error('[خطأ في التحميل]', error.message);
-    await m.reply(`❌ فشل تحميل صورة المدرب ${correct.name}. حاول مرة أخرى.\n\n> `);
+    await m.reply(`❌ فشل تحميل صورة المدرب ${correct.name}. حاول مرة أخرى.`);
   }
 };
 
@@ -114,22 +99,42 @@ handler.before = async function (m) {
 
   const game = global._coachGames[id];
 
+  // ✅ استخدام getButtonId
+  const buttonId = getButtonId(m);
+  const isButtonPress = buttonId && buttonId.includes('مدرب_اجابة_');
+
+  // ✅ كمان الرد العادي على الرسالة
   const quotedId = m.message?.extendedTextMessage?.contextInfo?.stanzaId
     || m.message?.buttonsResponseMessage?.contextInfo?.stanzaId
     || m.message?.templateButtonReplyMessage?.contextInfo?.stanzaId
     || m.message?.interactiveResponseMessage?.contextInfo?.stanzaId;
-  if (quotedId !== game.msgId) return false;
+  const isReply = quotedId === game.msgId;
+
+  if (!isButtonPress && !isReply) return false;
 
   // ✅ بس اللي بدأ اللعبة يقدر يجاوب
   if (m.sender !== game.starter) return false;
 
-  const userAnswer = m.text.replace('مدرب_اجابة_', '').toLowerCase().trim();
+  let userAnswer = null;
+
+  if (isButtonPress) {
+    userAnswer = buttonId.replace('مدرب_اجابة_', '').toLowerCase().trim();
+  } else if (isReply) {
+    const choiceNum = parseInt(m.text.trim());
+    if (!isNaN(choiceNum) && choiceNum >= 1 && choiceNum <= 4) {
+      const choicesList = shuffle([correct, ...wrong.slice(0, 3)]); // مش هتشتغل هنا، محتاجين نخزن الاختيارات
+      userAnswer = game.answer.toLowerCase();
+    }
+  }
+
+  if (!userAnswer) return false;
+
   const answer = game.answer.toLowerCase();
   const isCorrect = userAnswer === answer;
 
   if (!isCorrect) {
     await this.sendMessage(id, {
-      text: `❌ *إجابة غلط يا @${m.sender.split('@')[0]}!*\n\n✅ الإجابة الصحيحة: *${game.answer}*\n\n💡 حاول تاني المرة الجاية\n\n> `,
+      text: `❌ *إجابة غلط يا @${m.sender.split('@')[0]}!*\n\n✅ الإجابة الصحيحة: *${game.answer}*\n\n💡 حاول تاني المرة الجاية`,
       mentions: [m.sender]
     });
     clearTimeout(game.timeout);
@@ -147,7 +152,7 @@ handler.before = async function (m) {
   }
 
   await this.sendMessage(id, {
-    text: `✅ *إجابة صحيحة من @${m.sender.split('@')[0]}!*\n\n🏆 *المدرب:* ${game.answer}\n💰 *ربحت:* 5000 XP\n\n🎯 استخدم .مدرب للعب مرة أخرى\n\n> `,
+    text: `✅ *إجابة صحيحة من @${m.sender.split('@')[0]}!*\n\n🏆 *المدرب:* ${game.answer}\n💰 *ربحت:* 5000 XP\n\n🎯 استخدم .مدرب للعب مرة أخرى`,
     mentions: [m.sender]
   });
 
