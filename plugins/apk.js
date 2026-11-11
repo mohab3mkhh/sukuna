@@ -4,7 +4,7 @@
  */
 
 import fetch from 'node-fetch';
-import pkg from 'angularsockets';
+import pkg from '@whiskeysockets/baileys';
 const { proto, generateWAMessageFromContent } = pkg;
 
 async function sendList(conn, jid, data, quoted) {
