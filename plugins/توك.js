@@ -2,7 +2,7 @@
 // • Developers : izana x radio
 // • Channel : https://whatsapp.com/channel/0029Vb77sVfInlqSf5e7gK13
 import fetch from 'node-fetch';
-import pkg from 'angularsockets';
+import pkg from '@whiskeysockets/baileys';
 const { proto, generateWAMessageFromContent, generateWAMessageContent } = pkg;
 
 const handler = async (m, { conn, args, usedPrefix, command }) => {
