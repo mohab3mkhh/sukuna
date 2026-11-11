@@ -7,182 +7,133 @@ import path from 'path'
 import os from 'os'
 
 const TMP = os.tmpdir()
-const API_BASE = 'https://api.savefromins.com/api/contentsite_api'
-const DOMAIN_VIDEO = 'api-ak.savefromins.com'
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36'
 
-let SFI_SESSION = {
-    auth: null,
-    domain: DOMAIN_VIDEO,
-    lastFetch: 0
-}
+const send = (conn, chat, text, quoted) =>
+    conn.sendMessage(chat, { text }, { quoted })
 
-async function fetchAuth() {
-    if (SFI_SESSION.auth && Date.now() - SFI_SESSION.lastFetch < 6 * 60 * 60 * 1000) {
-        return SFI_SESSION.auth
-    }
+// ════════════════════════════════════════════
+// APIs
+// ════════════════════════════════════════════
 
-    try {
-        const r = await axios.get('https://savefromins.com/ar', {
-            headers: { 'User-Agent': UA },
-            timeout: 20000
-        })
-        const html = String(r.data)
-        const scripts = [...html.matchAll(/<script[^>]*src=["']([^"']+)["']/g)].map(m => m[1])
-
-        for (const s of scripts) {
-            if (!s.includes('_next')) continue
-            try {
-                const fullUrl = s.startsWith('http') ? s : 'https://savefromins.com' + s
-                const rs = await axios.get(fullUrl, {
-                    headers: { 'User-Agent': UA },
-                    timeout: 15000
-                })
-                const js = String(rs.data)
-                const match = js.match(/auth\s*:\s*["']([^"']+)["']/) || js.match(/2025\d{4}[a-z]+/i)
-                if (match) {
-                    const auth = match[1] || match[0]
-                    SFI_SESSION.auth = auth
-                    SFI_SESSION.lastFetch = Date.now()
-                    return auth
-                }
-            } catch (e) {}
-        }
-    } catch (e) {
-        console.error('[SaveFromIns] Failed to fetch auth:', e.message)
-    }
-
-    if (!SFI_SESSION.auth) {
-        SFI_SESSION.auth = '20250901majwlqo'
-        SFI_SESSION.lastFetch = Date.now()
-    }
-    return SFI_SESSION.auth
-}
-
-async function parseInstagram(url) {
-    const auth = await fetchAuth()
-    const params = new URLSearchParams({
-        auth,
-        domain: DOMAIN_VIDEO,
-        origin: 'source',
-        link: url
-    })
-
-    const r = await axios.post(`${API_BASE}/media/parse`, params.toString(), {
-        headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'User-Agent': UA,
-            'Origin': 'https://savefromins.com',
-            'Referer': 'https://savefromins.com/'
-        },
-        timeout: 30000
-    })
-
-    const data = r.data?.data
-    if (!data) throw new Error('فشل تحليل الرابط')
-
-    return {
-        title: data.title || 'Instagram Media',
-        thumbnail: data.thumbnail || '',
-        duration: data.duration || 0,
-        resources: data.resources || []
-    }
-}
-
-async function getDownloadLink(resource) {
-    if (resource.download_url && resource.download_url.startsWith('http')) {
-        return resource.download_url
-    }
-
-    const auth = await fetchAuth()
-    const params = new URLSearchParams({
-        auth,
-        domain: DOMAIN_VIDEO,
-        request: resource.resource_content
-    })
-
-    const r = await axios.post(`${API_BASE}/media/download`, params.toString(), {
-        headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'User-Agent': UA,
-            'Origin': 'https://savefromins.com',
-            'Referer': 'https://savefromins.com/'
-        },
-        timeout: 30000
-    })
-
-    const taskId = r.data?.data?.task_id
-    if (!taskId) {
-        const directLink = r.data?.data?.download_link
-        if (directLink) return directLink
-        throw new Error('فشل بدء التحميل')
-    }
-
-    const sseUrl = `https://api.savefromins.com/sse/contentsite_api/media/download_query?task_id=${encodeURIComponent(taskId)}&download_domain=${DOMAIN_VIDEO}&origin=content_site`
-
-    return await new Promise((resolve, reject) => {
-        let resolved = false
-        let fullText = ''
-
-        const timeout = setTimeout(() => {
-            if (!resolved) { resolved = true; reject(new Error('انتهت مدة الانتظار')) }
-        }, 60000)
-
-        axios.get(sseUrl, {
+async function trySnapInsta(url) {
+    const r = await axios.post('https://snapinsta.app/api/ajaxSearch',
+        new URLSearchParams({ q: url, t: 'media', lang: 'ar' }).toString(),
+        {
             headers: {
-                'Accept': 'text/event-stream',
+                'Content-Type': 'application/x-www-form-urlencoded',
                 'User-Agent': UA,
-                'Referer': 'https://savefromins.com/',
-                'Cache-Control': 'no-cache'
+                'Origin': 'https://snapinsta.app',
+                'Referer': 'https://snapinsta.app/'
             },
-            responseType: 'stream',
-            timeout: 65000
-        }).then(response => {
-            response.data.on('data', chunk => {
-                if (resolved) return
-                fullText += chunk.toString()
-                const match = fullText.match(/"download_link"\s*:\s*"([^"]+)"/)
-                if (match) {
-                    resolved = true
-                    clearTimeout(timeout)
-                    response.data.destroy()
-                    resolve(match[1])
-                }
-                if (fullText.includes('"status":"failed"')) {
-                    resolved = true
-                    clearTimeout(timeout)
-                    response.data.destroy()
-                    reject(new Error('فشل التحميل على السيرفر'))
-                }
-            }).on('end', () => {
-                if (resolved) return
-                const match = fullText.match(/"download_link"\s*:\s*"([^"]+)"/)
-                if (match) { resolved = true; clearTimeout(timeout); resolve(match[1]) }
-            }).on('error', (e) => {
-                if (resolved) return
-                resolved = true; clearTimeout(timeout)
-                reject(new Error('خطأ في الاتصال: ' + e.message))
-            })
-        }).catch(e => {
-            if (resolved) return
-            resolved = true; clearTimeout(timeout)
-            reject(new Error('فشل الاتصال بـ SSE: ' + e.message))
-        })
-    })
+            timeout: 20000
+        }
+    )
+
+    const html = r.data?.data || ''
+    if (!html) throw new Error('no data')
+
+    const results = []
+
+    // استخراج الفيديوهات
+    const videoMatches = [...html.matchAll(/href="(https:\/\/[^"]+\.mp4[^"]*)"/g)]
+    for (const m of videoMatches) {
+        results.push({ type: 'video', url: m[1].replace(/&amp;/g, '&') })
+    }
+
+    // استخراج الصور
+    const imgMatches = [...html.matchAll(/src="(https:\/\/[^"]+\.(jpg|jpeg|png|webp)[^"]*)"/g)]
+    for (const m of imgMatches) {
+        const u = m[1].replace(/&amp;/g, '&')
+        if (!u.includes('logo') && !u.includes('icon')) {
+            results.push({ type: 'image', url: u })
+        }
+    }
+
+    if (!results.length) throw new Error('no results')
+    return results
+}
+
+async function tryInstaDownloader(url) {
+    const r = await axios.get(
+        `https://api.instadownloader.cc/api?url=${encodeURIComponent(url)}`,
+        { headers: { 'User-Agent': UA }, timeout: 20000 }
+    )
+
+    const data = r.data
+    if (!data?.media?.length) throw new Error('no data')
+
+    return data.media.map(item => ({
+        type: item.type?.includes('video') ? 'video' : 'image',
+        url: item.url
+    }))
+}
+
+async function trySSIG(url) {
+    const r = await axios.post(
+        'https://ssig.pro/api/convert',
+        { url },
+        {
+            headers: {
+                'Content-Type': 'application/json',
+                'User-Agent': UA,
+                'Origin': 'https://ssig.pro',
+                'Referer': 'https://ssig.pro/'
+            },
+            timeout: 20000
+        }
+    )
+
+    const data = r.data
+    if (!data?.url && !data?.medias?.length) throw new Error('no data')
+
+    if (data.medias?.length) {
+        return data.medias.map(item => ({
+            type: item.type?.includes('video') ? 'video' : 'image',
+            url: item.url
+        }))
+    }
+
+    return [{ type: data.type?.includes('video') ? 'video' : 'image', url: data.url }]
+}
+
+async function tryInflact(url) {
+    const r = await axios.post(
+        'https://inflact.com/downloader/instagram/post/',
+        new URLSearchParams({ url }).toString(),
+        {
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'User-Agent': UA,
+                'Origin': 'https://inflact.com',
+                'Referer': 'https://inflact.com/downloader/instagram/post/'
+            },
+            timeout: 20000
+        }
+    )
+
+    const data = r.data
+    if (!data?.items?.length) throw new Error('no data')
+
+    return data.items.map(item => ({
+        type: item.type === 'video' ? 'video' : 'image',
+        url: item.url || item.video_url || item.image_url
+    }))
 }
 
 async function downloadBuffer(url) {
     const r = await axios.get(url, {
-        headers: { 'User-Agent': UA, 'Referer': 'https://savefromins.com/', 'Accept': '*/*' },
-        timeout: 120000,
+        headers: { 'User-Agent': UA, 'Accept': '*/*' },
+        timeout: 90000,
         responseType: 'arraybuffer',
         maxRedirects: 10
     })
     return Buffer.from(r.data)
 }
 
-const send = (conn, chat, text, quoted) =>
-    conn.sendMessage(chat, { text }, { quoted })
+// ════════════════════════════════════════════
+// Main Handler
+// ════════════════════════════════════════════
 
 async function handleDownload(m, conn, url) {
     const react = async (emoji) => {
@@ -192,96 +143,68 @@ async function handleDownload(m, conn, url) {
     await react('⏳')
     await send(conn, m.chat, '⏳ *جاري التحميل...*', m)
 
-    try {
-        const parsed = await parseInstagram(url)
+    let results = []
+    const apis = [
+        { name: 'SnapInsta', fn: () => trySnapInsta(url) },
+        { name: 'InstaDownloader', fn: () => tryInstaDownloader(url) },
+        { name: 'SSIG', fn: () => trySSIG(url) },
+        { name: 'Inflact', fn: () => tryInflact(url) },
+    ]
 
-        if (!parsed.resources.length) throw new Error('مفيش محتوى في هذا الرابط')
-
-        const videos = parsed.resources.filter(r => r.type === 'video')
-        const audios = parsed.resources.filter(r => r.type === 'audio')
-        const images = parsed.resources.filter(r => {
-            if (r.type === 'video' || r.type === 'audio') return false
-            if (r.type === 'picture' || r.type === 'image' || r.type === 'photo') return true
-            if (r.format && ['jpg', 'jpeg', 'png', 'webp', 'gif', 'heic'].includes(String(r.format).toLowerCase())) return true
-            return false
-        })
-
-        if (parsed.thumbnail && !images.length) {
-            try {
-                const thumbBuf = await downloadBuffer(parsed.thumbnail)
-                if (thumbBuf.length > 500) {
-                    await conn.sendMessage(m.chat, {
-                        image: thumbBuf,
-                        caption: `🎬 ${parsed.title.slice(0, 80)}`
-                    }, { quoted: m })
-                }
-            } catch (e) { console.error('[thumbnail]', e.message) }
+    for (const api of apis) {
+        try {
+            results = await api.fn()
+            if (results.length) {
+                console.log(`[Instagram] ✅ ${api.name}`)
+                break
+            }
+        } catch (e) {
+            console.error(`[Instagram] ❌ ${api.name}: ${e.message}`)
         }
+    }
 
-        let sent = 0
+    if (!results.length) {
+        await react('❌')
+        return send(conn, m.chat, '❌ فشل تحميل الرابط\nتأكد إن المنشور مش private', m)
+    }
 
-        for (let i = 0; i < videos.length; i++) {
-            try {
-                const link = await getDownloadLink(videos[i])
-                const buffer = await downloadBuffer(link)
+    let sent = 0
+
+    for (let i = 0; i < results.length; i++) {
+        const item = results[i]
+        if (!item.url) continue
+
+        try {
+            if (item.type === 'video') {
+                const buffer = await downloadBuffer(item.url)
                 if (buffer.length < 10000) continue
                 const outFile = path.join(TMP, `ig_v_${Date.now()}_${i}.mp4`)
                 fs.writeFileSync(outFile, buffer)
                 await conn.sendMessage(m.chat, {
                     video: { url: outFile },
                     mimetype: 'video/mp4',
-                    caption: `🎬 ${parsed.title.slice(0, 80)}\n📦 ${(buffer.length / 1048576).toFixed(2)} MB`
+                    caption: `🎬 Instagram Video\n📦 ${(buffer.length / 1048576).toFixed(2)} MB`
                 }, { quoted: m })
                 setTimeout(() => { try { fs.unlinkSync(outFile) } catch {} }, 60000)
                 sent++
-            } catch (e) { console.error('[video]', e.message) }
-        }
-
-        for (let i = 0; i < images.length; i++) {
-            try {
-                const link = await getDownloadLink(images[i])
-                const buffer = await downloadBuffer(link)
+            } else {
+                const buffer = await downloadBuffer(item.url)
                 if (buffer.length < 500) continue
-                const caption = images.length > 1
-                    ? `📷 ${parsed.title.slice(0, 80)} (${i + 1}/${images.length})`
-                    : `📷 ${parsed.title.slice(0, 80)}`
+                const caption = results.length > 1 ? `📷 Instagram (${i + 1}/${results.length})` : '📷 Instagram'
                 await conn.sendMessage(m.chat, { image: buffer, caption }, { quoted: m })
                 sent++
-            } catch (e) { console.error('[image]', e.message) }
+            }
+        } catch (e) {
+            console.error(`[Instagram] send error:`, e.message)
         }
-
-        for (let i = 0; i < audios.length; i++) {
-            try {
-                const link = await getDownloadLink(audios[i])
-                const buffer = await downloadBuffer(link)
-                if (buffer.length < 1000) continue
-                const mp3File = path.join(TMP, `ig_a_${Date.now()}_${i}.mp3`)
-                fs.writeFileSync(mp3File, buffer)
-                await conn.sendMessage(m.chat, {
-                    audio: { url: mp3File },
-                    mimetype: 'audio/mpeg',
-                    fileName: `${parsed.title.slice(0, 60)}.mp3`,
-                    ptt: false
-                }, { quoted: m })
-                setTimeout(() => { try { fs.unlinkSync(mp3File) } catch {} }, 60000)
-                sent++
-            } catch (e) { console.error('[audio]', e.message) }
-        }
-
-        if (sent === 0) {
-            let debug = `❌ *فشل التحميل*\n\n📋 *الموارد:*\n`
-            parsed.resources.forEach((r, i) => {
-                debug += `${i + 1}. type=${r.type} | format=${r.format}\n`
-            })
-            throw new Error(debug)
-        }
-
-        await react('✅')
-    } catch (e) {
-        console.error('Instagram error:', e.message)
-        await react('❌')
-        await send(conn, m.chat, '❌ ' + e.message, m)
     }
+
+    if (sent === 0) {
+        await react('❌')
+        return send(conn, m.chat, '❌ تعذّر إرسال الملفات، حاول مرة أخرى', m)
+    }
+
+    await react('✅')
 }
 
 let handler = async (m, { conn, text, usedPrefix, command }) => {
