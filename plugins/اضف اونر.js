@@ -10,7 +10,7 @@ const handler = async (m, { conn }) => {
   if (!global.db.data.settings.devs) global.db.data.settings.devs = []
 
   if (global.db.data.settings.devs.includes(num)) {
-    return conn.sendMessage(m.chat, { text:`❌ @${num} مطور بالفعل!`, m.chat, { mentions: [targetJid] })
+    return m.reply(`❌ @${num} مطور بالفعل!`, m.chat, { mentions: [targetJid] })
   }
 
   global.db.data.settings.devs.push(num)
@@ -19,7 +19,7 @@ const handler = async (m, { conn }) => {
   if (!global.owners) global.owners = []
   if (!global.owners.includes(num)) global.owners.push(num)
 
-  await conn.sendMessage(m.chat, { text:`✅ تم إضافة @${num} كمطور!\nهيفضل مطور حتى بعد الريستارت 🔒`, m.chat, { mentions: [targetJid] })
+  await m.reply(`✅ تم إضافة @${num} كمطور!\nهيفضل مطور حتى بعد الريستارت 🔒`, m.chat, { mentions: [targetJid] })
 }
 
 handler.command = /^(اضافة-مطور|adddev|مطور|اونر|owner)$/i
