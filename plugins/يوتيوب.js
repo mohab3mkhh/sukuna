@@ -1,9 +1,17 @@
+/**
+ * plugins/يوتيوب.js
+ * يوتيوب بحث وتحميل
+ */
+
 import axios from 'axios'
 import fetch from 'node-fetch'
 import fs from 'fs'
 import path from 'path'
 import os from 'os'
-import { proto, generateWAMessageFromContent, generateWAMessageContent, prepareWAMessageMedia } from '@whiskeysockets/baileys'
+import { generateWAMessageContent } from '@whiskeysockets/baileys'
+
+// ✅ استخدام ملف الأزرار
+import { sendButtons, btn, getButtonId } from '../lib/buttons.js'
 
 const TMP = os.tmpdir()
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36'
@@ -180,7 +188,6 @@ async function downloadBuffer(url, retries = 3) {
             if (r.status === 200 && r.data?.length > 10000) {
                 return Buffer.from(r.data)
             }
-            console.log(`[DL] Attempt ${i + 1}: size ${r.data?.length || 0}, retrying...`)
         } catch (e) {
             console.log(`[DL] Attempt ${i + 1} failed: ${e.message}`)
         }
@@ -215,81 +222,46 @@ function cleanViews(str) {
     return str.replace(/\s*views?/i, '').trim()
 }
 
-async function sendSearchCarousel(conn, chat, m, query, videos) {
+// ✅ إرسال نتيجة البحث باستخدام sendButtons
+async function sendSearchResults(conn, m, query, videos) {
     const selected = videos.slice(0, MAX_VIDEOS)
-    const cards = []
 
-    for (let i = 0; i < selected.length; i++) {
-        const v = selected[i]
-        try {
-            const thumb = await getThumbBuffer(v.thumbnail, `https://i.ytimg.com/vi/${v.id}/hqdefault.jpg`)
-            if (!thumb) continue
-
-            const { imageMessage } = await generateWAMessageContent(
-                { image: thumb },
-                { upload: conn.waUploadToServer }
-            )
-
-            const btnId = genId()
-            global.ytCache.set(btnId, {
-                videoId: v.id,
-                type: 'quality_menu',
-                title: v.title,
-                author: v.author,
-                createdAt: Date.now()
-            })
-
-            const buttons = [
-                {
-                    name: 'quick_reply',
-                    buttonParamsJson: JSON.stringify({
-                        display_text: '📥 تحميل',
-                        id: `.ytdl-${btnId}`
-                    })
-                }
-            ]
-
-            cards.push({
-                body: proto.Message.InteractiveMessage.Body.fromObject({
-                    text: `👤 ${v.author} | ⏱️ ${v.duration}\n👁️ ${cleanViews(v.views)}${v.published ? ' | 📅 ' + v.published : ''}`
-                }),
-                footer: proto.Message.InteractiveMessage.Footer.fromObject({
-                    text: `🎬 ${v.title.slice(0, 40)}`
-                }),
-                header: proto.Message.InteractiveMessage.Header.fromObject({
-                    title: v.title.length > 50 ? v.title.substring(0, 47) + '...' : v.title,
-                    hasMediaAttachment: true,
-                    imageMessage: imageMessage
-                }),
-                nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.fromObject({ buttons })
-            })
-        } catch (err) {
-            console.log('Card error:', err.message)
+    // بناء أزرار القائمة
+    const rows = selected.map((v, i) => {
+        const btnId = genId()
+        global.ytCache.set(btnId, {
+            videoId: v.id,
+            type: 'quality_menu',
+            title: v.title,
+            author: v.author,
+            createdAt: Date.now()
+        })
+        return {
+            title: `${i + 1}. ${v.title.slice(0, 50)}`,
+            description: `👤 ${v.author} | ⏱️ ${v.duration} | 👁️ ${cleanViews(v.views)}`,
+            id: `ytdl_${btnId}`
         }
-    }
+    })
 
-    if (!cards.length) throw new Error('ما قدرناش نجهز أي فيديو')
+    // صورة الغلاف لأول فيديو
+    const thumb = await getThumbBuffer(selected[0]?.thumbnail, `https://i.ytimg.com/vi/${selected[0]?.id}/hqdefault.jpg`)
 
-    const msg = generateWAMessageFromContent(chat, {
-        viewOnceMessage: {
-            message: {
-                messageContextInfo: { deviceListMetadata: {}, deviceListMetadataVersion: 2 },
-                interactiveMessage: proto.Message.InteractiveMessage.fromObject({
-                    body: proto.Message.InteractiveMessage.Body.create({
-                        text: `🔍 *بحث يوتيوب:* ${query}\n📊 *النتائج:* ${cards.length}`
-                    }),
-                    footer: proto.Message.InteractiveMessage.Footer.create({ text: '✧ 2B' }),
-                    header: proto.Message.InteractiveMessage.Header.create({ hasMediaAttachment: false }),
-                    carouselMessage: proto.Message.InteractiveMessage.CarouselMessage.fromObject({ cards })
-                })
-            }
-        }
-    }, { quoted: m })
-
-    await conn.relayMessage(chat, msg.message, { messageId: msg.key.id })
+    await sendButtons(conn, m.chat, {
+        title: '🎬 YouTube',
+        subtitle: query,
+        text: `🔍 *بحث يوتيوب:* ${query}\n📊 *النتائج:* ${selected.length}`,
+        footer: '⛩️ SUKUNA BOT',
+        image: thumb || 'https://i.ytimg.com/vi/' + (selected[0]?.id || 'dQw4w9WgXcQ') + '/hqdefault.jpg',
+        buttons: [btn.list('🎬 اختر فيديو', [{
+            title: 'النتائج',
+            rows
+        }])]
+    }, m)
 }
 
+// ✅ عرض قائمة الجودات
 async function showQualityMenu(conn, m, videoId, title, author) {
+    // جودات الفيديو
     const videoRows = VIDEO_QUALITIES.map(q => {
         const btnId = genId()
         global.ytCache.set(btnId, {
@@ -302,10 +274,11 @@ async function showQualityMenu(conn, m, videoId, title, author) {
         return {
             title: `${q.emoji} ${q.label}`,
             description: 'فيديو MP4',
-            id: `.ytdl-${btnId}`
+            id: `ytdl_${btnId}`
         }
     })
 
+    // جودات الصوت
     const audioRows = AUDIO_QUALITIES.map(q => {
         const btnId = genId()
         global.ytCache.set(btnId, {
@@ -318,62 +291,33 @@ async function showQualityMenu(conn, m, videoId, title, author) {
         return {
             title: `${q.emoji} ${q.label}`,
             description: 'صوت MP3',
-            id: `.ytdl-${btnId}`
+            id: `ytdl_${btnId}`
         }
     })
 
     const thumb = await getThumbBuffer(`https://i.ytimg.com/vi/${videoId}/maxresdefault.jpg`, `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`)
 
-    let imgMsg = null
-    if (thumb) {
-        try {
-            imgMsg = await prepareWAMessageMedia(
-                { image: thumb },
-                { upload: conn.waUploadToServer }
-            )
-        } catch {}
-    }
-
-    const bodyText = `🎬 *${title.slice(0, 80)}*\n\n👤 *القناة:* ${author}\n\n🎚️ *اختر الجودة:*`
-
-    const msg = generateWAMessageFromContent(m.chat, {
-        viewOnceMessage: {
-            message: {
-                interactiveMessage: proto.Message.InteractiveMessage.fromObject({
-                    body: proto.Message.InteractiveMessage.Body.create({ text: bodyText }),
-                    footer: proto.Message.InteractiveMessage.Footer.create({ text: '✧ 2B' }),
-                    header: proto.Message.InteractiveMessage.Header.create({
-                        hasMediaAttachment: !!imgMsg?.imageMessage,
-                        imageMessage: imgMsg?.imageMessage || null
-                    }),
-                    nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.fromObject({
-                        buttons: [
-                            {
-                                name: 'single_select',
-                                buttonParamsJson: JSON.stringify({
-                                    title: '🎬 جودات الفيديو',
-                                    sections: [{ title: 'MP4', rows: videoRows }]
-                                })
-                            },
-                            {
-                                name: 'single_select',
-                                buttonParamsJson: JSON.stringify({
-                                    title: '🎵 جودات الصوت',
-                                    sections: [{ title: 'MP3', rows: audioRows }]
-                                })
-                            }
-                        ],
-                        messageParamsJson: ''
-                    })
-                })
-            }
-        }
-    }, { userJid: conn.user.jid, quoted: m })
-
-    await conn.relayMessage(m.chat, msg.message, { messageId: msg.key.id })
+    await sendButtons(conn, m.chat, {
+        title: '🎬 اختر الجودة',
+        subtitle: title.slice(0, 60),
+        text: `🎬 *${title.slice(0, 80)}*\n\n👤 *القناة:* ${author}\n\n🎚️ *اختر الجودة:*`,
+        footer: '⛩️ SUKUNA BOT',
+        image: thumb || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+        buttons: [
+            btn.list('🎬 جودات الفيديو', [{
+                title: 'MP4',
+                rows: videoRows
+            }]),
+            btn.list('🎵 جودات الصوت', [{
+                title: 'MP3',
+                rows: audioRows
+            }])
+        ]
+    }, m)
 }
 
-async function handleQualitySelect(m, { conn, data }) {
+// ✅ معالج التحميل بعد اختيار الجودة
+async function handleQualitySelect(m, conn, data) {
     const isVideo = data.type === 'video'
     const quality = isVideo
         ? VIDEO_QUALITIES.find(q => q.value === data.quality)
@@ -439,20 +383,20 @@ async function handleQualitySelect(m, { conn, data }) {
             }
         }
     } catch (e) {
-        console.error('[cnv DL]', e.message)
+        console.error('[yt dl]', e.message)
         try { await conn.sendMessage(m.chat, { delete: statusMsg.key }) } catch {}
         await conn.sendMessage(m.chat, { react: { text: '❌', key: m.key } })
         m.reply(`❌ فشل التحميل\n\n${e.message}\n\n💡 جرب جودة أقل`)
     }
 }
 
+// ✅ معالج الأزرار
 let before = async (m, { conn }) => {
     try {
-        const rawText = (m.text || '').trim()
-        const match = rawText.match(/^\.?ytdl-([a-z0-9]+)$/i)
-        if (!match) return false
+        const buttonId = getButtonId(m)
+        if (!buttonId || !buttonId.startsWith('ytdl_')) return false
 
-        const btnId = match[1]
+        const btnId = buttonId.replace('ytdl_', '')
         const data = global.ytCache.get(btnId)
         if (!data) return false
 
@@ -465,7 +409,7 @@ let before = async (m, { conn }) => {
         }
 
         if (data.type === 'video' || data.type === 'audio') {
-            await handleQualitySelect(m, { conn, data })
+            await handleQualitySelect(m, conn, data)
             return true
         }
 
@@ -477,11 +421,6 @@ let before = async (m, { conn }) => {
 }
 
 let handler = async (m, { conn, text, usedPrefix, command }) => {
-    const rawText = (m.text || '').trim()
-
-    // حماية: لو الزر بأي صيغة
-    if (/^\.?ytdl-/.test(rawText)) return
-
     const input = (text || '').trim()
 
     if (!input) {
@@ -514,7 +453,7 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
         }
 
         try { await conn.sendMessage(m.chat, { delete: wait.key }) } catch {}
-        await sendSearchCarousel(conn, m.chat, m, input, results)
+        await sendSearchResults(conn, m, input, results)
         await m.react('✅')
     } catch (e) {
         console.error('[yt search]', e.message)
@@ -523,7 +462,7 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
     }
 }
 
-// كل 30 دقيقة: نمسح الزراير القديمة
+// كل 5 دقايق: نمسح الزراير القديمة
 setInterval(() => {
     const now = Date.now()
     for (const [k, v] of global.ytCache.entries()) {
