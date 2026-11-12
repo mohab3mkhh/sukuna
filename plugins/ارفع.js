@@ -10,7 +10,7 @@ const REPO_NAME = 'uploading-';
 const handler = async (m, { conn }) => {
   const q = m.quoted ? m.quoted : m;
   const mime = (q.msg || q).mimetype || '';
-  if (!mime) return conn.sendMessage(m.chat, { text:'*⛔ يجب الرد على صورة أو فيديو أو صوت!*');
+  if (!mime) return m.reply('*⛔ يجب الرد على صورة أو فيديو أو صوت!*');
 
   const media = await q.download();
   const { ext } = await fileTypeFromBuffer(media);
