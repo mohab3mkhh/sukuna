@@ -13,7 +13,7 @@ const handler = async (m) => {
 
   if (/audio|video/.test(mime)) {
     if ((q.msg || q).seconds > 120) 
-      return m.reply('*\`『 الصوت ميعديش دقتين 』\`*');
+      return conn.sendMessage(m.chat, { text:'*\`『 الصوت ميعديش دقتين 』\`*');
 
     const media = await q.download();
     const ext = mime.split('/')[1];
@@ -35,7 +35,7 @@ const handler = async (m) => {
 `.trim();
 
     fs.unlinkSync(`./tmp/${m.sender}.${ext}`);
-    m.reply(txt);
+    conn.sendMessage(m.chat, { text:txt);
   } else {
     throw '*\`『 اعمل ريب ع اغنيه في فيديو قصير او ملف صوتي وهجبلك التفصيل وهنزلك الصوت🧚🏻‍♂️ 』\`*';
   }
