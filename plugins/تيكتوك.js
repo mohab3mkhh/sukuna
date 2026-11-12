@@ -1,42 +1,37 @@
 // plugins/edit-search.js
-// ⛩️ SUKUNA BOT - بحث إيديتات تيك توك 🎬
+// ⛩️ SUKUNA BOT - بحث إيديتات تيك توك (كاروسيل) 🎬
+// نفس أسلوب أمر ريلز: كروت فيديو بدون أزرار + relayMessage
 
-// ━━━ بديل لـ theme (مفيش اعتماد على core/theme.js) ━━━
-const theme = {
-    divider: '━━━━━━━━━━━━━━━━',
-    smallDivider: '────────────',
-    endDivider: '━━━━━━━━━━━━━━━━'
-}
+import * as _baileys from '@whiskeysockets/baileys'
 
-const CACHE = new Map()
+const B = _baileys.generateWAMessageFromContent ? _baileys : (_baileys.default || _baileys)
+const { proto, generateWAMessageFromContent, generateWAMessageContent } = B
+
+const CARD_COUNT = 6      // عدد الكروت في الكاروسيل (زي الريلز)
+const SEARCH_COUNT = 15   // عدد النتايج اللي بنبحث فيها (احتياطي لو بعضها فشل)
+const CONCURRENCY = 3
 const CACHE_TTL = 30 * 60 * 1000
-const VIDEO_CACHE = new Map()
-
-// 🎯 العدد المطلوب
-const MAX_VIDEOS = 20
-const SEND_COUNT = 5 // عدد الفيديوهات اللي بتتبعت فعليًا
-const LIST_COUNT = 10 // عدد الباقي اللي بيظهر كقائمة
+const CACHE = new Map()
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36'
 
-async function searchTikTok(query, count = 20) {
+const sleep = ms => new Promise(r => setTimeout(r, ms))
+const isMp4 = buf => buf && buf.length > 12 && buf.subarray(4, 8).toString('latin1') === 'ftyp'
+
+function formatNum(n) {
+    if (!n) return '0'
+    if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
+    if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K'
+    return n.toString()
+}
+
+// ━━━ البحث ━━━
+async function searchTikTok(query, count = SEARCH_COUNT) {
     const cached = CACHE.get(query)
-    if (cached && Date.now() - cached.time < CACHE_TTL) {
-        return cached.results.slice(0, count)
-    }
+    if (cached && Date.now() - cached.time < CACHE_TTL) return cached.results.slice(0, count)
 
     const now = Math.floor(Date.now() / 1000)
     const oneYearAgo = now - 365 * 24 * 60 * 60
-
-    const body = JSON.stringify({
-        keywords: query,
-        filtersFast: [
-            'nbChar > 10',
-            "lang = 'en'",
-            `createTime >= ${oneYearAgo} AND createTime <= ${now}`
-        ],
-        extraParams: { sort: '' }
-    })
 
     const res = await fetch('https://www.revid.ai/api/tiktok-search', {
         method: 'POST',
@@ -46,10 +41,13 @@ async function searchTikTok(query, count = 20) {
             'Referer': 'https://www.revid.ai/tiktok-video-finder',
             'Accept': 'application/json'
         },
-        body,
+        body: JSON.stringify({
+            keywords: query,
+            filtersFast: ['nbChar > 10', "lang = 'en'", `createTime >= ${oneYearAgo} AND createTime <= ${now}`],
+            extraParams: { sort: '' }
+        }),
         signal: AbortSignal.timeout(30000)
     })
-
     if (!res.ok) throw new Error('HTTP ' + res.status)
 
     const data = await res.json()
@@ -58,13 +56,10 @@ async function searchTikTok(query, count = 20) {
         desc: v.desc || 'TikTok Video',
         url: v.url,
         videoUrl: v.urlUploaded,
-        cover: v.imagePreview,
         duration: v.durationInSeconds || 0,
         author: v.userNickname || 'Unknown',
-        username: v.username || '',
         likes: v.diggCount || 0,
         comments: v.commentCount || 0,
-        shares: v.shareCount || 0,
         plays: v.playCount || 0
     }))
 
@@ -72,7 +67,17 @@ async function searchTikTok(query, count = 20) {
     return videos.slice(0, count)
 }
 
+// tikwm بيسمح بطلب واحد كل ثانية تقريبًا، فبنرتّب الطلبات
+let lastTikwm = 0
+async function tikwmGate() {
+    const slot = Math.max(Date.now(), lastTikwm + 1100)
+    lastTikwm = slot
+    const wait = slot - Date.now()
+    if (wait > 0) await sleep(wait)
+}
+
 async function getVideoNoWatermark(tiktokUrl) {
+    await tikwmGate()
     const r = await fetch('https://www.tikwm.com/api/?url=' + encodeURIComponent(tiktokUrl), {
         headers: { 'User-Agent': UA },
         signal: AbortSignal.timeout(30000)
@@ -82,107 +87,76 @@ async function getVideoNoWatermark(tiktokUrl) {
     if (j.code !== 0) throw new Error(j.msg || 'Failed')
     const url = j.data.hdplay || j.data.play
     if (!url) throw new Error('No video URL')
-    return { url, title: j.data.title || '', author: j.data.author?.nickname || '', duration: j.data.duration || 0 }
+    return url
 }
 
 async function downloadVideo(url) {
     const r = await fetch(url, {
         headers: { 'User-Agent': UA, 'Referer': 'https://www.tiktok.com/' },
-        signal: AbortSignal.timeout(60000)
+        signal: AbortSignal.timeout(90000)
     })
     if (!r.ok) throw new Error('HTTP ' + r.status)
     const buf = Buffer.from(await r.arrayBuffer())
-    if (!buf.length) throw new Error('Empty video')
+    if (buf.length < 10000) throw new Error('فيديو صغير جدًا')
+    if (!isMp4(buf)) throw new Error('فيديو غير سليم')
     return buf
 }
 
-function formatNum(n) {
-    if (!n) return '0'
-    if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
-    if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K'
-    return n.toString()
-}
-
-const isMp4 = buf => buf && buf.length > 12 && buf.subarray(4, 8).toString('latin1') === 'ftyp'
-
-// بيجيب Buffer سليم للفيديو (من الرابط المباشر، وإلا من tikwm)
+// الأفضل: بدون علامة مائية (tikwm)، وإلا الرابط المباشر
 async function getVideoBuffer(video) {
-    if (video.videoUrl) {
-        try {
-            const buf = await downloadVideo(video.videoUrl)
-            if (buf.length >= 10000 && isMp4(buf)) return buf
-        } catch (e) {
-            console.log('[edit-search] الرابط المباشر فشل:', e.message)
-        }
-    }
-    const nw = await getVideoNoWatermark(video.url)
-    const buf = await downloadVideo(nw.url)
-    if (buf.length < 10000 || !isMp4(buf)) throw new Error('فيديو غير سليم')
-    return buf
-}
-
-// بنبعت الفيديوهات واحد واحد (أضمن من الكاروسيل اللي مش بيظهر عند كل الناس)
-async function sendResults(conn, chat, characterName, videos) {
-    const batchId = Date.now().toString(36)
-    let sent = 0
-    const rest = []
-
-    for (let i = 0; i < videos.length; i++) {
-        const video = videos[i]
-        if (sent >= SEND_COUNT) { rest.push({ video, i }); continue }
-        try {
-            console.log(`[edit-search] تجهيز فيديو ${i + 1}/${videos.length}`)
-            const buffer = await getVideoBuffer(video)
-            const caption =
-                `🎬 *${video.desc.slice(0, 80)}*\n` +
-                `👤 ${video.author} | ⏱️ ${video.duration}s\n` +
-                `❤️ ${formatNum(video.likes)} | 💬 ${formatNum(video.comments)} | 👁️ ${formatNum(video.plays)}\n\n` +
-                `⛩️ SUKUNA BOT ⛩️`
-            await conn.sendMessage(chat, { video: buffer, mimetype: 'video/mp4', caption })
-            sent++
-        } catch (err) {
-            console.log('[edit-search] فيديو فشل:', err.message)
-        }
-    }
-
-    if (!sent) throw new Error('معرفتش أجهز أي فيديو، جرب اسم تاني')
-
-    // الباقي كقائمة بأوامر تحميل (بدون علامة مائية)
-    const listItems = rest.slice(0, LIST_COUNT)
-    if (listItems.length) {
-        const lines = listItems.map(({ video, i }) => {
-            const key = `nw_${batchId}_${i}`
-            VIDEO_CACHE.set(key, { tiktokUrl: video.url, title: video.desc, author: video.author, duration: video.duration, timestamp: Date.now() })
-            return `• ${video.desc.slice(0, 45)}\n  👤 ${video.author} | ⏱️ ${video.duration}s\n  ↬ .dlnowm ${key}`
-        })
-        await conn.sendMessage(chat, {
-            text: `> ${theme.smallDivider}\n> 🜲⃝☠️ *المزيد من الاديتات: ${characterName}*\n> ${theme.smallDivider}\n\n${lines.join('\n\n')}\n\n⛩️ SUKUNA BOT ⛩️`
-        })
-        setTimeout(() => {
-            for (const key of VIDEO_CACHE.keys()) {
-                if (key.startsWith(`nw_${batchId}_`)) VIDEO_CACHE.delete(key)
-            }
-        }, 30 * 60 * 1000)
-    }
-}
-
-async function handleDownloadNoWM(m, conn, videoKey) {
-    const send = t => conn.sendMessage(m.chat, { text: t })
-    const info = VIDEO_CACHE.get(videoKey)
-    if (!info) return send(`> ${theme.divider}\n> ❌ *انتهت صلاحية الزر*\n> 🕐 جرب البحث من جديد\n> ${theme.endDivider}`)
-
-    try { await conn.sendMessage(m.chat, { react: { text: '⏳', key: m.key } }) } catch {}
     try {
-        const video = await getVideoNoWatermark(info.tiktokUrl)
-        const buffer = await downloadVideo(video.url)
-        const caption = `> ${theme.divider}\n> 🎬 *${video.title.slice(0, 100)}*\n> 👤 ${video.author}\n> ⏱️ ${video.duration}s\n> ✅ بدون علامة مائية\n> ${theme.endDivider}`
-        await conn.sendMessage(m.chat, { video: buffer, caption, mimetype: 'video/mp4' })
-        try { await conn.sendMessage(m.chat, { react: { text: '✅', key: m.key } }) } catch {}
-    } catch (err) {
-        console.error('Download error:', err)
-        try { await conn.sendMessage(m.chat, { react: { text: '❌', key: m.key } }) } catch {}
-        await send(`❌ ${err.message}`)
+        return await downloadVideo(await getVideoNoWatermark(video.url))
+    } catch (e) {
+        console.log('[edit-search] tikwm فشل:', e.message)
     }
+    if (video.videoUrl) return await downloadVideo(video.videoUrl)
+    throw new Error('مفيش مصدر')
+}
+
+// ━━━ كارت واحد (نفس شكل كارت الريلز) ━━━
+async function processItem(video, conn) {
+    const buffer = await getVideoBuffer(video)
+    const mediaMsg = await generateWAMessageContent(
+        { video: buffer, mimetype: 'video/mp4' },
+        { upload: conn.waUploadToServer }
+    )
+    const title = (video.desc || 'TikTok Edit').replace(/\s+/g, ' ').trim()
+    return {
+        buffer,
+        info: video,
+        card: {
+            body: proto.Message.InteractiveMessage.Body.fromObject({
+                text: `❤️ ${formatNum(video.likes)} | 💬 ${formatNum(video.comments)} | 👁️ ${formatNum(video.plays)}\n👤 ${video.author} | ⏱️ ${video.duration}s`
+            }),
+            footer: proto.Message.InteractiveMessage.Footer.fromObject({ text: '⛩️ SUKUNA BOT ⛩️' }),
+            header: proto.Message.InteractiveMessage.Header.fromObject({
+                title: title.slice(0, 40),
+                hasMediaAttachment: true,
+                videoMessage: mediaMsg.videoMessage
+            }),
+            nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.fromObject({ buttons: [] })
+        }
+    }
+}
+
+// بيجهز كروت كفاية (CARD_COUNT) من قايمة النتايج، 3 مع بعض
+async function buildCards(videos, conn) {
+    const results = []
+    let idx = 0
+    const workers = Array.from({ length: CONCURRENCY }, async () => {
+        while (results.length < CARD_COUNT) {
+            const i = idx++
+            if (i >= videos.length) break
+            try {
+                const item = await processItem(videos[i], conn)
+                if (results.length < CARD_COUNT) results.push(item)
+            } catch (e) {
+                console.log(`[edit-search] كارت ${i} فشل:`, e.message)
+            }
+        }
+    })
+    await Promise.all(workers)
+    return results
 }
 
 let handler = async (m, { conn, args, usedPrefix, command }) => {
@@ -192,43 +166,64 @@ let handler = async (m, { conn, args, usedPrefix, command }) => {
         try { await conn.sendMessage(chat, { react: { text: emoji, key: m.key } }) } catch {}
     }
 
-    // زرار "بدون علامة"
-    if (String(command).toLowerCase() === 'dlnowm') {
-        const videoKey = (args[0] || '').trim()
-        if (!videoKey) return
-        return handleDownloadNoWM(m, conn, videoKey)
-    }
-
     if (!args[0]) {
         await react('❌')
-        return send(`> ${theme.divider}\n> \n> 🜲⃝☠️ *بـحـث الـاديـتات*\n> 𖤐⃝🩸 *بحث من تيك توك*\n> \n> ${theme.smallDivider}\n> \n> 👁️⃝🩸 الاستخدام:\n> ${usedPrefix}${command} <اسم الشخصية>\n> \n> ${theme.endDivider}`)
+        return send(`🔍 *بحث اديتات تيك توك*\n\n${usedPrefix}${command} <اسم الشخصية>\n\n💡 مثال:\n${usedPrefix}${command} زورو\n\n⛩️ SUKUNA BOT ⛩️`)
     }
 
     const characterName = args.join(' ')
-    const searchQuery = `${characterName} edit`
-
     await react('🔍')
-    await send(`> ${theme.divider}\n> \n> 🜲⃝☠️ *جـاري الـبـحـث*\n> 𖤐⃝🩸 *عن: ${characterName}*\n> \n> ${theme.endDivider}`)
+    await send(`🔍 *جاري البحث عن اديتات:* ${characterName}`)
 
     try {
-        const videos = await searchTikTok(searchQuery, MAX_VIDEOS)
-        if (!videos || videos.length === 0) {
-            await react('❌')
-            return send(`> ${theme.divider}\n> \n> 🜲⃝☠️ *خـطـأ*\n> 👁️⃝🩸 *ما لقيت اديتات لـ ${characterName}*\n> \n> ${theme.endDivider}`)
+        const videos = await searchTikTok(`${characterName} edit`)
+        if (!videos.length) throw new Error(`ما لقيت اديتات لـ ${characterName}`)
+
+        await send(`⬇️ *لقيت ${videos.length} نتيجة، جاري تجهيز ${Math.min(CARD_COUNT, videos.length)} فيديو...*`)
+
+        const items = await buildCards(videos, conn)
+        if (!items.length) throw new Error('فشل تحميل الفيديوهات')
+        const cards = items.map(i => i.card)
+
+        try {
+            const msg = generateWAMessageFromContent(chat, {
+                viewOnceMessage: {
+                    message: {
+                        messageContextInfo: { deviceListMetadata: {}, deviceListMetadataVersion: 2 },
+                        interactiveMessage: proto.Message.InteractiveMessage.fromObject({
+                            body: proto.Message.InteractiveMessage.Body.create({ text: `🎬 *اديتات: ${characterName}*\n${cards.length} فيديو` }),
+                            footer: proto.Message.InteractiveMessage.Footer.create({ text: 'SukunaBot' }),
+                            header: proto.Message.InteractiveMessage.Header.create({ hasMediaAttachment: false }),
+                            carouselMessage: proto.Message.InteractiveMessage.CarouselMessage.fromObject({ cards })
+                        })
+                    }
+                }
+            }, { quoted: m })
+
+            await conn.relayMessage(chat, msg.message, { messageId: msg.key.id })
+        } catch (err) {
+            // لو الكاروسيل فشل: نبعت أول 3 فيديوهات عادي
+            console.error('[edit-search] الكاروسيل فشل:', err?.message)
+            for (const it of items.slice(0, 3)) {
+                await conn.sendMessage(chat, {
+                    video: it.buffer,
+                    mimetype: 'video/mp4',
+                    caption: `🎬 *${it.info.desc.slice(0, 80)}*\n👤 ${it.info.author}\n\n⛩️ SUKUNA BOT ⛩️`
+                })
+            }
         }
-        await send(`⏳ لقيت ${videos.length} نتيجة، جاري تجهيز أفضل ${SEND_COUNT} فيديوهات...`)
-        await sendResults(conn, chat, characterName, videos)
+
         await react('✅')
     } catch (err) {
-        console.error('❌ Edit Search Error:', err)
+        console.error('[edit-search]', err.message)
         await react('❌')
-        await send(`> ${theme.divider}\n> \n> 🜲⃝☠️ *خـطـأ*\n> 👁️⃝🩸 *${err.message}*\n> \n> ${theme.endDivider}`)
+        await send('❌ ' + err.message)
     }
 }
 
 handler.help = ['بحثتيك <اسم>']
 handler.tags = ['downloader']
-// ملحوظة: شلت "ايديت" من هنا عشان ما يتعارضش مع أمر ايديت التاني
-handler.command = /^(بحثتيك|بحثتيكك|بحث_تيك|تيك|تيكتوك|dlnowm)$/i
+// ملحوظة: "ايديت" مش هنا عشان ما يتعارضش مع أمر ايديت التاني
+handler.command = /^(بحثتيك|بحثتيكك|بحث_تيك|تيك|تيكتوك)$/i
 
 export default handler
