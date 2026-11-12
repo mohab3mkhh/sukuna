@@ -6,11 +6,11 @@ let handler = async (m, { conn }) => {
         const users = m.mentionedJid
 
         if (!users || users.length < 4) {
-            return m.reply("⚠️ أقل عدد للعبة الإبادة هو 4 لاعبين")
+            return conn.sendMessage(m.chat, { text:"⚠️ أقل عدد للعبة الإبادة هو 4 لاعبين")
         }
 
         if (users.length > 10) {
-            return m.reply("⚠️ أقصى عدد 10 لاعبين فقط")
+            return conn.sendMessage(m.chat, { text:"⚠️ أقصى عدد 10 لاعبين فقط")
         }
 
         // ☠︎ رسالة البداية (تصحيح كامل)
