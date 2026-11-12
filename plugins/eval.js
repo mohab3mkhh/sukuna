@@ -25,10 +25,10 @@ const handler = async (m, { conn, text, command }) => {
       const fs = (await import('fs')).default
       fs.writeFileSync(`plugins/${fileName}`, code, 'utf8')
       await m.react('✅')
-      return conn.sendMessage(m.chat, { text:`✅ تم حفظ *${fileName}* بنجاح!`)
+      return m.reply(`✅ تم حفظ *${fileName}* بنجاح!`)
     } catch (e) {
       await m.react('❌')
-      return conn.sendMessage(m.chat, { text:`❌ ${e.message}`)
+      return m.reply(`❌ ${e.message}`)
     }
   }
 
@@ -39,7 +39,7 @@ const handler = async (m, { conn, text, command }) => {
     if (!result || result === 'undefined') result = '✅ تم التنفيذ بدون نتيجة'
     await conn.sendMessage(m.chat, { text:String(result).slice(0, 3000))
   } catch (e) {
-    await conn.sendMessage(m.chat, { text:`❌ ${e.message}`)
+    await m.reply(`❌ ${e.message}`)
   }
 }
 
