@@ -1,5 +1,5 @@
 // plugins/stickers-pack.js
-// 🕷️ Raiden Shogun - حزمة ملصقات Pinterest 📦
+// 👑 Sukuna Bot - حزمة ملصقات Pinterest 📦
 
 import fetch from 'node-fetch'
 import { writeFileSync, unlinkSync, readFileSync, existsSync } from 'fs'
@@ -202,13 +202,13 @@ async function sendStickerPack(conn, m, pack, query) {
   const thumbnailBuffer = await makeThumbnailJpeg(trayBuffer)
   const thumbUpload = await uploadToServer(conn, thumbnailBuffer, { hkdf: 'WhatsApp Sticker Pack Thumbnail Keys', mediaPath: '/mms/thumbnail-sticker-pack', mediaKey: packUpload.mediaKey })
 
-  // ✅ إضافة contextInfo للقناة
+  // ✅ غيرت الحقوق لملصقات مهاب
   const contextInfo = {
     isForwarded: true,
     forwardingScore: 999,
     forwardedNewsletterMessageInfo: {
       newsletterJid: '120363411230730060@newsletter',
-      newsletterName: '⧼ 𝑷𝑹𝑶𝑻𝑶𝑻𝒀𝑷𝑬 ⧽',
+      newsletterName: '⛩️ ملصقات مهاب ⛩️',
       serverMessageId: '-1'
     }
   }
@@ -217,9 +217,9 @@ async function sendStickerPack(conn, m, pack, query) {
     messageContextInfo: { messageSecret: crypto.randomBytes(32) },
     stickerPackMessage: {
       stickerPackId: 'Pack_' + crypto.randomBytes(8).toString('hex'),
-      name: '🕷️ Raiden Shogun',
-      publisher: '🕷️ Raiden Shogun',
-      packDescription: `🕷️ ${query}`,
+      name: '⛩️ ملصقات مهاب ⛩️',
+      publisher: '⛩️ ملصقات مهاب ⛩️',
+      packDescription: `⛩️ ${query}`,
       stickers: stickersMetadata,
       fileLength: packUpload.fileLength,
       fileSha256: packUpload.fileSha256,
@@ -274,7 +274,7 @@ async function makeAnimatedWebp(buffer, index) {
 let handler = async (m, { conn, text, usedPrefix, command }) => {
 
   if (!text) {
-    return m.reply(`🕷️ ${usedPrefix + command} <بحث> <عدد>\n🕷️ مثال: ${usedPrefix + command} anime 10`)
+    return m.reply(`👑 ${usedPrefix + command} <بحث> <عدد>\n👑 مثال: ${usedPrefix + command} anime 10\n\n> ⛩️ حقوق ملصقات مهاب ⛩️`)
   }
 
   let query = text
@@ -286,7 +286,7 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
     query = parts.slice(0, -1).join(' ')
   }
 
-  let statusMsg = await m.reply(`🕷️ ${m.pushName} بحث عن ${query}`)
+  let statusMsg = await m.reply(`⛩️ ${m.pushName} بحث عن ${query}`)
 
   try {
     const images = await searchPinterest(query, count)
@@ -294,7 +294,7 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
     const allAnimated = images.animated
 
     if (allStatic.length === 0 && allAnimated.length === 0) {
-      return m.reply(`🕷️ لا توجد نتائج لـ ${query}`)
+      return m.reply(`⛩️ لا توجد نتائج لـ ${query}`)
     }
 
     const pack = []
@@ -321,7 +321,7 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
     }
 
     if (pack.length === 0) {
-      return m.reply(`🕷️ تعذر معالجة اي ملصق`)
+      return m.reply(`⛩️ تعذر معالجة اي ملصق`)
     }
 
     try { await conn.sendMessage(m.chat, { delete: statusMsg.key }) } catch {}
@@ -331,7 +331,7 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
   } catch (e) {
     console.error(e)
     try { await conn.sendMessage(m.chat, { delete: statusMsg.key }) } catch {}
-    m.reply(`🕷️ خطأ: ${e.message}`)
+    m.reply(`⛩️ خطأ: ${e.message}`)
   }
 }
 
