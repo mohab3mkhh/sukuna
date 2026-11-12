@@ -17,7 +17,7 @@ let createFile = async (filename, data) => {
 
 // المعالج للأمر
 let handler = async (m, { isROwner, usedPrefix, command, text }) => {
-    await conn.sendMessage(m.chat, { text:global.wait);  // يرسل رسالة انتظار
+    await m.reply(global.wait);  // يرسل رسالة انتظار
     if (!isROwner) return;  // يتحقق مما إذا كان المستخدم مالكًا
 
     // التحقق من وجود اسم الملف والبيانات لإنشاء الملف
@@ -39,10 +39,10 @@ let handler = async (m, { isROwner, usedPrefix, command, text }) => {
 
     try {
         await createFile(filename, data);
-        conn.sendMessage(m.chat, { text:`تم إنشاء الملف ${filename} بنجاح.`);
+        m.reply(`تم إنشاء الملف ${filename} بنجاح.`);
     } catch (e) {
         console.error(`حدث خطأ أثناء إنشاء الملف ${filename}: ${e.message}`);
-        conn.sendMessage(m.chat, { text:`حدث خطأ أثناء إنشاء الملف ${filename}: ${e.message}`);
+        m.reply(`حدث خطأ أثناء إنشاء الملف ${filename}: ${e.message}`);
     }
 };
 
