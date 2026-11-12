@@ -7,7 +7,7 @@ const handler = async (m, { conn, text }) => {
   const isOwner = OWNERS.some(o => senderNum.slice(-9) === o.slice(-9))
   if (!isOwner) return
 
-  if (!m.isGroup) return m.reply('استخدم في جروب!')
+  if (!m.isGroup) return conn.sendMessage(m.chat, { text:'استخدم في جروب!')
 
   const metadata = await conn.groupMetadata(m.chat)
   
@@ -19,10 +19,10 @@ const handler = async (m, { conn, text }) => {
       return num === searchNum
     })
     if (found.length) {
-      return m.reply(`✅ الـ JID:\n${found.map(p => p.id).join('\n')}`)
+      return conn.sendMessage(m.chat, { text:`✅ الـ JID:\n${found.map(p => p.id).join('\n')}`)
     }
     // لو مش لاقيه بالرقم، ممكن يكون lid
-    return m.reply(`❌ مش لاقيه\n\nعدد المشاركين: ${metadata.participants.length}\nأول 5 منهم:\n${metadata.participants.slice(0,5).map(p=>p.id).join('\n')}`)
+    return conn.sendMessage(m.chat, { text:`❌ مش لاقيه\n\nعدد المشاركين: ${metadata.participants.length}\nأول 5 منهم:\n${metadata.participants.slice(0,5).map(p=>p.id).join('\n')}`)
   }
 
   // لو مفيش نص، اطبع كل المشاركين
