@@ -164,7 +164,7 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
     } catch (e) {
       console.error('Apple download error:', e);
       await m.react('❌');
-      conn.sendMessage(m.chat, { text:'❌ ' + e.message);
+      m.reply('❌ ' + e.message);
     }
     return;
   }
@@ -175,7 +175,7 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
     const songs = await searchApple(text);
     if (!songs.length) {
       await m.react('❌');
-      return conn.sendMessage(m.chat, { text:'❌ مفيش نتايج');
+      return m.reply('❌ مفيش نتايج');
     }
 
     const firstArt = songs[0]?.attributes?.artwork?.url;
@@ -211,7 +211,7 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
   } catch (e) {
     console.error('Apple search error:', e);
     await m.react('❌');
-    conn.sendMessage(m.chat, { text:'❌ ' + e.message);
+    m.reply('❌ ' + e.message);
   }
 };
 
@@ -241,7 +241,7 @@ handler.before = async function (m, { conn, command }) {
   } catch (e) {
     console.error('Apple download error:', e);
     await m.react('❌');
-    conn.sendMessage(m.chat, { text:'❌ ' + e.message);
+    m.reply('❌ ' + e.message);
   }
 
   return true;
