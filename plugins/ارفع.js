@@ -10,7 +10,7 @@ const REPO_NAME = 'uploading-';
 const handler = async (m, { conn }) => {
   const q = m.quoted ? m.quoted : m;
   const mime = (q.msg || q).mimetype || '';
-  if (!mime) return m.reply('*⛔ يجب الرد على صورة أو فيديو أو صوت!*');
+  if (!mime) return conn.sendMessage(m.chat, { text:'*⛔ يجب الرد على صورة أو فيديو أو صوت!*');
 
   const media = await q.download();
   const { ext } = await fileTypeFromBuffer(media);
@@ -29,10 +29,10 @@ const handler = async (m, { conn }) => {
     cap += `*📂 الاسم:* ${fileName}\n`;
     cap += `*📁 الامتداد:* ${ext}\n`;
     cap += `*🔗 الرابط:* ${url}`;
-    m.reply(cap);
+    conn.sendMessage(m.chat, { text:cap);
   } catch (err) {
     console.error(err);
-    m.reply(`❌ خطأ أثناء رفع الملف: ${err.message}`);
+    conn.sendMessage(m.chat, { text:`❌ خطأ أثناء رفع الملف: ${err.message}`);
   } finally {
     fs.unlinkSync(filePath);
   }
