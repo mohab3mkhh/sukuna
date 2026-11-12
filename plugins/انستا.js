@@ -1,8 +1,10 @@
 // plugins/انستا.js
-// ✧ Instagram Downloader 🎬 (v3)
-// كل مزوّد بيتجرب بالدور، ولو فشلوا كلهم بتظهر لك في الشات سبب كل واحد + أول جزء من ردّه
+// ✧ Instagram Downloader 🎬 (v4)
 
 import axios from 'axios'
+import fs from 'fs'
+import os from 'os'
+import path from 'path'
 import { execFile } from 'child_process'
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36'
@@ -11,7 +13,6 @@ const send = (conn, chat, text, quoted) => conn.sendMessage(chat, { text }, { qu
 
 const SKIP_KEYS = /thumb|preview|cover|avatar|profile|poster|icon|logo/i
 
-// يدور في أي JSON على روابط ميديا (بيتجاهل الصور المصغرة)
 export function extractMedia(data) {
     const found = new Set()
     const walk = (node, key = '') => {
@@ -27,7 +28,6 @@ export function extractMedia(data) {
     return [...found]
 }
 
-// يطلع روابط التحميل من HTML بتاع مواقع ajaxSearch (saveig / snapinsta)
 export function extractFromHtml(html) {
     const out = new Set()
     for (const m of String(html).matchAll(/download-items__btn[^>]*>\s*<a[^>]*href="([^"]+)"/g)) out.add(m[1].replace(/&amp;/g, '&'))
@@ -44,9 +44,7 @@ const snippet = d => {
     try { return (typeof d === 'string' ? d : JSON.stringify(d)).replace(/\s+/g, ' ').slice(0, 110) } catch { return '' }
 }
 
-// ════════════════════════════════════════════
-// المزوّدين — لو واحد مات امسحه، ولو لقيت غيره ضيفه هنا (كل واحد بيرجع array روابط)
-// ════════════════════════════════════════════
+// ━━━ المزوّدين ━━━
 const ajaxSearch = (host) => async (url) => {
     const r = await axios.post(`https://${host}/api/ajaxSearch`,
         new URLSearchParams({ q: url, t: 'media', lang: 'en' }).toString(),
@@ -59,14 +57,6 @@ const ajaxSearch = (host) => async (url) => {
     return links
 }
 
-const jsonApi = (buildUrl) => async (url) => {
-    const r = await axios.get(buildUrl(encodeURIComponent(url)), { headers: { 'User-Agent': UA, Accept: 'application/json' }, timeout: 25000 })
-    const links = extractMedia(r.data)
-    if (!links.length) throw new Error('مفيش روابط: ' + snippet(r.data))
-    return links
-}
-
-// حزم موجودة عندك فعلاً في package.json (instagram-url-direct و ruhend-scraper)، وbtch-downloader اختيارية
 const viaPackage = (pkg, call) => async (url) => {
     let mod
     try { mod = await import(pkg) } catch { throw new Error(`${pkg} مش متثبتة`) }
@@ -76,9 +66,27 @@ const viaPackage = (pkg, call) => async (url) => {
     return links
 }
 
-// yt-dlp: واضح من اللوج عندك إنه موجود على السيرفر (-g بيرجّع الرابط المباشر بدون ffmpeg)
+// كوكيز إنستجرام: IG_COOKIES بصيغة سطر واحد  sessionid=...; csrftoken=...; ds_user_id=...
+// (أو ملف ig_cookies.txt بصيغة Netscape في جذر المشروع)
 const ytdlp = (url) => new Promise((resolve, reject) => {
-    execFile('yt-dlp', ['-g', '-f', 'b/best', '--no-warnings', url], { timeout: 45000, maxBuffer: 1 << 20 }, (err, stdout, stderr) => {
+    const raw = (process.env.IG_COOKIES || '').trim()
+    const headerMode = raw.includes('sessionid=') && !raw.includes('\t')
+    let tmp = null
+    const cookieArgs = []
+
+    if (headerMode) {
+        cookieArgs.push('--add-header', `Cookie:${raw}`)
+    } else {
+        tmp = path.join(os.tmpdir(), `igcookies_${process.pid}_${Date.now()}.txt`)
+        const local = path.join(process.cwd(), 'ig_cookies.txt')
+        if (raw) fs.writeFileSync(tmp, raw)
+        else if (fs.existsSync(local)) fs.copyFileSync(local, tmp)
+        else tmp = null
+        if (tmp) cookieArgs.push('--cookies', tmp)
+    }
+
+    execFile('yt-dlp', ['-g', '-f', 'b/best', '--no-warnings', ...cookieArgs, url], { timeout: 45000, maxBuffer: 1 << 20 }, (err, stdout, stderr) => {
+        if (tmp) { try { fs.unlinkSync(tmp) } catch {} }
         if (err) return reject(new Error(err.code === 'ENOENT' ? 'yt-dlp مش موجود في PATH' : (String(stderr || err.message).split('\n').find(l => /ERROR/.test(l)) || err.message).slice(0, 140)))
         const links = String(stdout).split('\n').map(s => s.trim()).filter(s => /^https?:\/\//.test(s))
         links.length ? resolve(links) : reject(new Error('yt-dlp: مفيش روابط'))
@@ -86,17 +94,15 @@ const ytdlp = (url) => new Promise((resolve, reject) => {
 })
 
 const PROVIDERS = [
-    { name: 'instagram-url-direct', run: viaPackage('instagram-url-direct', (m, u) => (m.instagramGetUrl || m.default?.instagramGetUrl || m.default || m)(u)) },
-    { name: 'ruhend', run: viaPackage('ruhend-scraper', (m, u) => (m.igdl || m.default?.igdl)(u)) },
-    { name: 'btch', run: viaPackage('btch-downloader', (m, u) => (m.igdl || m.default?.igdl)(u)) },
     { name: 'yt-dlp', run: ytdlp },
+    { name: 'instagram-url-direct', run: viaPackage('instagram-url-direct', (m, u) => (m.instagramGetUrl || m.default?.instagramGetUrl || m.default || m)(u)) },
+    { name: 'saveig', run: ajaxSearch('v3.saveig.app') },
+    { name: 'btch', run: viaPackage('btch-downloader', (m, u) => (m.igdl || m.default?.igdl)(u)) },
 ]
 
 const shortErr = e => e.response?.status ? `HTTP ${e.response.status}` : (e.code || e.message || 'unknown').toString().slice(0, 140)
 
-// ════════════════════════════════════════════
-// تحميل + معرفة نوع الملف من محتواه (مش من الرابط)
-// ════════════════════════════════════════════
+// ━━━ تحميل ━━━
 export function sniff(buf, mime = '') {
     if (mime.startsWith('video/')) return 'video'
     if (mime.startsWith('image/')) return 'image'
