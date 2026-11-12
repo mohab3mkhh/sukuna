@@ -2,7 +2,7 @@
 
 const handler = async (m, { conn }) => {
   const targetJid = m.mentionedJid?.[0] || m.quoted?.sender
-  if (!targetJid) return conn.sendMessage(m.chat, { text:'❌ منشن الشخص أو رد على رسالته')
+  if (!targetJid) return m.reply('❌ منشن الشخص أو رد على رسالته')
 
   const num = targetJid.split('@')[0]
 
