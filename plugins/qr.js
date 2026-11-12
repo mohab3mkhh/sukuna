@@ -64,7 +64,7 @@ const handler = async (m, { conn }) => {
   } catch (e) {
     console.error('[QR]', e.message);
     await m.react('❌');
-    await conn.sendMessage(m.chat, { text:`❌ فشل\n⚠️ ${e.message}`);
+    await m.reply(`❌ فشل\n⚠️ ${e.message}`);
   }
 };
 
