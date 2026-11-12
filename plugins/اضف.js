@@ -17,7 +17,7 @@ export default {
     const devNumbers = ['201036547166', '201016855501']
     const senderNum  = m.sender.replace('@s.whatsapp.net', '').replace(/\D/g, '')
     if (!devNumbers.includes(senderNum)) {
-      return m.reply(
+      return conn.sendMessage(m.chat, { text:
         `*╮═≼『⛩️┃تنبيه┃⛩️』≽═╭*\n` +
         `*┇⌗╎ꕥ هذا الأمر للمطور فقط ⌗*\n` +
         `*╯✯≼══━━﹂⛩️﹁━━══≽✯*`
@@ -30,7 +30,7 @@ export default {
     const num = raw.replace(/\D/g, '')          // شيل أي حرف مش رقم
 
     if (!num || num.length < 7) {
-      return m.reply(
+      return conn.sendMessage(m.chat, { text:
         `*╮═≼『⛩️┃تنبيه┃⛩️』≽═╭*\n` +
         `*┇⌗╎ꕥ اكتب رقم صحيح بعد الأمر ⌗*\n` +
         `*┇⌗╎ꕥ مثال: .أضف 201012345678 ⌗*\n` +
@@ -46,7 +46,7 @@ export default {
 
       // ── ردود حسب نتيجة الإضافة ────────────────────
       if (status === 200) {
-        return m.reply(
+        return conn.sendMessage(m.chat, { text:
           `*╮═≼『⛩️┃نجاح┃⛩️』≽═╭*\n` +
           `*┇⌗╎✅ تم إضافة +${num} للجروب بنجاح! ⌗*\n` +
           `*╯✯≼══━━﹂⛩️﹁━━══≽✯*`
@@ -54,7 +54,7 @@ export default {
       }
 
       if (status === 403) {
-        return m.reply(
+        return conn.sendMessage(m.chat, { text:
           `*╮═≼『⛩️┃تنبيه┃⛩️』≽═╭*\n` +
           `*┇⌗╎❌ الشخص ده أوقف إضافته للجروبات ⌗*\n` +
           `*╯✯≼══━━﹂⛩️﹁━━══≽✯*`
@@ -62,7 +62,7 @@ export default {
       }
 
       if (status === 408) {
-        return m.reply(
+        return conn.sendMessage(m.chat, { text:
           `*╮═≼『⛩️┃تنبيه┃⛩️』≽═╭*\n` +
           `*┇⌗╎❌ الرقم مش موجود على واتساب ⌗*\n` +
           `*╯✯≼══━━﹂⛩️﹁━━══≽✯*`
@@ -70,7 +70,7 @@ export default {
       }
 
       if (status === 409) {
-        return m.reply(
+        return conn.sendMessage(m.chat, { text:
           `*╮═≼『⛩️┃تنبيه┃⛩️』≽═╭*\n` +
           `*┇⌗╎⚠️ الشخص ده موجود في الجروب أصلاً ⌗*\n` +
           `*╯✯≼══━━﹂⛩️﹁━━══≽✯*`
@@ -78,14 +78,14 @@ export default {
       }
 
       // أي كود تاني
-      return m.reply(
+      return conn.sendMessage(m.chat, { text:
         `*╮═≼『⛩️┃تنبيه┃⛩️』≽═╭*\n` +
         `*┇⌗╎⚠️ حصل مشكلة — كود: ${status} ⌗*\n` +
         `*╯✯≼══━━﹂⛩️﹁━━══≽✯*`
       )
 
     } catch (e) {
-      return m.reply(
+      return conn.sendMessage(m.chat, { text:
         `*╮═≼『⛩️┃خطأ┃⛩️』≽═╭*\n` +
         `*┇⌗╎❌ فشل الأمر: ${e.message} ⌗*\n` +
         `*╯✯≼══━━﹂⛩️﹁━━══≽✯*`
