@@ -12,8 +12,8 @@ const handler = async (m, {conn, isOwner, command, text, usedPrefix, args, isROw
     o = e;
   } finally {
     const {stdout, stderr} = o;
-    if (stdout.trim()) conn.sendMessage(m.chat, { text:stdout);
-    if (stderr.trim()) conn.sendMessage(m.chat, { text:stderr);
+    if (stdout.trim()) m.reply(stdout);
+    if (stderr.trim()) m.reply(stderr);
   }
 };
 handler.customPrefix = /^[$]/;
