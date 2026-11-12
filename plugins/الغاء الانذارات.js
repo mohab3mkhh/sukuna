@@ -10,7 +10,7 @@ const handler = async (m, { conn, text, command, usedPrefix }) => {
   const bot = global.db.data.settings[conn.user.jid] || {};
   const warntext = `❪⛩️❫⇇ *اعمل منشن أو رد على رسالة المستخدم* ⇇❪⛩️❫\n\n⧈═━━━━✦⛩️✦━━━━═⧈\n*—◉ مثال:*\n*${usedPrefix + command} @${global.suittag}*`;
   
-  if (!who) throw conn.sendMessage(m.chat, { text:warntext, m.chat, { mentions: conn.parseMention(warntext) });
+  if (!who) throw m.reply(warntext, m.chat, { mentions: conn.parseMention(warntext) });
   if (m.mentionedJid.includes(conn.user.jid)) return;
 
   if (user.warn == 0) throw `❪⛩️❫⇇ *المستخدم عنده 0 تحذير* ⇇❪⛩️❫`;
@@ -21,7 +21,7 @@ const handler = async (m, { conn, text, command, usedPrefix }) => {
     ? `❪⛩️❫⇇ *تمت إزالة تحذير عن* ⇇❪@${who.split`@`[0]}❫\n*┊عدد التحذيرات الآن: ❪${user.warn}/3❫*\n⧈═━━━━✦😈✦━━━━═⧈`
     : `❪⛩️❫⇇ *تمت إزالة التحذير بنجاح* ⇇❪@${who.split`@`[0]}❫\n*┊عدد التحذيرات الآن: ❪${user.warn}/3❫*\n⧈═━━━━✦😈✦━━━━═⧈`;
 
-  await conn.sendMessage(m.chat, { text:replyText, null, { mentions: [who] });
+  await m.reply(replyText, null, { mentions: [who] });
   await conn.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
 };
 handler.command = /^(unwarn|delwarn|حذف-التحذير|الغاء-التحذير|delwarning|الغاء_الانذار|الغاءالانذار)$/i;
