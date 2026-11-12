@@ -7,7 +7,7 @@ const handler = async (m, { conn, text }) => {
   const isOwner = OWNERS.some(o => senderNum.slice(-9) === o.slice(-9))
   if (!isOwner) return
 
-  if (!m.isGroup) return conn.sendMessage(m.chat, { text:'استخدم في جروب!')
+  if (!m.isGroup) return m.reply('استخدم في جروب!')
 
   const metadata = await conn.groupMetadata(m.chat)
   
