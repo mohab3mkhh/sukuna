@@ -32,7 +32,7 @@ const handler = async (m, { conn }) => {
     conn.sendMessage(m.chat, { text:cap);
   } catch (err) {
     console.error(err);
-    conn.sendMessage(m.chat, { text:`❌ خطأ أثناء رفع الملف: ${err.message}`);
+    m.reply(`❌ خطأ أثناء رفع الملف: ${err.message}`);
   } finally {
     fs.unlinkSync(filePath);
   }
