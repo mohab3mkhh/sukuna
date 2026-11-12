@@ -1,5 +1,6 @@
 // plugins/انستا.js
-// ✧ Instagram Downloader 🎬 (v4)
+// ✧ Instagram Downloader 🎬 (v5)
+// الترتيب: API بالكوكيز ← yt-dlp ← instagram-url-direct ← saveig ← btch
 
 import axios from 'axios'
 import fs from 'fs'
@@ -8,6 +9,8 @@ import path from 'path'
 import { execFile } from 'child_process'
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36'
+const IG_APP_UA = 'Instagram 275.0.0.27.98 Android (33/13; 420dpi; 1080x2400; samsung; SM-G991B; o1s; exynos2100; en_US; 458229237)'
+const IG_APP_ID = '936619743392459'
 
 const send = (conn, chat, text, quoted) => conn.sendMessage(chat, { text }, { quoted })
 
@@ -44,30 +47,75 @@ const snippet = d => {
     try { return (typeof d === 'string' ? d : JSON.stringify(d)).replace(/\s+/g, ' ').slice(0, 110) } catch { return '' }
 }
 
+// ━━━ الكوكيز ━━━
+// IG_COOKIES = "sessionid=...; csrftoken=...; ds_user_id=..."  أو ملف ig_cookies.txt (Netscape)
+function getCookieString() {
+    const raw = (process.env.IG_COOKIES || '').trim()
+    if (raw.includes('sessionid=')) return raw
+
+    const local = path.join(process.cwd(), 'ig_cookies.txt')
+    const src = raw && raw.includes('\t') ? raw : (fs.existsSync(local) ? fs.readFileSync(local, 'utf8') : '')
+    if (!src) return ''
+
+    const pairs = []
+    for (const line of src.split('\n')) {
+        const l = line.replace(/^#HttpOnly_/, '').trim()
+        if (!l || l.startsWith('#')) continue
+        const p = l.split('\t')
+        if (p.length >= 7 && /instagram\.com$/i.test(p[0].replace(/^\./, ''))) pairs.push(`${p[5]}=${p[6]}`)
+    }
+    return pairs.join('; ')
+}
+
+// ━━━ shortcode → media id ━━━
+const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'
+const shortcodeToId = (sc) => {
+    let id = 0n
+    for (const c of sc) id = id * 64n + BigInt(B64.indexOf(c))
+    return id.toString()
+}
+const parseIgUrl = (url) => String(url).match(/instagram\.com\/(?:[^/?#]+\/)?(?:p|reel|reels|tv)\/([A-Za-z0-9_-]+)/i)
+
 // ━━━ المزوّدين ━━━
-const ajaxSearch = (host) => async (url) => {
-    const r = await axios.post(`https://${host}/api/ajaxSearch`,
-        new URLSearchParams({ q: url, t: 'media', lang: 'en' }).toString(),
-        { headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': UA, Origin: `https://${host}`, Referer: `https://${host}/` }, timeout: 25000 })
-    const html = r.data?.data
-    if (typeof html !== 'string' || !html) throw new Error('رد فاضي: ' + snippet(r.data))
-    if (html.startsWith('eval(')) throw new Error('الموقع بقى يرجّع كود مشفّر (محتاج فك)')
-    const links = extractFromHtml(html)
-    if (!links.length) throw new Error('مفيش روابط في الـ HTML: ' + snippet(html))
+
+// 1) API إنستجرام الرسمي بالكوكيز (الأثبت)
+const viaApi = async (url) => {
+    const cookie = getCookieString()
+    if (!cookie) throw new Error('مفيش كوكيز (حط IG_COOKIES)')
+    const mm = parseIgUrl(url)
+    if (!mm) throw new Error('الرابط مش منشور/ريل (ستوري غير مدعوم هنا)')
+
+    const csrf = /csrftoken=([^;]+)/.exec(cookie)?.[1] || ''
+    let r
+    try {
+        r = await axios.get(`https://i.instagram.com/api/v1/media/${shortcodeToId(mm[1])}/info/`, {
+            headers: {
+                'User-Agent': IG_APP_UA,
+                'X-IG-App-ID': IG_APP_ID,
+                'X-CSRFToken': csrf,
+                Cookie: cookie,
+                Accept: '*/*'
+            },
+            timeout: 25000
+        })
+    } catch (e) {
+        const s = e.response?.status
+        if (s === 400 || s === 401 || s === 403) throw new Error(`HTTP ${s} — الكوكيز منتهية أو الحساب متقيّد`)
+        if (s === 404) throw new Error('المنشور مش موجود أو private')
+        throw e
+    }
+
+    const item = r.data?.items?.[0]
+    if (!item) throw new Error('رد فاضي: ' + snippet(r.data))
+
+    const pick = (it) => it.video_versions?.[0]?.url || it.image_versions2?.candidates?.[0]?.url
+    const nodes = item.carousel_media?.length ? item.carousel_media : [item]
+    const links = nodes.map(pick).filter(Boolean)
+    if (!links.length) throw new Error('مفيش روابط في الرد')
     return links
 }
 
-const viaPackage = (pkg, call) => async (url) => {
-    let mod
-    try { mod = await import(pkg) } catch { throw new Error(`${pkg} مش متثبتة`) }
-    const data = await call(mod, url)
-    const links = extractMedia(data)
-    if (!links.length) throw new Error('مفيش روابط: ' + snippet(data))
-    return links
-}
-
-// كوكيز إنستجرام: IG_COOKIES بصيغة سطر واحد  sessionid=...; csrftoken=...; ds_user_id=...
-// (أو ملف ig_cookies.txt بصيغة Netscape في جذر المشروع)
+// 2) yt-dlp
 const ytdlp = (url) => new Promise((resolve, reject) => {
     const raw = (process.env.IG_COOKIES || '').trim()
     const headerMode = raw.includes('sessionid=') && !raw.includes('\t')
@@ -93,7 +141,31 @@ const ytdlp = (url) => new Promise((resolve, reject) => {
     })
 })
 
+const viaPackage = (pkg, call) => async (url) => {
+    let mod
+    try { mod = await import(pkg) } catch (e) {
+        throw new Error(e?.code === 'ERR_MODULE_NOT_FOUND' ? `${pkg} مش متثبتة (npm i ${pkg})` : `${pkg}: ${String(e?.message).slice(0, 100)}`)
+    }
+    const data = await call(mod, url)
+    const links = extractMedia(data)
+    if (!links.length) throw new Error('مفيش روابط: ' + snippet(data))
+    return links
+}
+
+const ajaxSearch = (host) => async (url) => {
+    const r = await axios.post(`https://${host}/api/ajaxSearch`,
+        new URLSearchParams({ q: url, t: 'media', lang: 'en' }).toString(),
+        { headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': UA, Origin: `https://${host}`, Referer: `https://${host}/` }, timeout: 25000 })
+    const html = r.data?.data
+    if (typeof html !== 'string' || !html) throw new Error('رد فاضي: ' + snippet(r.data))
+    if (html.startsWith('eval(')) throw new Error('الموقع بقى يرجّع كود مشفّر (محتاج فك)')
+    const links = extractFromHtml(html)
+    if (!links.length) throw new Error('مفيش روابط في الـ HTML: ' + snippet(html))
+    return links
+}
+
 const PROVIDERS = [
+    { name: 'ig-api', run: viaApi },
     { name: 'yt-dlp', run: ytdlp },
     { name: 'instagram-url-direct', run: viaPackage('instagram-url-direct', (m, u) => (m.instagramGetUrl || m.default?.instagramGetUrl || m.default || m)(u)) },
     { name: 'saveig', run: ajaxSearch('v3.saveig.app') },
