@@ -225,7 +225,7 @@ const handler = async (m, { conn, args, usedPrefix, command }) => {
       const r = await yts(query).catch(() => null)
       if (!r?.videos?.length) {
         await conn.sendMessage(m.chat, { react: { text: '✖️', key: m.key } })
-        return conn.sendMessage(m.chat, { text:'❌ لم يتم العثور على نتائج.')
+        return m.reply('❌ لم يتم العثور على نتائج.')
       }
       const v = r.videos[0]
       url = v.url
@@ -244,7 +244,7 @@ const handler = async (m, { conn, args, usedPrefix, command }) => {
       const r = await yts(query).catch(() => null)
       if (!r?.videos?.length) {
         await conn.sendMessage(m.chat, { react: { text: '✖️', key: m.key } })
-        return conn.sendMessage(m.chat, { text:'❌ لم يتم العثور على نتائج.')
+        return m.reply('❌ لم يتم العثور على نتائج.')
       }
       url = r.videos[0].url
     }
@@ -259,7 +259,7 @@ const handler = async (m, { conn, args, usedPrefix, command }) => {
     const head = await headInfo(download)
     if (!head.ok) {
       await conn.sendMessage(m.chat, { react: { text: '✖️', key: m.key } })
-      return conn.sendMessage(m.chat, { text:'❌ الرابط غير متاح حالياً.')
+      return m.reply('❌ الرابط غير متاح حالياً.')
     }
     if (head.size > SEND_LIMIT_AUDIO) {
       await conn.sendMessage(m.chat, { text: `⚠️ الملف كبير (${sizeStr(head.size)}). رابط مباشر:\n${download}` }, { quoted: m })
@@ -289,7 +289,7 @@ const handler = async (m, { conn, args, usedPrefix, command }) => {
     const r = await yts(query).catch(() => null)
     if (!r?.videos?.length) {
       await conn.sendMessage(m.chat, { react: { text: '✖️', key: m.key } })
-      return conn.sendMessage(m.chat, { text:'❌ لم يتم العثور على نتائج.')
+      return m.reply('❌ لم يتم العثور على نتائج.')
     }
     const v = r.videos[0]
     url = v.url
@@ -323,7 +323,7 @@ const handler = async (m, { conn, args, usedPrefix, command }) => {
   const head = await headInfo(download)
   if (!head.ok) {
     await conn.sendMessage(m.chat, { react: { text: '✖️', key: m.key } })
-    return conn.sendMessage(m.chat, { text:'❌ الرابط غير متاح حالياً.')
+    return m.reply('❌ الرابط غير متاح حالياً.')
   }
   if (head.size > SEND_LIMIT_VIDEO) {
     await conn.sendMessage(m.chat, { text: `⚠️ الملف كبير (${sizeStr(head.size)}). رابط مباشر:\n${download}` }, { quoted: m })
