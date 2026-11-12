@@ -51,7 +51,7 @@ let handler = async (m, { conn, args }) => {
       return m.reply(`⚠️ فشل الطلب.\n\nيرجى التأكد من أن الرقم يخصك، أرفق فاتورة أو عقد خدمة يثبت ملكيتك للرقم.\n\nوتأكد من إدخال الرقم بصيغة دولية.`)
     } else {
       // في حال رد غير متوقع
-      return conn.sendMessage(m.chat, { text:util.format(JSON.parse(payload.replace("for (;;);", ""))))
+      return m.reply(util.format(JSON.parse(payload.replace("for (;;);", ""))))
     }
 
   } catch (err) {
