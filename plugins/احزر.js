@@ -52,8 +52,16 @@ function findLevelLocal(xp, multiplier = 1) {
 }
 
 // ━━━ إرسال الصورة + أزرار native flow (proto مباشر) ━━━
+const withTimeout = (p, ms, label) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(label + " timeout")), ms))]);
+
+async function fetchImageBuffer(url) {
+  const r = await axios.get(url, { responseType: "arraybuffer", timeout: 15000, headers: { "User-Agent": "Mozilla/5.0" } });
+  return Buffer.from(r.data);
+}
+
 async function sendButtons(conn, jid, { imageUrl, body, footer, options }) {
-  const media = await prepareWAMessageMedia({ image: { url: imageUrl } }, { upload: conn.waUploadToServer });
+  const imgBuf = await fetchImageBuffer(imageUrl);
+  const media = await withTimeout(prepareWAMessageMedia({ image: imgBuf }, { upload: conn.waUploadToServer }), 30000, "upload");
 
   const interactiveMessage = proto.Message.InteractiveMessage.fromObject({
     body: { text: body },
@@ -214,6 +222,8 @@ async function loadChoices(){
 async function handler(m, { conn }){
   try{
     if(!conn) return;
+    console.log("[احزر] الأمر وصل من", m.chat);
+    try { await conn.sendMessage(m.chat, { react: { text: "🎯", key: m.key } }); } catch {}
     attachConverter(conn);
 
     const choicesList = await loadChoices();
@@ -254,13 +264,16 @@ async function handler(m, { conn }){
       // fallback: صورة + خيارات مرقمة (الإجابة برقم أو بالاسم)
       const txt = [caption, "", ...options.map((o, i) => `${i + 1}. ${o}`), "", "✍️ اكتب رقم الإجابة أو الاسم"].join("\n");
       try {
-        await conn.sendMessage(m.chat, { image: { url: imageUrl }, caption: txt });
-      } catch {
+        const buf = await fetchImageBuffer(imageUrl);
+        await conn.sendMessage(m.chat, { image: buf, caption: txt });
+      } catch (e2) {
+        console.error("[احزر] الصورة فشلت:", e2?.message);
         await conn.sendMessage(m.chat, { text: txt });
       }
     }
   }catch(err){
-    console.error("[احزر] error:", err?.message);
+    console.error("[احزر] error:", err);
+    try { await conn.sendMessage(m.chat, { text: "❌ خطأ في الأمر: " + (err?.message || err) }); } catch {}
   }
 }
 
