@@ -12,7 +12,7 @@ const handler = async (m, { conn, text, command }) => {
     const name  = parts?.[1]
 
     if (!url || !name) {
-      return conn.sendMessage(m.chat, { text:'⚠️ الاستخدام:\n.حمل <رابط> <اسم_الملف>\n\nمثال:\n.حمل https://raw.githubusercontent.com/.../احفظ.js احفظ')
+      return m.reply('⚠️ الاستخدام:\n.حمل <رابط> <اسم_الملف>\n\nمثال:\n.حمل https://raw.githubusercontent.com/.../احفظ.js احفظ')
     }
 
     await m.react('⏳')
