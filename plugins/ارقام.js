@@ -139,7 +139,7 @@ const handler = async (m, { conn, text, usedPrefix, command }) => {
 
     if (!targetBtn) {
       await m.react('❌');
-      return conn.sendMessage(m.chat, { text:`❌ مش لاقي "${input}" — بعت \`${usedPrefix}${command}\` عشان تشوف القائمة`);
+      return m.reply(`❌ مش لاقي "${input}" — بعت \`${usedPrefix}${command}\` عشان تشوف القائمة`);
     }
 
     console.log('[TG] Clicking:', targetBtn.text);
@@ -148,7 +148,7 @@ const handler = async (m, { conn, text, usedPrefix, command }) => {
     const numbersMsg = await clickButton(client, startMsg, targetBtn.data);
     const text2      = numbersMsg.text || numbersMsg.message || 'مفيش رد';
 
-    await conn.sendMessage(m.chat, { text:`📱 *${targetBtn.text}*\n\n${text2}`);
+    await m.reply(`📱 *${targetBtn.text}*\n\n${text2}`);
     await m.react('✅');
 
     // احفظ الأزرار الجديدة لو في
@@ -161,7 +161,7 @@ const handler = async (m, { conn, text, usedPrefix, command }) => {
   } catch (e) {
     console.error('[Numbers]', e.message);
     await m.react('❌');
-    await conn.sendMessage(m.chat, { text:`❌ *فشل*\n\n⚠️ ${e.message}`);
+    await m.reply(`❌ *فشل*\n\n⚠️ ${e.message}`);
   }
 };
 
