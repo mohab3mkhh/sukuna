@@ -44,7 +44,7 @@ export async function before(m) {
 
         } else if (similarity(m.text.toLowerCase(), json.name.toLowerCase().trim()) >= threshold)
 
-            conn.sendMessage(m.chat, { text:`*── ⋆⋆ ── ⋆⋆ ── ⋆⋆ ── ⋆⋆ ──*\n*┊:•⪼ ❪⚡️❫⇇قربت من الايجابه يا عثليه ⚜️⛩️*\n*── ⋆⋆ ── ⋆⋆ ── ⋆⋆ ── ⋆⋆ ──*`)
+            m.reply(`*── ⋆⋆ ── ⋆⋆ ── ⋆⋆ ── ⋆⋆ ──*\n*┊:•⪼ ❪⚡️❫⇇قربت من الايجابه يا عثليه ⚜️⛩️*\n*── ⋆⋆ ── ⋆⋆ ── ⋆⋆ ── ⋆⋆ ──*`)
 
         else
 
