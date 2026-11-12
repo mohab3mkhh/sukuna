@@ -25,7 +25,7 @@ export default {
     const isGif = mime.includes('gif')
 
     if (!isVideo && !isGif) {
-      return m.reply(
+      return conn.sendMessage(m.chat, { text:
         `*╮═≼『⛩️┃تنبيه┃⛩️』≽═╭*\n` +
         `*┇⌗╎ꕥ رد على فيديو لتحويله لـ GIF ⌗*\n` +
         `*╯✯≼══━━﹂⛩️﹁━━══≽✯*`
@@ -34,7 +34,7 @@ export default {
 
     const seconds = q.msg?.seconds || q.seconds || 0
     if (seconds > 59) {
-      return m.reply(
+      return conn.sendMessage(m.chat, { text:
         `*╮═≼『⛩️┃تنبيه┃⛩️』≽═╭*\n` +
         `*┇⌗╎ꕥ الفيديو أطول من دقيقة ⌗*\n` +
         `*╯✯≼══━━﹂⛩️﹁━━══≽✯*`
@@ -82,7 +82,7 @@ export default {
       console.error('[GIF Error]', e.message)
       await m.react('❌')
 
-      return m.reply(
+      return conn.sendMessage(m.chat, { text:
         `*╮═≼『⛩️┃خطأ┃⛩️』≽═╭*\n` +
         `*┇⌗╎❌ فشل التحويل: ${e.message} ⌗*\n` +
         `*╯✯≼══━━﹂⛩️﹁━━══≽✯*`
