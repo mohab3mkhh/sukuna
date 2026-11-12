@@ -14,7 +14,7 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
 
   // ✅ التأكد من وجود رقم
   if (!text) {
-    return conn.sendMessage(m.chat, { text:
+    return m.reply(
       `📌 *طريقة الاستخدام:*\n\n` +
       `${usedPrefix}${command} <الكمية> <@منشن>\n\n` +
       `📌 *مثال:*\n` +
@@ -58,7 +58,7 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
   let name = await conn.getName(who) || who.split('@')[0]
 
   await m.react('✅')
-  await conn.sendMessage(m.chat, { text:
+  await m.reply(
     `✅ *تمت الإضافة بنجاح!*\n\n` +
     `👤 *المستخدم:* ${name}\n` +
     `➕ *تم إضافة:* ${amount} XP\n` +
