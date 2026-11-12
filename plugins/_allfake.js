@@ -91,11 +91,30 @@ handler.all = async function (m) {
       participant: "0@s.whatsapp.net"
     }
 
-    // ── thumbnail ─────────────────────────────────────────
-    const thumbnailBuffer = await (await fetch(icono).catch(() => null))
-      ?.arrayBuffer()
-      .then(ab => ab ? Buffer.from(ab) : null)
-      .catch(() => null)
+    // ── بطاقة الإعلان (externalAdReply) ──
+    // التجربة أثبتت: واتساب العادي بيخفي أي رسالة فيها externalAdReply (وبتظهر لواتساب أعمال بس)
+    // فهي مقفولة افتراضياً. لو عايزها ترجع:  global.adCard = true
+    const useCard = global.adCard === true
+
+    const thumbnailBuffer = useCard
+      ? await (await fetch(icono).catch(() => null))
+          ?.arrayBuffer()
+          .then(ab => ab ? Buffer.from(ab) : null)
+          .catch(() => null)
+      : null
+
+    const card = useCard ? {
+      externalAdReply: {
+        title: randomTitle,
+        body: channelRD.name,
+        thumbnailUrl: icono,
+        thumbnail: thumbnailBuffer || undefined,
+        sourceUrl: canal,
+        mediaUrl: canal,
+        mediaType: 1,
+        renderLargerThumbnail: false
+      }
+    } : {}
 
     // ── rcanal ────────────────────────────────────────────
     global.rcanal = {
@@ -106,22 +125,12 @@ handler.all = async function (m) {
           serverMessageId: '',
           newsletterName: channelRD.name
         },
-        externalAdReply: {
-          title: randomTitle,
-          body: channelRD.name,
-          mediaUrl: canal,
-          description: null,
-          previewType: "PHOTO",
-          thumbnail: thumbnailBuffer || undefined,
-          sourceUrl: canal,
-          mediaType: 2,
-          renderLargerThumbnail: false
-        },
+        ...card,
         mentionedJid: null
       }
     }
 
-    // ── adReply المحدَّث في كل رسالة ──────────────────────
+    // ── adReply (بيتحط في كل m.reply) ─────────────────────
     global.adReply = {
       contextInfo: {
         forwardingScore: 999,
@@ -131,16 +140,7 @@ handler.all = async function (m) {
           serverMessageId: '',
           newsletterName: channelRD.name
         },
-        externalAdReply: {
-          title: randomTitle,
-          body: channelRD.name,
-          thumbnailUrl: icono,
-          thumbnail: thumbnailBuffer || undefined,
-          sourceUrl: canal,
-          mediaUrl: canal,
-          mediaType: 1,
-          renderLargerThumbnail: false
-        }
+        ...card
       }
     }
 
