@@ -11,7 +11,7 @@ const isCommand2 = /^(stop|pausargokublack|pausarbot)$/i.test(command)
 const isCommand3 = /^(bots|listjadibots|subbots)$/i.test(command)  
 
 async function reportError(e) {
-await m.reply(`❌️ Ocurrió un error.`)
+await conn.sendMessage(m.chat, { text:`❌️ Ocurrió un error.`)
 console.log(e)
 }
 
@@ -45,7 +45,7 @@ conn.ws.close()}
 break
 
 case isCommand3:
-//if (global.db.data.settings[conn.user.jid].jadibotmd) return m.reply(`🚩 Este comando está desactivado por mi creador.`)
+//if (global.db.data.settings[conn.user.jid].jadibotmd) return conn.sendMessage(m.chat, { text:`🚩 Este comando está desactivado por mi creador.`)
 const users = [...new Set([...global.conns.filter((conn) => conn.user && conn.ws.socket && conn.ws.socket.readyState !== ws.CLOSED).map((conn) => conn)])];
 function convertirMsADiasHorasMinutosSegundos(ms) {
 var segundos = Math.floor(ms / 1000);
