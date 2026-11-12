@@ -10,7 +10,7 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
   }
 
   // رسالة انتظار
-  await conn.sendMessage(m.chat, { text:"⏳ *جاري إنشاء الفيديو باستخدام Veo3...*\nيرجى الانتظار قليلاً 🔄");
+  await m.reply("⏳ *جاري إنشاء الفيديو باستخدام Veo3...*\nيرجى الانتظار قليلاً 🔄");
 
   try {
     // استدعاء API
