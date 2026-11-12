@@ -37,7 +37,7 @@ const handler = async (m, { conn, text, command }) => {
     let result = await eval(`(async () => { ${text} })()`)
     if (typeof result !== 'string') result = JSON.stringify(result, null, 2)
     if (!result || result === 'undefined') result = '✅ تم التنفيذ بدون نتيجة'
-    await conn.sendMessage(m.chat, { text:String(result).slice(0, 3000))
+    await m.reply(String(result).slice(0, 3000))
   } catch (e) {
     await m.reply(`❌ ${e.message}`)
   }
