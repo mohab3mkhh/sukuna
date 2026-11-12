@@ -10,11 +10,11 @@ handler.before = async function (m) {
         let json = JSON.parse(JSON.stringify(this.tekateki[id][1]))
         if (m.text.toLowerCase() == json.response.toLowerCase().trim()) {
             global.db.data.users[m.sender].exp += this.tekateki[id][2]
-            conn.sendMessage(m.chat, { text:`*❍━━━══━━❪⚡️❫━━══━━━❍*\n*｢👾｣⇇الاجابه صحيحه يلا جرب تاني*\n*｢⛩️｣⇇النقاط↜❪${this.tekateki[id][2]}❫*\n*❍━━━══━━❪⚡️❫━━══━━━❍*`)
+            m.reply(`*❍━━━══━━❪⚡️❫━━══━━━❍*\n*｢👾｣⇇الاجابه صحيحه يلا جرب تاني*\n*｢⛩️｣⇇النقاط↜❪${this.tekateki[id][2]}❫*\n*❍━━━══━━❪⚡️❫━━══━━━❍*`)
             clearTimeout(this.tekateki[id][3])
             delete this.tekateki[id]
         } else if (similarity(m.text.toLowerCase(), json.response.toLowerCase().trim()) >= threshold) {
-            conn.sendMessage(m.chat, { text:`*❍━━━══━━❪⚡️❫━━══━━━❍*\n*｢👾｣⇇اقـتـربـت مـن الاجـابـه*\n*❍━━━══━━❪👹❫━━══━━━❍*`)
+            m.reply(`*❍━━━══━━❪⚡️❫━━══━━━❍*\n*｢👾｣⇇اقـتـربـت مـن الاجـابـه*\n*❍━━━══━━❪👹❫━━══━━━❍*`)
         } else {
             m.reply('*❍━━━══━━❪⚡️❫━━══━━━❍*\n*｢👾｣⇇الاجـابـه خـلـط*\n*❍━━━══━━❪👹❫━━══━━━❍*')
         }
