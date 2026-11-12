@@ -74,7 +74,7 @@ async function processItem(it, conn) {
     const title = (it.title || 'Instagram Reel').slice(0, 80)
     return {
         body: proto.Message.InteractiveMessage.Body.fromObject({ text: title }),
-        footer: proto.Message.InteractiveMessage.Footer.fromObject({ text: '✧ 2B' }),
+        footer: proto.Message.InteractiveMessage.Footer.fromObject({ text: '⛩️ SUKUNA BOT ⛩️`' }),
         header: proto.Message.InteractiveMessage.Header.fromObject({
             title: title.slice(0, 40),
             hasMediaAttachment: true,
@@ -135,7 +135,7 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
                     messageContextInfo: { deviceListMetadata: {}, deviceListMetadataVersion: 2 },
                     interactiveMessage: proto.Message.InteractiveMessage.fromObject({
                         body: proto.Message.InteractiveMessage.Body.create({ text: `🔍 *${text}*` }),
-                        footer: proto.Message.InteractiveMessage.Footer.create({ text: 'SukunaBot' }),
+                        footer: proto.Message.InteractiveMessage.Footer.create({ text: '`⛩️ SUKUNA BOT ⛩️`' }),
                         header: proto.Message.InteractiveMessage.Header.create({ hasMediaAttachment: false }),
                         carouselMessage: proto.Message.InteractiveMessage.CarouselMessage.fromObject({ cards })
                     })
