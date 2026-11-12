@@ -1,6 +1,12 @@
+/**
+ * plugins/المطورين.js
+ * معلومات المطورين
+ */
+
 import fetch from 'node-fetch';
-import * as pkg from '@whiskeysockets/baileys';
-const { generateWAMessageFromContent, prepareWAMessageMedia } = pkg;
+
+// ✅ استخدام ملف الأزرار
+import { sendButtons, btn } from '../lib/buttons.js';
 
 const VIDEO_URL = 'https://files.catbox.moe/97or2g.mp4';
 const AUDIO_URL = 'https://files.catbox.moe/9n2llm.aac';
@@ -14,11 +20,6 @@ let handler = async (m, { conn }) => {
   try {
     await conn.sendMessage(m.chat, { react: { text: '🔥', key: m.key } });
 
-    const mediaPrepared = await prepareWAMessageMedia(
-      { video: { url: VIDEO_URL, gifPlayback: true, ptv: false } },
-      { upload: conn.waUploadToServer }
-    );
-
     const bodyText = `╔═══━━━══━━━❪👑❫━━━══━━━═══╗
 ║  ❪🔥❫ *ＫＩＮＧ ＯＦ ＣＵＲＳＥＳ*  ║
 ║  ❪⚔️❫ *مَلِكُ اللَّعَنَات*      ║
@@ -29,48 +30,37 @@ let handler = async (m, { conn }) => {
 ║  *لَا أَسْتَطِيعُ سَحْقَهُ…* ❞  ║
 ╚═══━━━══━━━❪👑❫━━━══━━━═══╝`;
 
-    const message = {
-      viewOnceMessage: {
-        message: {
-          interactiveMessage: {
-            header: {
-              hasMediaAttachment: true,
-              ...mediaPrepared,
-              videoMessage: {
-                ...mediaPrepared.videoMessage,
-                gifPlayback: true
-              }
-            },
-            body: { text: bodyText },
-            nativeFlowMessage: {
-              buttons: CONTACT_NUMBERS.map(({ name, number }) => ({
-                name: 'cta_url',
-                buttonParamsJson: JSON.stringify({
-                  display_text: `📞 ${name}`,
-                  url: `https://wa.me/${number}`,
-                  merchant_url: `https://wa.me/${number}`
-                })
-              }))
-            }
-          }
-        }
-      }
-    };
+    // ✅ بناء أزرار الاتصال باستخدام btn.url
+    const buttons = CONTACT_NUMBERS.map(({ name, number }) => 
+      btn.url(`📞 ${name}`, `https://wa.me/${number}`)
+    );
 
-    const msg = generateWAMessageFromContent(m.chat, message, { userJid: m.sender });
-    await conn.relayMessage(m.chat, msg.message, { messageId: msg.key.id });
+    // ✅ إرسال باستخدام sendButtons
+    await sendButtons(conn, m.chat, {
+      title: '👑 KING OF CURSES',
+      subtitle: 'مطوري سوكونا',
+      text: bodyText,
+      footer: FANCY_NAME,
+      video: VIDEO_URL,
+      gif: true,
+      buttons
+    }, m);
 
-    // الريكورد
-    const audioRes = await fetch(AUDIO_URL);
-    const audioBuffer = Buffer.from(await audioRes.arrayBuffer());
-    await conn.sendMessage(m.chat, {
-      audio: audioBuffer,
-      mimetype: 'audio/mpeg',
-      ptt: true
-    }, { quoted: m });
+    // ✅ الريكورد
+    try {
+      const audioRes = await fetch(AUDIO_URL);
+      const audioBuffer = Buffer.from(await audioRes.arrayBuffer());
+      await conn.sendMessage(m.chat, {
+        audio: audioBuffer,
+        mimetype: 'audio/mpeg',
+        ptt: true
+      }, { quoted: m });
+    } catch (e) {
+      console.error('[المطورين] فشل إرسال الصوت:', e.message);
+    }
 
   } catch (err) {
-    console.error('Error:', err);
+    console.error('[المطورين Error]', err);
     await conn.sendMessage(m.chat, {
       text: `🔥 *${FANCY_NAME}*\n\n⚡ Sukuna Bot`
     }, { quoted: m });
