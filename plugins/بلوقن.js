@@ -6,7 +6,7 @@ import { fileURLToPath } from 'url'
 import * as _baileys from '@whiskeysockets/baileys'
 
 const B = _baileys.downloadContentFromMessage ? _baileys : (_baileys.default || _baileys)
-const { downloadContentFromMessage } = B
+const { downloadContentFromMessage, generateWAMessageFromContent, generateMessageIDV2, proto } = B
 
 // ━━━ بديل بسيط لـ theme.build ━━━
 const theme = {
@@ -113,8 +113,42 @@ async function readQuotedBuffer(quoted, doc) {
   return Buffer.concat(chunks)
 }
 
-// عرض الكود: نص لو قصير، وإلا ملف
+// ━━━ عرض الكود ━━━
+// 1) رسالة richResponse (كتلة كود مع زر "عرض الكود") لو المكتبة بتدعمها
+// 2) لو لأ: نص لو قصير، وإلا ملف
+async function sendRichCode(conn, chat, relativePath, code) {
+  if (!proto || typeof proto.AIRichResponseMessage === 'undefined') {
+    throw new Error('النسخة الحالية من المكتبة مفيهاش richResponseMessage')
+  }
+  const bytes = Buffer.byteLength(code, 'utf8')
+  const lang = (path.extname(relativePath).slice(1) || 'js').toLowerCase()
+  const header =
+    `\n⛩️ ⌈ *Name* ⌋ ⇢ ${relativePath}\n` +
+    `🩸 ⌈ *Size* ⌋ ⇢ ${bytes} bytes\n` +
+    `⛩️ ⌈ *Lang* ⌋ ⇢ ${lang.toUpperCase()}\n`
+
+  const richMessage = {
+    richResponseMessage: {
+      messageType: 1,
+      submessages: [
+        { messageType: 2, messageText: header },
+        { messageType: 5, codeMetadata: { codeLanguage: lang === 'mjs' || lang === 'cjs' ? 'javascript' : lang, codeBlocks: [{ highlightType: 1, codeContent: code }] } }
+      ],
+      contextInfo: { isForwarded: true, forwardingScore: 1, forwardOrigin: 4 }
+    }
+  }
+  const opts = { userJid: conn.user.id }
+  if (typeof generateMessageIDV2 === 'function') opts.messageId = generateMessageIDV2(conn.user.id)
+  const sent = await generateWAMessageFromContent(chat, { botForwardedMessage: { message: richMessage } }, opts)
+  await conn.relayMessage(chat, sent.message, { messageId: sent.key.id })
+}
+
 async function sendCodePreview(conn, chat, relativePath, code) {
+  try {
+    return await sendRichCode(conn, chat, relativePath, code)
+  } catch (e) {
+    console.log('[ملف] rich code غير متاح، بنستخدم النص:', e?.message)
+  }
   const lines = code.split('\n').length
   const kb = (Buffer.byteLength(code, 'utf8') / 1024).toFixed(2)
   const header = `📄 *${relativePath}*\n📦 ${kb} KB | 📝 ${lines} سطر`
