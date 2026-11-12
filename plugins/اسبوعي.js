@@ -1,6 +1,6 @@
 let handler = async (m, { conn, isPrems }) => {
   let user = global.db.data.users[m.sender]
-  if (!user) return m.reply('*┇⌗╎حدث خطأ، حاول مرة أخرى*')
+  if (!user) return conn.sendMessage(m.chat, { text:'*┇⌗╎حدث خطأ، حاول مرة أخرى*')
 
   const free = 5000
   const prem = 20000
@@ -9,14 +9,14 @@ let handler = async (m, { conn, isPrems }) => {
 
   if (user.lastweekly && (now - user.lastweekly) < week) {
     const left = user.lastweekly + week - now
-    return m.reply(`*╮═≼『⛩️┃تنبيه┃⛩️』≽═╭*\n*┇⌗╎🎁 جمعت الهدية الأسبوعية بالفعل*\n*┇⌗╎🕚 ادخل بعد ${clockString(left)}*\n*╯✯≼══━━﹂⛩️﹁━━══≽✯*`)
+    return conn.sendMessage(m.chat, { text:`*╮═≼『⛩️┃تنبيه┃⛩️』≽═╭*\n*┇⌗╎🎁 جمعت الهدية الأسبوعية بالفعل*\n*┇⌗╎🕚 ادخل بعد ${clockString(left)}*\n*╯✯≼══━━﹂⛩️﹁━━══≽✯*`)
   }
 
   const reward = isPrems ? prem : free
   user.exp += reward
   user.lastweekly = now
 
-  await m.reply(`*╮═≼『⛩️┃هدية أسبوعية┃⛩️』≽═╭*\n*┇⌗╎🎁 لقد حصلت على هديتك الأسبوعية*\n*┇⌗╎🆙 XP : +${reward}*\n*╯✯≼══━━﹂⛩️﹁━━══≽✯*`)
+  await conn.sendMessage(m.chat, { text:`*╮═≼『⛩️┃هدية أسبوعية┃⛩️』≽═╭*\n*┇⌗╎🎁 لقد حصلت على هديتك الأسبوعية*\n*┇⌗╎🆙 XP : +${reward}*\n*╯✯≼══━━﹂⛩️﹁━━══≽✯*`)
 }
 
 handler.help    = ['اسبوعي']
