@@ -2,7 +2,7 @@ import fetch from 'node-fetch'
 
 let handler = async (m, { conn }) => {
   await m.react('⏳')
-  await conn.sendMessage(m.chat, { text:'🔍 جاري فحص الشبكة...')
+  await m.reply('🔍 جاري فحص الشبكة...')
 
   const sites = [
     'https://api.imgbb.com',
