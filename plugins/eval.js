@@ -12,7 +12,7 @@ const handler = async (m, { conn, text, command }) => {
     const name  = parts?.[1]
 
     if (!url || !name) {
-      return m.reply('⚠️ الاستخدام:\n.حمل <رابط> <اسم_الملف>\n\nمثال:\n.حمل https://raw.githubusercontent.com/.../احفظ.js احفظ')
+      return conn.sendMessage(m.chat, { text:'⚠️ الاستخدام:\n.حمل <رابط> <اسم_الملف>\n\nمثال:\n.حمل https://raw.githubusercontent.com/.../احفظ.js احفظ')
     }
 
     await m.react('⏳')
@@ -25,10 +25,10 @@ const handler = async (m, { conn, text, command }) => {
       const fs = (await import('fs')).default
       fs.writeFileSync(`plugins/${fileName}`, code, 'utf8')
       await m.react('✅')
-      return m.reply(`✅ تم حفظ *${fileName}* بنجاح!`)
+      return conn.sendMessage(m.chat, { text:`✅ تم حفظ *${fileName}* بنجاح!`)
     } catch (e) {
       await m.react('❌')
-      return m.reply(`❌ ${e.message}`)
+      return conn.sendMessage(m.chat, { text:`❌ ${e.message}`)
     }
   }
 
@@ -37,9 +37,9 @@ const handler = async (m, { conn, text, command }) => {
     let result = await eval(`(async () => { ${text} })()`)
     if (typeof result !== 'string') result = JSON.stringify(result, null, 2)
     if (!result || result === 'undefined') result = '✅ تم التنفيذ بدون نتيجة'
-    await m.reply(String(result).slice(0, 3000))
+    await conn.sendMessage(m.chat, { text:String(result).slice(0, 3000))
   } catch (e) {
-    await m.reply(`❌ ${e.message}`)
+    await conn.sendMessage(m.chat, { text:`❌ ${e.message}`)
   }
 }
 
