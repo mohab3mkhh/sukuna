@@ -34,7 +34,7 @@ const handler = async (m, { conn, text, command, usedPrefix }) => {
 *—◉ مثال:*
 *${usedPrefix + command} @${global.suittag}*
     `.trim();
-    throw m.reply(warntext, m.chat, { mentions: conn.parseMention(warntext) });
+    throw conn.sendMessage(m.chat, { text:warntext, m.chat, { mentions: conn.parseMention(warntext) });
   }
 
   // التأكد من أن المستخدم موجود في قاعدة البيانات
@@ -49,7 +49,7 @@ const handler = async (m, { conn, text, command, usedPrefix }) => {
   const sdms = msgtext.replace(/@\d+-?\d* /g, '');
   user.warn = (user.warn || 0) + 1;
 
-  await m.reply(
+  await conn.sendMessage(m.chat, { text:
     `
 ⧈═━━━━✦⛩️✦━━━━═⧈
 ❪⚡️❫⇇ *@${who.split`@`[0]}* لقد تلقيت تحذيرًا! ⇇❪⛩️❫
@@ -63,7 +63,7 @@ const handler = async (m, { conn, text, command, usedPrefix }) => {
 
   if (user.warn >= 3) {
     user.warn = 0;
-    await m.reply(
+    await conn.sendMessage(m.chat, { text:
       `
 ⧈═━━━━✦⛩️✦━━━━═⧈
 ❪⚡️❫⇇ *حذرتك ثلاث مرات!!* ⇇❪⛩️❫
