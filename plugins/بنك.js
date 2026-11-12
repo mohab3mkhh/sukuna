@@ -1,12 +1,18 @@
-import * as pkg from '@whiskeysockets/baileys';
-const { generateWAMessageFromContent, prepareWAMessageMedia } = pkg;
+/**
+ * plugins/البنك.js
+ * عرض معلومات البنك
+ */
+
+// ✅ استخدام ملف الأزرار
+import { sendButtons, btn, getButtonId } from '../lib/buttons.js';
 
 const handler = async (m, { conn, usedPrefix }) => {
-    let user = global.db.data.users[m.sender];
+    let user = global.db.data.users[m.sender] || {};
     let name = await conn.getName(m.sender);
 
     let { bank = 0, exp = 0, health = 100 } = user;
 
+    // ✅ تحديد الثروة حسب الرصيد
     let wealth = '🪙 *مفلس* 😭';
     if (bank > 3000) wealth = '💼 *فقير 😞*';
     if (bank > 6000) wealth = '🧑‍💼 *موظف حكومي*';
@@ -30,52 +36,19 @@ const handler = async (m, { conn, usedPrefix }) => {
 
     const imageUrl = 'https://files.catbox.moe/xcqk22.jpg';
 
-    // تجهيز الصورة
-    const media = await prepareWAMessageMedia(
-        { image: { url: imageUrl } },
-        { upload: conn.waUploadToServer }
-    );
-
-    await conn.relayMessage(m.chat, {
-        viewOnceMessage: {
-            message: {
-                interactiveMessage: {
-                    header: {
-                        hasMediaAttachment: true,
-                        ...media
-                    },
-                    body: {
-                        text: response
-                    },
-                    nativeFlowMessage: {
-                        buttons: [
-                            {
-                                name: "quick_reply",
-                                buttonParamsJson: JSON.stringify({
-                                    display_text: "💰 الـبـنـك",
-                                    id: `${usedPrefix}بنك`
-                                })
-                            },
-                            {
-                                name: "quick_reply",
-                                buttonParamsJson: JSON.stringify({
-                                    display_text: "🏆 الـمـسـتـوى",
-                                    id: `${usedPrefix}لفل`
-                                })
-                            },
-                            {
-                                name: "quick_reply",
-                                buttonParamsJson: JSON.stringify({
-                                    display_text: "💳 مـحـفـظـتـي",
-                                    id: `${usedPrefix}محفظة`
-                                })
-                            }
-                        ]
-                    }
-                }
-            }
-        }
-    }, { quoted: m });
+    // ✅ إرسال باستخدام sendButtons
+    await sendButtons(conn, m.chat, {
+        title: '🏦 البنك',
+        subtitle: name,
+        text: response,
+        footer: '⛩️ SUKUNA BOT',
+        image: imageUrl,
+        buttons: [
+            btn.reply('💰 الـبـنـك', `${usedPrefix}بنك`),
+            btn.reply('🏆 الـمـسـتـوى', `${usedPrefix}لفل`),
+            btn.reply('💳 مـحـفـظـتـي', `${usedPrefix}محفظة`)
+        ]
+    }, m);
 };
 
 handler.help = ['البنك', 'بنك'];
