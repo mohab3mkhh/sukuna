@@ -45,7 +45,7 @@ let handler = async (m, { conn }) => {
 
   const optionNumber = parseInt(match[1], 10);
   const selected = pollData.options[optionNumber - 1];
-  if (!selected) return conn.sendMessage(m.chat, { text:`❌ في ${pollData.options.length} اختيارات بس.`);
+  if (!selected) return m.reply(`❌ في ${pollData.options.length} اختيارات بس.`);
 
   const botJid = conn.user?.jid || conn.user?.id;
 
@@ -81,7 +81,7 @@ let handler = async (m, { conn }) => {
       messageId: generateMessageIDV2(),
     });
 
-    return conn.sendMessage(m.chat, { text:`✅ اخترت: ${selected}`);
+    return m.reply(`✅ اخترت: ${selected}`);
   } catch (err) {
     console.log('اختار error:', err);
     return m.reply('❌ حصل خطأ: ' + err.message);
