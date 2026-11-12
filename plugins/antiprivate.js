@@ -28,15 +28,15 @@ const handler = async function (m, { conn, args, isROwner }) {
   const senderNumber = m.sender.split('@')[0];
 
   if (!DEV_NUMBERS.includes(senderNumber) && !isROwner)
-    return m.reply('❌ هذا الأمر للمطورين فقط!');
+    return conn.sendMessage(m.chat, { text:'❌ هذا الأمر للمطورين فقط!');
 
   if (!m.isGroup)
-    return m.reply('❌ هذا الأمر للمجموعات فقط!');
+    return conn.sendMessage(m.chat, { text:'❌ هذا الأمر للمجموعات فقط!');
 
   const arg = (args[0] || '').toLowerCase();
 
   if (arg !== 'on' && arg !== 'off')
-    return m.reply('⚠️ استخدم:\n.antiprivate on ← تفعيل\n.antiprivate off ← تعطيل');
+    return conn.sendMessage(m.chat, { text:'⚠️ استخدم:\n.antiprivate on ← تفعيل\n.antiprivate off ← تعطيل');
 
   const chatId = m.chat;
   if (!global._antiPrivate) global._antiPrivate = {};
@@ -44,12 +44,12 @@ const handler = async function (m, { conn, args, isROwner }) {
   if (arg === 'on') {
     global._antiPrivate[chatId] = true;
     saveAntiPrivate(global._antiPrivate);
-    return m.reply('✅ تم تفعيل مضاد الخاص!\nأي شخص يبعت للبوت خاص سيتم تحذيره.');
+    return conn.sendMessage(m.chat, { text:'✅ تم تفعيل مضاد الخاص!\nأي شخص يبعت للبوت خاص سيتم تحذيره.');
   }
 
   global._antiPrivate[chatId] = false;
   saveAntiPrivate(global._antiPrivate);
-  return m.reply('⛔ تم إيقاف مضاد الخاص!');
+  return conn.sendMessage(m.chat, { text:'⛔ تم إيقاف مضاد الخاص!');
 };
 
 handler.command = /^antiprivate$/i;
