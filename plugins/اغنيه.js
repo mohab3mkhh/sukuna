@@ -200,7 +200,7 @@ const handler = async (m, { conn, args, usedPrefix, command }) => {
   // 4) .غنيه mp4 <رابط> <دقة> → تنزيل فيديو بالدقّة
 
   if (!args.length) {
-    return conn.sendMessage(m.chat, { text:
+    return m.reply(
 `🧞 الاستخدام:
 • *${usedPrefix + command} <اسم/رابط>* ← يعرض اختيار MP3/MP4
 • *${usedPrefix + command} mp3 <اسم/رابط>* ← تحميل صوت
@@ -252,7 +252,7 @@ const handler = async (m, { conn, args, usedPrefix, command }) => {
     const res = await savetube.getDownload(url, 'mp3')
     if (!res.status) {
       await conn.sendMessage(m.chat, { react: { text: '✖️', key: m.key } })
-      return conn.sendMessage(m.chat, { text:`❌ فشل التنزيل:\n${res.error || 'غير معروف'}`)
+      return m.reply(`❌ فشل التنزيل:\n${res.error || 'غير معروف'}`)
     }
 
     const { title, download } = res.result
@@ -308,7 +308,7 @@ const handler = async (m, { conn, args, usedPrefix, command }) => {
   }
 
   if (!VIDEO_QUALITIES.includes(quality)) {
-    return conn.sendMessage(m.chat, { text:`❌ دقّة غير مدعومة. الدقات المتاحة: ${VIDEO_QUALITIES.join(', ')}`)
+    return m.reply(`❌ دقّة غير مدعومة. الدقات المتاحة: ${VIDEO_QUALITIES.join(', ')}`)
   }
 
   await conn.sendMessage(m.chat, { react: { text: '🕒', key: m.key } })
@@ -316,7 +316,7 @@ const handler = async (m, { conn, args, usedPrefix, command }) => {
   const res = await savetube.getDownload(url, quality)
   if (!res.status) {
     await conn.sendMessage(m.chat, { react: { text: '✖️', key: m.key } })
-    return conn.sendMessage(m.chat, { text:`❌ فشل التنزيل:\n${res.error || 'غير معروف'}`)
+    return m.reply(`❌ فشل التنزيل:\n${res.error || 'غير معروف'}`)
   }
 
   const { title, download, duration } = res.result
