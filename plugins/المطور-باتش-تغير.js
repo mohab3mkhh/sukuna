@@ -22,7 +22,7 @@ const handler = async (m, { args, text, usedPrefix, command, conn }) => {
   const ar1 = ar.map(v => v.replace('.js', ''));
 
   if (!ar1.includes(from)) {
-    return m.reply(`*🗃️ لم يتم العثور على الملف!*\n==================================\n\n${ar1.map(v => ' ' + v).join`\n`}`);
+    return conn.sendMessage(m.chat, { text:`*🗃️ لم يتم العثور على الملف!*\n==================================\n\n${ar1.map(v => ' ' + v).join`\n`}`);
   }
 
   // إعادة تسمية الملف
