@@ -21,7 +21,7 @@ let displayFileContent = async (filename) => {
 };
 
 let handler = async (m, { isROwner, usedPrefix, command, text }) => {
-    await m.reply(global.wait);
+    await conn.sendMessage(m.chat, { text:global.wait);
     if (!isROwner) return;
 
     if (!text) {
@@ -32,10 +32,10 @@ let handler = async (m, { isROwner, usedPrefix, command, text }) => {
 
     try {
         let fileContent = await displayFileContent(filename);
-        m.reply(`نص الملف ${filename}:\n\n${fileContent}`);
+        conn.sendMessage(m.chat, { text:`نص الملف ${filename}:\n\n${fileContent}`);
     } catch (e) {
         console.error(`حدث خطأ أثناء عرض الملف ${filename}: ${e.message}`);
-        m.reply(`حدث خطأ أثناء عرض الملف ${filename}: ${e.message}`);
+        conn.sendMessage(m.chat, { text:`حدث خطأ أثناء عرض الملف ${filename}: ${e.message}`);
     }
 };
 
