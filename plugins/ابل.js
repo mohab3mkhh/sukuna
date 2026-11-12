@@ -146,7 +146,7 @@ async function getArtwork(url) {
 }
 
 let handler = async (m, { conn, text, usedPrefix, command }) => {
-  if (!text) return m.reply(`🎵 *Apple Music*\n\n${usedPrefix}${command} <اسم الأغنية>`);
+  if (!text) return conn.sendMessage(m.chat, { text:`🎵 *Apple Music*\n\n${usedPrefix}${command} <اسم الأغنية>`);
 
   // ✅ تحميل مباشر
   if (text.startsWith('dl_')) {
@@ -164,7 +164,7 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
     } catch (e) {
       console.error('Apple download error:', e);
       await m.react('❌');
-      m.reply('❌ ' + e.message);
+      conn.sendMessage(m.chat, { text:'❌ ' + e.message);
     }
     return;
   }
@@ -175,7 +175,7 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
     const songs = await searchApple(text);
     if (!songs.length) {
       await m.react('❌');
-      return m.reply('❌ مفيش نتايج');
+      return conn.sendMessage(m.chat, { text:'❌ مفيش نتايج');
     }
 
     const firstArt = songs[0]?.attributes?.artwork?.url;
@@ -211,7 +211,7 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
   } catch (e) {
     console.error('Apple search error:', e);
     await m.react('❌');
-    m.reply('❌ ' + e.message);
+    conn.sendMessage(m.chat, { text:'❌ ' + e.message);
   }
 };
 
@@ -241,7 +241,7 @@ handler.before = async function (m, { conn, command }) {
   } catch (e) {
     console.error('Apple download error:', e);
     await m.react('❌');
-    m.reply('❌ ' + e.message);
+    conn.sendMessage(m.chat, { text:'❌ ' + e.message);
   }
 
   return true;
