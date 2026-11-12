@@ -232,13 +232,13 @@ async function downloadEpisode(conn, m, episodeUrl) {
                     caption: infoMsg
                 }, { quoted: m })
             } else {
-                await conn.sendMessage(m.chat, { text:infoMsg)
+                await m.reply(infoMsg)
             }
         } catch {
-            await conn.sendMessage(m.chat, { text:infoMsg)
+            await m.reply(infoMsg)
         }
     } else {
-        await conn.sendMessage(m.chat, { text:infoMsg)
+        await m.reply(infoMsg)
     }
 
     const servers = await getServers(episodeUrl)
@@ -293,7 +293,7 @@ async function downloadEpisode(conn, m, episodeUrl) {
         errorMsg += `• ${err}\n`
     }
 
-    return conn.sendMessage(m.chat, { text:errorMsg)
+    return m.reply(errorMsg)
 }
 
 let handler = async (m, { conn, text, usedPrefix, command }) => {
@@ -320,7 +320,7 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
             msg += `*${i + 1}.* ${servers[i].name}\n${servers[i].url}\n\n`
         }
 
-        await conn.sendMessage(m.chat, { text:msg)
+        await m.reply(msg)
         await react('✅')
         return
     }
