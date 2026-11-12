@@ -197,7 +197,7 @@ const handler = async (m, { conn, text }) => {
     } catch (e) {
       console.error('[APK DL]', e.message)
       await m.react('❌')
-      await conn.sendMessage(m.chat, { text:`❌ فشل التحميل\n\n⚠️ ${e.message}`)
+      await m.reply(`❌ فشل التحميل\n\n⚠️ ${e.message}`)
     }
     return
   }
@@ -226,7 +226,7 @@ const handler = async (m, { conn, text }) => {
   } catch (e) {
     console.error('[APK Search]', e.message)
     await m.react('❌')
-    await conn.sendMessage(m.chat, { text:`❌ حدث خطأ\n\n⚠️ ${e.message}`)
+    await m.reply(`❌ حدث خطأ\n\n⚠️ ${e.message}`)
   }
 }
 
