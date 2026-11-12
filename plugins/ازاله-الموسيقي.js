@@ -53,12 +53,12 @@ const handler = async (m, { conn }) => {
   const mime = quoted.mimetype || '';
   
   if (!mime.startsWith('audio/') && !mime.startsWith('voice/')) {
-    return m.reply(`🎵 *طريقة الاستخدام:*\n\nرد على رسالة صوتية أو أغنية واكتب:\n.ازاله-الموسيقي\n\n📌 *مثال:*\n• رد على أغنية واكتب .ازاله-الموسيقي\n• البوت هيبعتلك الأغنية بدون موسيقى`);
+    return conn.sendMessage(m.chat, { text:`🎵 *طريقة الاستخدام:*\n\nرد على رسالة صوتية أو أغنية واكتب:\n.ازاله-الموسيقي\n\n📌 *مثال:*\n• رد على أغنية واكتب .ازاله-الموسيقي\n• البوت هيبعتلك الأغنية بدون موسيقى`);
   }
 
   try {
     await m.react('⏳');
-    await m.reply('⏳ *جاري معالجة الأغنية...*\nسيتم إرسال صوت المغني فقط والأغنية بدون موسيقى');
+    await conn.sendMessage(m.chat, { text:'⏳ *جاري معالجة الأغنية...*\nسيتم إرسال صوت المغني فقط والأغنية بدون موسيقى');
 
     const client = await getClient();
     
@@ -92,7 +92,7 @@ const handler = async (m, { conn }) => {
 
     if (results.length === 0) {
       await m.react('❌');
-      return m.reply('❌ فشل في الحصول على الرد من البوت');
+      return conn.sendMessage(m.chat, { text:'❌ فشل في الحصول على الرد من البوت');
     }
 
     // إرسال النتائج
@@ -109,12 +109,12 @@ const handler = async (m, { conn }) => {
     }
 
     await m.react('✅');
-    await m.reply('✅ *تمت المعالجة بنجاح!*\nتم إرسال صوت المغني والأغنية بدون موسيقى');
+    await conn.sendMessage(m.chat, { text:'✅ *تمت المعالجة بنجاح!*\nتم إرسال صوت المغني والأغنية بدون موسيقى');
 
   } catch (error) {
     console.error('[ازاله-الموسيقي]', error.message);
     await m.react('❌');
-    await m.reply(`❌ *فشل المعالجة*\n\n⚠️ ${error.message}`);
+    await conn.sendMessage(m.chat, { text:`❌ *فشل المعالجة*\n\n⚠️ ${error.message}`);
   }
 };
 
