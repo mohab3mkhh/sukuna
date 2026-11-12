@@ -1,18 +1,25 @@
-import pkg from '@whiskeysockets/baileys'
-const { generateWAMessageFromContent, proto } = pkg
+/**
+ * plugins/جغرافيا.js
+ * لعبة مسابقة الجغرافيا
+ */
 
-let timeout = 60000
-let points  = 1000
+// ✅ استخدام ملف الأزرار
+import { sendButtons, btn, getButtonId } from '../lib/buttons.js';
 
-// ✅ خلط المصفوفة عشوائياً
-const shuffle = (arr) => arr.sort(() => Math.random() - 0.5)
+let timeout = 60000;
+let points = 1000;
 
-let handler = async (m, { conn }) => {
-  conn.geography = conn.geography || {}
-  let id = m.chat
+const shuffle = (arr) => arr.sort(() => Math.random() - 0.5);
+
+// ══════════════════════════════════════════════════
+//  الأمر الرئيسي
+// ══════════════════════════════════════════════════
+const handler = async (m, { conn }) => {
+  conn.geography = conn.geography || {};
+  let id = m.chat;
 
   if (id in conn.geography) {
-    return m.reply('❌ هناك سؤال لم ينتهِ بعد! أجب عليه أولاً.')
+    return m.reply('❌ هناك سؤال لم ينتهِ بعد! أجب عليه أولاً.');
   }
 
   let questions = [
@@ -71,11 +78,11 @@ let handler = async (m, { conn }) => {
     { q: "ما هي عاصمة جورجيا؟", a: "تبليسي", w: ["كوتايسي", "باتومي", "روستافي"] },
     { q: "ما هي عاصمة نيبال؟", a: "كاتماندو", w: ["بوخارة", "بيراتناغار", "للتبور"] },
     { q: "ما هي عاصمة نيوزيلندا؟", a: "ويلينغتون", w: ["أوكلاند", "كرايستشيرش", "هاميلتون"] },
-    { q: "ما هو النهر الذي يمر في بغداد؟", a: "دجلة", w: ["الفرات", "الكارون", "الزاب"] },
-  ]
+    { q: "ما هو النهر الذي يمر في بغداد؟", a: "دجلة", w: ["الفرات", "الكارون", "الزاب"] }
+  ];
 
-  let json    = questions[Math.floor(Math.random() * questions.length)]
-  let choices = shuffle([json.a, ...json.w]).slice(0, 4)
+  let json = questions[Math.floor(Math.random() * questions.length)];
+  let choices = shuffle([json.a, ...json.w]).slice(0, 4);
 
   let caption = `🌍 *مسابقة الجغرافيا* 🌍
 
@@ -84,109 +91,101 @@ let handler = async (m, { conn }) => {
 ⏱️ الوقت: *60 ثانية*
 💰 الجائزة: *${points} نقطة*
 
-اضغط على الإجابة الصحيحة! 👇`
+اضغط على الإجابة الصحيحة! 👇`;
 
-  // ✅ ابعت السؤال مع أزرار الاختيارات
-  const msg = generateWAMessageFromContent(id, {
-    viewOnceMessage: {
-      message: {
-        interactiveMessage: proto.Message.InteractiveMessage.create({
-          body: { text: caption },
-          nativeFlowMessage: {
-            buttons: choices.map(choice => ({
-              name: 'quick_reply',
-              buttonParamsJson: JSON.stringify({
-                display_text: choice,
-                id: `geo_answer_${choice}`
-              })
-            }))
-          },
-          contextInfo: { mentionedJid: [m.sender] }
-        })
-      }
-    }
-  }, {})
+  // ✅ بناء الأزرار باستخدام btn.reply
+  const buttons = choices.map(choice =>
+    btn.reply(choice, `geo_answer_${choice}`)
+  );
 
-  let sentMsg = await conn.relayMessage(id, msg.message, { messageId: msg.key.id })
+  // ✅ إرسال باستخدام sendButtons
+  const sentMsg = await sendButtons(conn, id, {
+    title: '🌍 جغرافيا',
+    subtitle: 'اختبر معلوماتك',
+    text: caption,
+    footer: '⛩️ SUKUNA BOT',
+    buttons,
+    mentions: [m.sender]
+  }, m);
 
-  conn.geography[id] = [
-    sentMsg,
-    json,
+  // ✅ حفظ حالة اللعبة
+  conn.geography[id] = {
+    msg: sentMsg,
+    question: json,
     points,
     choices,
-    setTimeout(() => {
+    timeout: setTimeout(() => {
       if (conn.geography[id]) {
-        conn.sendMessage(id, { text: `⌛ انتهى الوقت!\nالإجابة الصحيحة هي: *${json.a}*` })
-        delete conn.geography[id]
+        conn.sendMessage(id, {
+          text: `⌛ انتهى الوقت!\nالإجابة الصحيحة هي: *${json.a}*`
+        });
+        delete conn.geography[id];
       }
     }, timeout)
-  ]
-}
+  };
+};
 
-// ✅ التحقق من الإجابة
+// ══════════════════════════════════════════════════
+//  معالج الإجابة
+// ══════════════════════════════════════════════════
 handler.before = async (m, { conn }) => {
-  conn.geography = conn.geography || {}
-  let id = m.chat
+  conn.geography = conn.geography || {};
+  let id = m.chat;
 
-  if (!(id in conn.geography)) return false
-  if (m.isBaileys) return false
+  if (!(id in conn.geography)) return false;
+  if (m.isBaileys) return false;
 
-  let s = conn.geography[id]
+  let game = conn.geography[id];
 
-  // ✅ استخراج الإجابة من الزرار أو النص
-  let userInput = ''
+  // ✅ استخدام getButtonId
+  const buttonId = getButtonId(m);
+  let userInput = '';
 
-  // من الزرار
-  const nativeReply = m.message?.interactiveResponseMessage?.nativeFlowResponseMessage
-  if (nativeReply?.paramsJson) {
-    try {
-      const params = JSON.parse(nativeReply.paramsJson)
-      const btnId  = params?.id || ''
-      if (btnId.startsWith('geo_answer_')) {
-        userInput = btnId.replace('geo_answer_', '')
-      }
-    } catch {}
+  if (buttonId && buttonId.startsWith('geo_answer_')) {
+    userInput = buttonId.replace('geo_answer_', '');
+  } else if (m.text) {
+    userInput = m.text.trim();
   }
 
-  // من النص العادي
-  if (!userInput && m.text) userInput = m.text.trim()
-  if (!userInput) return false
+  if (!userInput) return false;
 
-  let correctAnswer = s[1].a.trim()
+  let correctAnswer = game.question.a.trim();
 
+  // ✅ التحقق من الإجابة
   if (
     userInput.toLowerCase() === correctAnswer.toLowerCase() ||
     userInput.toLowerCase().includes(correctAnswer.toLowerCase()) ||
     correctAnswer.toLowerCase().includes(userInput.toLowerCase())
   ) {
+    // ✅ إضافة النقاط
     if (global.db?.data?.users) {
-      if (!global.db.data.users[m.sender]) global.db.data.users[m.sender] = {}
-      global.db.data.users[m.sender].exp = (global.db.data.users[m.sender].exp || 0) + s[2]
+      if (!global.db.data.users[m.sender]) global.db.data.users[m.sender] = {};
+      global.db.data.users[m.sender].exp = (global.db.data.users[m.sender].exp || 0) + game.points;
     }
 
     await conn.sendMessage(id, {
-      text: `✅ *إجابة صحيحة يا بطل!*\n\n🎉 تهانينا @${m.sender.split('@')[0]}\n💰 حصلت على *${s[2]}* نقطة!`,
+      text: `✅ *إجابة صحيحة يا بطل!*\n\n🎉 تهانينا @${m.sender.split('@')[0]}\n💰 حصلت على *${game.points}* نقطة!`,
       mentions: [m.sender]
-    })
+    });
 
-    clearTimeout(s[4])
-    delete conn.geography[id]
-    return true
+    clearTimeout(game.timeout);
+    delete conn.geography[id];
+    return true;
   }
 
   // ✅ لو ضغط زرار غلط
-  if (userInput && s[3]?.includes(userInput)) {
+  if (game.choices?.includes(userInput)) {
     await conn.sendMessage(id, {
       text: `❌ إجابة خاطئة يا @${m.sender.split('@')[0]}! حاول تاني 😅`,
       mentions: [m.sender]
-    })
+    });
   }
 
-  return false
-}
+  return false;
+};
 
-handler.help = ['جغرافيا']
-handler.tags = ['game']
-handler.command = ['جغرافيا', 'geo']
+handler.help = ['جغرافيا'];
+handler.tags = ['game'];
+handler.command = ['جغرافيا', 'geo'];
 
-export default handler
+export default handler;
