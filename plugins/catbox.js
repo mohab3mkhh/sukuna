@@ -111,7 +111,7 @@ const handler = async (m, { conn }) => {
     msg += `│  💡 *ملاحظات:*\n│  • الملفات تبقى دائمة\n│  • الحد الأقصى: 200 ميجابايت\n│\n╰──────────────`
 
     await m.react('✅')
-    await conn.sendMessage(m.chat, { text:msg)
+    await m.reply(msg)
 
   } catch (error) {
     await m.react('❌')
