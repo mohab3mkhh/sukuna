@@ -88,7 +88,7 @@ let istighfar = `
 `;
 
 function handler(m) {
-    conn.sendMessage(m.chat, { text:istighfar);
+    m.reply(istighfar);
 }
 
 handler.help = ['استغفار'];
