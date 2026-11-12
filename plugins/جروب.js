@@ -1,76 +1,94 @@
-function clockString(ms) {
-    let h = Math.floor(ms / 3600000);
-    let m = Math.floor(ms % 3600000 / 60000);
-    let s = Math.floor(ms % 60000 / 1000);
-    return [h, m, s].map(v => v.toString().padStart(2, '0')).join(':');
-}
+/**
+ * plugins/جروب.js
+ * إعدادات الجروب (فتح/قفل)
+ */
 
-import pkg from '@whiskeysockets/baileys';
-const { generateWAMessageFromContent, proto, prepareWAMessageMedia } = pkg;
+// ✅ استخدام ملف الأزرار
+import { sendButtons, btn, getButtonId } from '../lib/buttons.js';
 
+const IMAGE_URL = 'https://files.catbox.moe/gbt34x.jpg';
+
+// ══════════════════════════════════════════════════
+//  الأمر الرئيسي
+// ══════════════════════════════════════════════════
 const handler = async (m, { conn, usedPrefix }) => {
-    let taguser = '@' + m.sender.split('@s.whatsapp.net')[0];
-    const imageUrl = 'https://files.catbox.moe/gbt34x.jpg';
+    if (!m.isGroup) {
+        return m.reply('❌ هذا الأمر للمجموعات فقط');
+    }
+
+    let tagUser = `@${m.sender.split('@')[0]}`;
 
     await conn.sendMessage(m.chat, { react: { text: '🩸', key: m.key } });
 
-    const mediaPrepared = await prepareWAMessageMedia(
-        { image: { url: imageUrl } },
-        { upload: conn.waUploadToServer }
-    )
-
     const bodyText = `
 ╭──❖ ⛩️ ❖──╮
-⛩️⚡️ *يــاهــلا بـيـك، ${taguser}!* ⚡️⛩️
+⛩️⚡️ *يــاهــلا بـيـك، ${tagUser}!* ⚡️⛩️
 🩸🔐 *سـوكـونـا فـي خـدمـتـك لإدارة الـجـروب!* 🔐🩸
 ╰──❖ ⛩️ ❖──╯
 
 🌀*『 ☁️ خــيــارات الإدارة ☁️ 』* 🌀
 🌀*اخــتــر أحــد الــزراريــن أدنــاه لــفــتــح أو قــفــل الــجــروب!*
 ⛩️ *سـوكـونـا جـاهـز لأوامـركـ!* ⛩️
-    `.trim()
+    `.trim();
 
-    const msg = generateWAMessageFromContent(m.chat, {
-        viewOnceMessage: {
-            message: {
-                interactiveMessage: proto.Message.InteractiveMessage.create({
-                    header: proto.Message.InteractiveMessage.Header.create({
-                        hasMediaAttachment: true,
-                        ...mediaPrepared
-                    }),
-                    body: proto.Message.InteractiveMessage.Body.create({
-                        text: bodyText
-                    }),
-                    footer: proto.Message.InteractiveMessage.Footer.create({
-                        text: '⛩️ SUKUNA BOT ⛩️'
-                    }),
-                    nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.create({
-                        buttons: [
-                            {
-                                name: 'quick_reply',
-                                buttonParamsJson: JSON.stringify({
-                                    display_text: '✨ فــتــح ✨',
-                                    id: `${usedPrefix}group فتح`
-                                })
-                            },
-                            {
-                                name: 'quick_reply',
-                                buttonParamsJson: JSON.stringify({
-                                    display_text: '🔒 قــفــل 🔒',
-                                    id: `${usedPrefix}group قفل`
-                                })
-                            }
-                        ]
-                    })
-                })
-            }
+    // ✅ إرسال باستخدام sendButtons
+    await sendButtons(conn, m.chat, {
+        title: '⛩️ إعدادات الجروب',
+        subtitle: 'سوكونا في خدمتك',
+        text: bodyText,
+        footer: '⛩️ SUKUNA BOT ⛩️',
+        image: IMAGE_URL,
+        buttons: [
+            btn.reply('✨ فــتــح ✨', `${usedPrefix}group فتح`),
+            btn.reply('🔒 قــفــل 🔒', `${usedPrefix}group قفل`)
+        ],
+        mentions: [m.sender]
+    }, m);
+};
+
+// ══════════════════════════════════════════════════
+//  معالج الأزرار
+// ══════════════════════════════════════════════════
+handler.before = async function (m, { conn, isAdmin, isBotAdmin }) {
+    if (!m.isGroup) return false;
+
+    // ✅ التحقق من زر الفتح/القفل
+    const buttonId = getButtonId(m);
+    const text = m.text || '';
+    
+    const isOpen = buttonId?.includes('group فتح') || text.includes('group فتح');
+    const isClose = buttonId?.includes('group قفل') || text.includes('group قفل');
+
+    if (!isOpen && !isClose) return false;
+
+    if (!isAdmin) {
+        return m.reply('❌ هذا الأمر للأدمنية فقط');
+    }
+
+    if (!isBotAdmin) {
+        return m.reply('❌ البوت مش أدمن، مش هينفع');
+    }
+
+    try {
+        if (isOpen) {
+            await conn.groupSettingUpdate(m.chat, 'not_announcement');
+            await m.react('🔓');
+            await m.reply('✅ *تم فتح الجروب*\n\n⛩️ SUKUNA BOT');
+        } else {
+            await conn.groupSettingUpdate(m.chat, 'announcement');
+            await m.react('🔒');
+            await m.reply('✅ *تم قفل الجروب*\n\n⛩️ SUKUNA BOT');
         }
-    }, { userJid: conn.user.jid, quoted: m })
+    } catch (e) {
+        console.error('[جروب]', e.message);
+        await m.react('❌');
+        await m.reply(`❌ فشل: ${e.message}`);
+    }
 
-    await conn.relayMessage(m.chat, msg.message, { messageId: msg.key.id })
-}
+    return true;
+};
 
-handler.help = ['group *open/close*'];
+handler.help = ['group *فتح/قفل*'];
 handler.tags = ['group'];
 handler.command = ['جروب', 'روم', 'اعدادات'];
 handler.admin = true;
