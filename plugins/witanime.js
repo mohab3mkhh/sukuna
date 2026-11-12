@@ -242,7 +242,7 @@ async function downloadEpisode(conn, m, episodeUrl) {
     }
 
     const servers = await getServers(episodeUrl)
-    if (!servers.length) return conn.sendMessage(m.chat, { text:'❌ *لا توجد سيرفرات*')
+    if (!servers.length) return m.reply('❌ *لا توجد سيرفرات*')
 
     await conn.sendMessage(m.chat, { text:`📺 *${servers.length} سيرفر*\n⏳ جاري التحميل...`)
 
@@ -312,7 +312,7 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
         await react('🎬')
 
         const servers = await getServers(text)
-        if (!servers.length) return conn.sendMessage(m.chat, { text:'❌ لا توجد سيرفرات')
+        if (!servers.length) return m.reply('❌ لا توجد سيرفرات')
 
         let msg = `🎬 *سيرفرات المشاهدة*\n📊 *العدد:* ${servers.length}\n\n`
 
@@ -331,7 +331,7 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
         await react('📺')
 
         const episodes = await getEpisodes(text)
-        if (!episodes.length) return conn.sendMessage(m.chat, { text:'❌ لا توجد حلقات')
+        if (!episodes.length) return m.reply('❌ لا توجد حلقات')
 
         let animeImage = null
         try {
