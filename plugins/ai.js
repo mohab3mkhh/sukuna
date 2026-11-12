@@ -213,7 +213,7 @@ const NoteGPTAPI = {
 
 const handler = async (m, { conn, args, text }) => {
   if (!text) {
-    return conn.sendMessage(m.chat, { text:'❌ الرجاء إدخال سؤالك\n\nمثال: .جيبيتي ما هو الذكاء الاصطناعي؟');
+    return m.reply('❌ الرجاء إدخال سؤالك\n\nمثال: .جيبيتي ما هو الذكاء الاصطناعي؟');
   }
 
   await m.react('🤖');
@@ -222,7 +222,7 @@ const handler = async (m, { conn, args, text }) => {
     const result = await NoteGPTAPI.chat(text);
 
     if (!result || result.trim() === '') {
-      return conn.sendMessage(m.chat, { text:'❌ لم أتمكن من الحصول على رد. حاول مرة أخرى لاحقاً.');
+      return m.reply('❌ لم أتمكن من الحصول على رد. حاول مرة أخرى لاحقاً.');
     }
 
     await conn.sendMessage(m.chat, { text:result);
