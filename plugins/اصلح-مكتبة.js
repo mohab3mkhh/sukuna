@@ -56,7 +56,7 @@ const handler = async (m, { args }) => {
 
   if (!changed.length) return m.reply('✅ مفيش ملفات فيها whiskeysockets/baileys')
 
-  conn.sendMessage(m.chat, { text:
+  m.reply(
     `${dry ? '🔍 ملفات هتتعدل' : '✅ تم تعديل'} ${changed.length} ملف:\n\n` +
     changed.map(f => `◈ ${f}`).join('\n') +
     (dry ? '\n\nاكتب الأمر من غير "فحص" للتنفيذ' : `\n\n📦 نسخة احتياطية في ${backupDir}`)
