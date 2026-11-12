@@ -14,7 +14,7 @@ let deleteFile = async (filename) => {
 };
 
 let handler = async (m, { isROwner, usedPrefix, command, text }) => {
-    await m.reply(global.wait);
+    await conn.sendMessage(m.chat, { text:global.wait);
     if (!isROwner) return;
 
     if (!text) {
@@ -25,10 +25,10 @@ let handler = async (m, { isROwner, usedPrefix, command, text }) => {
         // حذف الملف
         await deleteFile(text + '.js');
 
-        m.reply(`تم حذف الملف ${text}.js بنجاح.`);
+        conn.sendMessage(m.chat, { text:`تم حذف الملف ${text}.js بنجاح.`);
     } catch (e) {
         console.error(`حدث خطأ أثناء حذف الملف ${text}.js: ${e.message}`);
-        m.reply(`حدث خطأ أثناء حذف الملف ${text}.js: ${e.message}`);
+        conn.sendMessage(m.chat, { text:`حدث خطأ أثناء حذف الملف ${text}.js: ${e.message}`);
     }
 };
 
