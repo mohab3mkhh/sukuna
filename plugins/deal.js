@@ -113,7 +113,7 @@ async function advanceTurn(game, groupId, prevMsg, m, conn) {
       msg += '\n\n';
     }
     await conn.sendMessage(m.chat, { text:withCredit(msg));
-    await conn.sendMessage(m.chat, { text:'⚽ جاري تقييم التشكيلات بالذكاء الاصطناعي...');
+    await m.reply('⚽ جاري تقييم التشكيلات بالذكاء الاصطناعي...');
     for (const pd of game.players.values()) {
       const eval_ = await evaluateSquad(pd.name, pd.picked);
       await conn.sendMessage(m.chat, {
@@ -151,9 +151,9 @@ const handler = async (m, { conn }) => {
   if (sub === 'me') {
     const game = dealStorage.get(groupId);
     if (!game) return conn.sendMessage(m.chat, { text:withCredit('❌ مفيش لعبة شغالة!'));
-    if (game.stage !== 'WAITING') return conn.sendMessage(m.chat, { text:'❌ اللعبة بدأت بالفعل!');
-    if (game.players.has(userId)) return conn.sendMessage(m.chat, { text:'⚠️ أنت مسجل بالفعل!');
-    if (game.players.size >= 2) return conn.sendMessage(m.chat, { text:'❌ اللعبة ممتلئة!');
+    if (game.stage !== 'WAITING') return m.reply('❌ اللعبة بدأت بالفعل!');
+    if (game.players.has(userId)) return m.reply('⚠️ أنت مسجل بالفعل!');
+    if (game.players.size >= 2) return m.reply('❌ اللعبة ممتلئة!');
 
     game.players.set(userId, { name: userName, boxes: generateBoxes(), picked: {}, attempts: 0 });
     const [p1, p2] = [...game.players.keys()];
@@ -172,22 +172,22 @@ const handler = async (m, { conn }) => {
   // ===== اختيار بوكس (بدل الاعتماد على before) =====
   if (sub === 'بوكس') {
     const game = dealStorage.get(groupId);
-    if (!game || game.stage !== 'PLAYING') return conn.sendMessage(m.chat, { text:'❌ مفيش لعبة شغالة دلوقتي!');
+    if (!game || game.stage !== 'PLAYING') return m.reply('❌ مفيش لعبة شغالة دلوقتي!');
 
     const currentUserId = game.turnOrder[game.currentTurnIndex];
-    if (currentUserId !== userId) return conn.sendMessage(m.chat, { text:'⏳ مش دورك!');
+    if (currentUserId !== userId) return m.reply('⏳ مش دورك!');
 
     const boxNum = parseInt(parts[2]);
     if (isNaN(boxNum) || boxNum < 1 || boxNum > 5) {
-      return conn.sendMessage(m.chat, { text:'❌ اكتب رقم بوكس من 1 لـ 5! مثال: `.deal بوكس 3`');
+      return m.reply('❌ اكتب رقم بوكس من 1 لـ 5! مثال: `.deal بوكس 3`');
     }
 
     const pd = game.players.get(userId);
     const pos = POSITIONS[game.posIndex];
     const box = pd.boxes[pos].find(b => b.number === boxNum);
 
-    if (!box) return conn.sendMessage(m.chat, { text:'❌ رقم البوكس غلط!');
-    if (box.opened) return conn.sendMessage(m.chat, { text:'❌ البوكس ده اتفتح قبل كده!');
+    if (!box) return m.reply('❌ رقم البوكس غلط!');
+    if (box.opened) return m.reply('❌ البوكس ده اتفتح قبل كده!');
 
     box.opened = true;
     pd.attempts++;
@@ -209,18 +209,18 @@ const handler = async (m, { conn }) => {
   // ===== كافي (قبول اللاعب المفتوح) =====
   if (sub === 'كافي') {
     const game = dealStorage.get(groupId);
-    if (!game || game.stage !== 'PLAYING') return conn.sendMessage(m.chat, { text:'❌ مفيش لعبة شغالة دلوقتي!');
+    if (!game || game.stage !== 'PLAYING') return m.reply('❌ مفيش لعبة شغالة دلوقتي!');
 
     const currentUserId = game.turnOrder[game.currentTurnIndex];
-    if (currentUserId !== userId) return conn.sendMessage(m.chat, { text:'⏳ مش دورك!');
+    if (currentUserId !== userId) return m.reply('⏳ مش دورك!');
 
     const pd = game.players.get(userId);
     const pos = POSITIONS[game.posIndex];
 
-    if (pd.attempts === 0) return conn.sendMessage(m.chat, { text:'❌ افتح بوكس الأول في المركز الأول بـ `.deal بوكس <رقم>`!');
+    if (pd.attempts === 0) return m.reply('❌ افتح بوكس الأول في المركز الأول بـ `.deal بوكس <رقم>`!');
 
     const openedBox = pd.boxes[pos].find(b => b.opened && !pd.picked[pos]);
-    if (!openedBox) return conn.sendMessage(m.chat, { text:'❌ مفيش بوكس مفتوح!');
+    if (!openedBox) return m.reply('❌ مفيش بوكس مفتوح!');
 
     pd.picked[pos] = openedBox.player;
     pd.attempts = 0;
@@ -232,8 +232,8 @@ const handler = async (m, { conn }) => {
   // ===== إنهاء اللعبة =====
   if (['الغاء', 'إلغاء', 'انهاء'].includes(sub)) {
     const game = dealStorage.get(groupId);
-    if (!game) return conn.sendMessage(m.chat, { text:'❌ مفيش لعبة شغالة!');
-    if (!game.players.has(userId)) return conn.sendMessage(m.chat, { text:'🚫 أنت مش في اللعبة!');
+    if (!game) return m.reply('❌ مفيش لعبة شغالة!');
+    if (!game.players.has(userId)) return m.reply('🚫 أنت مش في اللعبة!');
     dealStorage.delete(groupId);
     return conn.sendMessage(m.chat, { text:withCredit(`🛑 تم إنهاء اللعبة بواسطة ${userName}.`));
   }
