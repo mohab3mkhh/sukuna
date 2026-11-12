@@ -40,7 +40,7 @@ const handler = async (m, { conn }) => {
       return
     }
 
-    if (!m.isGroup) return conn.sendMessage(m.chat, { text:'❌ هذا الأمر للجروبات فقط!')
+    if (!m.isGroup) return m.reply('❌ هذا الأمر للجروبات فقط!')
 
     // استخراج اسم الشخص من الأمر
     const cmdText = m.text?.trim() || ''
