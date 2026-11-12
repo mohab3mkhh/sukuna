@@ -1,15 +1,15 @@
 import fetch from "node-fetch";
 
 let handler = async (m, { conn, text }) => {
-  if (!text) return m.reply("- 「🔪」 هل تظن أنني أقرأ العقول؟ اكتب شيئًا بعد الأمر.\nمثال:\n⟣ .استور افضل انمي ⟣\n*.استور* اكتب رمز JS");
+  if (!text) return conn.sendMessage(m.chat, { text:"- 「🔪」 هل تظن أنني أقرأ العقول؟ اكتب شيئًا بعد الأمر.\nمثال:\n⟣ .استور افضل انمي ⟣\n*.استور* اكتب رمز JS");
 
-  await m.reply("... هذا الوقت الذي تضيع فيه، فقط لأسألك؟ انتظر لحظة.");
+  await conn.sendMessage(m.chat, { text:"... هذا الوقت الذي تضيع فيه، فقط لأسألك؟ انتظر لحظة.");
 
   try {
     let result = await CleanDx(text);
-    await m.reply(`*╮━━━━━━━🎩━━━━━━━🔪*\n『 💀 』${result}\n*╯━━━━━━━🎩━━━━━━━🔪*`);
+    await conn.sendMessage(m.chat, { text:`*╮━━━━━━━🎩━━━━━━━🔪*\n『 💀 』${result}\n*╯━━━━━━━🎩━━━━━━━🔪*`);
   } catch (e) {
-    await m.reply("『 💀 』هل تظن أنني أهتم؟ حتى الـ AI لا يتوانى عن تجاهلك.");
+    await conn.sendMessage(m.chat, { text:"『 💀 』هل تظن أنني أهتم؟ حتى الـ AI لا يتوانى عن تجاهلك.");
   }
 };
 
