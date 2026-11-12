@@ -27,7 +27,7 @@ let modifyFile = async (filename, newData) => {
 };
 
 let handler = async (m, { isROwner, usedPrefix, command, text }) => {
-    await conn.sendMessage(m.chat, { text:global.wait);
+    await m.reply(global.wait);
     if (!isROwner) return;
 
     // التحقق من وجود نص الملف واسم الملف
@@ -46,10 +46,10 @@ let handler = async (m, { isROwner, usedPrefix, command, text }) => {
 
     try {
         await modifyFile(filename, newData);
-        conn.sendMessage(m.chat, { text:`تم تعديل الملف ${filename} بنجاح.`);
+        m.reply(`تم تعديل الملف ${filename} بنجاح.`);
     } catch (e) {
         console.error(`حدث خطأ أثناء تعديل الملف ${filename}: ${e.message}`);
-        conn.sendMessage(m.chat, { text:`حدث خطأ أثناء تعديل الملف ${filename}: ${e.message}`);
+        m.reply(`حدث خطأ أثناء تعديل الملف ${filename}: ${e.message}`);
     }
 };
 
