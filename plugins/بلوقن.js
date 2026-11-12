@@ -1,14 +1,32 @@
-// plugins/ملف.js — مدير ملفات آمن، متاح لمالك البوت فقط.
+// plugins/ملف.js — مدير ملفات آمن، متاح لمالك البوت فقط (بدون اعتماد على core/theme.js)
 import fs from 'fs'
 import path from 'path'
 import crypto from 'crypto'
 import { fileURLToPath } from 'url'
-import { theme } from '../core/theme.js'
-import { downloadContentFromMessage, generateWAMessageFromContent, generateMessageIDV2 } from '@whiskeysockets/baileys'
+import * as _baileys from '@whiskeysockets/baileys'
+
+const B = _baileys.downloadContentFromMessage ? _baileys : (_baileys.default || _baileys)
+const { downloadContentFromMessage } = B
+
+// ━━━ بديل بسيط لـ theme.build ━━━
+const theme = {
+  build(cards) {
+    return cards.map(c => {
+      switch (c.type) {
+        case 'title': return `*${c.text}*`
+        case 'divider': return '━━━━━━━━━━━━━━━━'
+        case 'info': return `${c.label} ↬ ${c.value}`
+        case 'warning': return `⚠️ ${c.text}`
+        default: return c.text || ''
+      }
+    }).join('\n')
+  }
+}
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const BACKUP_DIR = path.join(ROOT, '.file-manager-backups')
 const MAX_FILE_SIZE = 10 * 1024 * 1024
+const MAX_INLINE_CODE = 3000
 const TEXT_EXTENSIONS = new Set(['.js', '.mjs', '.cjs', '.json', '.txt', '.md', '.yml', '.yaml', '.html', '.css', '.xml', '.csv'])
 const CODE_EXTENSIONS = new Set(['.js', '.mjs', '.cjs', '.json'])
 const BLOCKED_DIRS = new Set([
@@ -18,6 +36,7 @@ const BLOCKED_DIRS = new Set([
   'chososubbot', 'gatajadibot', 'jadibots', 'g_assubbot',
   '𝑪𝑯𝑶𝑺𝑶subbot'.toLowerCase(), 'mb-𝑪𝑯𝑶𝑺𝑶subbot'.toLowerCase()
 ])
+
 function insideRoot(target) {
   const rel = path.relative(ROOT, target)
   return rel === '' || (!rel.startsWith('..' + path.sep) && rel !== '..' && !path.isAbsolute(rel))
@@ -37,7 +56,7 @@ function isBlockedRelative(rel) {
   return false
 }
 
-function resolveSafePath(raw, { mustExist = true, mutate = false } = {}) {
+function resolveSafePath(raw, { mustExist = true } = {}) {
   const rel = String(raw || '').trim().replace(/^['"]|['"]$/g, '')
   if (!rel || path.isAbsolute(rel)) throw new Error('اكتب مسارًا نسبيًا داخل مجلد البوت.')
   let target = path.resolve(ROOT, rel)
@@ -51,15 +70,13 @@ function resolveSafePath(raw, { mustExist = true, mutate = false } = {}) {
   if (isBlockedRelative(cleanRel)) throw new Error('هذا المسار محمي لأنه قد يحتوي على أسرار أو بيانات جلسات.')
   if (mustExist) {
     if (!fs.existsSync(target)) throw new Error('الملف أو المجلد غير موجود.')
-    const st = fs.lstatSync(target)
-    if (st.isSymbolicLink()) throw new Error('روابط الملفات الرمزية غير مسموحة.')
+    if (fs.lstatSync(target).isSymbolicLink()) throw new Error('روابط الملفات الرمزية غير مسموحة.')
   } else {
     const parent = path.dirname(target)
     if (!fs.existsSync(parent) || !fs.statSync(parent).isDirectory()) {
       throw new Error('المجلد الأب غير موجود؛ أنشئ المجلد أولًا.')
     }
-    const parentReal = fs.realpathSync(parent)
-    if (!insideRoot(parentReal)) throw new Error('المجلد الأب خارج مجلد البوت.')
+    if (!insideRoot(fs.realpathSync(parent))) throw new Error('المجلد الأب خارج مجلد البوت.')
     if (fs.existsSync(target) && fs.lstatSync(target).isSymbolicLink()) {
       throw new Error('روابط الملفات الرمزية غير مسموحة.')
     }
@@ -80,8 +97,9 @@ function makeBackup(target) {
 
 function getQuotedDocument(message) {
   const quoted = message?.quoted
-  const doc = quoted?.message?.documentMessage ||
+  let doc = quoted?.message?.documentMessage ||
     quoted?.message?.documentWithCaptionMessage?.message?.documentMessage || null
+  if (!doc && typeof quoted?.mtype === 'string' && quoted.mtype.startsWith('document')) doc = quoted.msg || quoted
   return { quoted, doc }
 }
 
@@ -95,49 +113,20 @@ async function readQuotedBuffer(quoted, doc) {
   return Buffer.concat(chunks)
 }
 
-async function sendCodePreview(conn, chat, quoted, relativePath, code) {
-  const lines = code.split('\n')
-  const blocks = []
-  let current = ''
-  let type = 1
-  for (const line of lines) {
-    const isComment = /^\s*(\/\/|\/\*|\*)/.test(line)
-    const isDeclaration = /handler\.|\bexport\b/.test(line)
-    const nextType = isComment ? 3 : isDeclaration ? 2 : (line.trim() ? 4 : 1)
-    if (current && nextType !== type) {
-      blocks.push({ highlightType: type, codeContent: current })
-      current = ''
-    }
-    type = nextType
-    current += line + '\n'
+// عرض الكود: نص لو قصير، وإلا ملف
+async function sendCodePreview(conn, chat, relativePath, code) {
+  const lines = code.split('\n').length
+  const kb = (Buffer.byteLength(code, 'utf8') / 1024).toFixed(2)
+  const header = `📄 *${relativePath}*\n📦 ${kb} KB | 📝 ${lines} سطر`
+  if (code.length <= MAX_INLINE_CODE) {
+    return conn.sendMessage(chat, { text: `${header}\n\n\`\`\`\n${code}\n\`\`\`` })
   }
-  if (current) blocks.push({ highlightType: type, codeContent: current })
-
-  const richMessage = {
-    richResponseMessage: {
-      messageType: 1,
-      submessages: [
-        { messageType: 2, messageText: `\n📄 *${relativePath}*\n📦 ${(Buffer.byteLength(code, 'utf8') / 1024).toFixed(2)} KB | 📝 ${lines.length} سطر\n` },
-        { messageType: 2, messageText: '\n💻 *الكود:*\n' },
-        { messageType: 5, codeMetadata: { codeLanguage: path.extname(relativePath).slice(1) || 'javascript', codeBlocks: blocks } }
-      ],
-      contextInfo: { isForwarded: true, forwardingScore: 1, forwardOrigin: 4 }
-    }
-  }
-  try {
-    const sent = await generateWAMessageFromContent(chat, { botForwardedMessage: { message: richMessage } }, {
-      senderId: conn.user.id,
-      userJid: conn.user.id,
-      messageId: generateMessageIDV2(conn.user.id)
-    })
-    await conn.relayMessage(chat, sent.message, { messageId: sent.key.id })
-  } catch {
-    await conn.sendMessage(chat, {
-      document: Buffer.from(code, 'utf8'),
-      fileName: path.basename(relativePath),
-      mimetype: 'text/plain'
-    }, quoted ? { quoted } : {})
-  }
+  return conn.sendMessage(chat, {
+    document: Buffer.from(code, 'utf8'),
+    fileName: path.basename(relativePath),
+    mimetype: 'text/plain',
+    caption: header
+  })
 }
 
 const navigation = new Map()
@@ -170,17 +159,25 @@ async function showDirectory(conn, message, folder = '.') {
     text: `${index + 1}. ${entry.isDirectory ? '📁' : '📄'} ${entry.name}${entry.isDirectory ? '/' : ''}`
   }))
   cards.push({ type: 'divider' }, { type: 'line', text: 'ردّ على هذه الرسالة برقم العنصر لفتحه.' })
-  const sent = await conn.sendMessage(message.chat, { text: theme.build(cards) }, { quoted: message })
+  const sent = await conn.sendMessage(message.chat, { text: theme.build(cards) })
   const key = userKey(message)
   navigation.set(key, { chat: message.chat, folder, entries, messageId: sent?.key?.id })
   if (navigation.size > 100) navigation.delete(navigation.keys().next().value)
   return sent
 }
 
+function getQuotedId(message) {
+  return message?.quoted?.key?.id ||
+    message?.quoted?.id ||
+    message?.msg?.contextInfo?.stanzaId ||
+    message?.message?.extendedTextMessage?.contextInfo?.stanzaId ||
+    null
+}
+
 async function handleNumberedReply(message, conn) {
   const numberText = String(message?.text || message?.body || '').trim()
   if (!/^\d+$/.test(numberText)) return false
-  const quotedId = message?.quoted?.key?.id || message?.message?.extendedTextMessage?.contextInfo?.stanzaId
+  const quotedId = getQuotedId(message)
   if (!quotedId) return false
   const key = userKey(message)
   const state = navigation.get(key)
@@ -193,7 +190,7 @@ async function handleNumberedReply(message, conn) {
   }
   const selected = state.entries[number - 1]
   if (!selected) {
-    await conn.sendMessage(message.chat, { text: '❌ الرقم غير موجود في القائمة. ردّ على آخر قائمة برقم صحيح.' }, { quoted: message })
+    await conn.sendMessage(message.chat, { text: '❌ الرقم غير موجود في القائمة. ردّ على آخر قائمة برقم صحيح.' })
     return true
   }
   if (selected.isDirectory) {
@@ -208,11 +205,11 @@ async function handleNumberedReply(message, conn) {
   navigation.delete(key)
   const ext = path.extname(target).toLowerCase()
   if (CODE_EXTENSIONS.has(ext) && data.length <= 100000) {
-    await sendCodePreview(conn, message.chat, message, selected.relativePath, data.toString('utf8'))
+    await sendCodePreview(conn, message.chat, selected.relativePath, data.toString('utf8'))
   } else if (TEXT_EXTENSIONS.has(ext) && data.length <= 6000) {
-    await conn.sendMessage(message.chat, { text: `📄 *${selected.relativePath}*\n\n${data.toString('utf8')}` }, { quoted: message })
+    await conn.sendMessage(message.chat, { text: `📄 *${selected.relativePath}*\n\n${data.toString('utf8')}` })
   } else {
-    await conn.sendMessage(message.chat, { document: data, fileName: path.basename(target), mimetype: 'application/octet-stream' }, { quoted: message })
+    await conn.sendMessage(message.chat, { document: data, fileName: path.basename(target), mimetype: 'application/octet-stream' })
   }
   return true
 }
@@ -234,7 +231,7 @@ const helpText = (prefix = '.') => theme.build([
 let handler = async (m, { conn, args = [], usedPrefix = '.' }) => {
   const action = String(args[0] || '').toLowerCase()
   const input = args.slice(1).join(' ').trim()
-  const reply = (text, extra = {}) => conn.sendMessage(m.chat, { text }, { quoted: m, ...extra })
+  const reply = text => conn.sendMessage(m.chat, { text })
 
   if (!action || /^(مساعدة|help)$/i.test(action)) return reply(helpText(usedPrefix))
 
@@ -246,32 +243,30 @@ let handler = async (m, { conn, args = [], usedPrefix = '.' }) => {
     if (/^(عرض|تحميل|تنزيل|download|show)$/i.test(action)) {
       if (!input) return reply('اكتب المسار، مثال: .ملف تحميل index (امتداد .js اختياري)')
       const target = resolveSafePath(input)
-      const targetStat = fs.statSync(target)
-      if (targetStat.isDirectory()) return await showDirectory(conn, m, relativeName(target))
-      if (!targetStat.isFile()) return reply('❌ المسار ليس ملفًا أو مجلدًا صالحًا.')
-      const st = targetStat
+      const st = fs.statSync(target)
+      if (st.isDirectory()) return await showDirectory(conn, m, relativeName(target))
+      if (!st.isFile()) return reply('❌ المسار ليس ملفًا أو مجلدًا صالحًا.')
       if (st.size > MAX_FILE_SIZE) return reply('❌ الملف أكبر من الحد المسموح (10 ميجابايت).')
       const data = fs.readFileSync(target)
-      const fileName = path.basename(target)
       const ext = path.extname(target).toLowerCase()
       if (/^(عرض|show)$/i.test(action) && CODE_EXTENSIONS.has(ext) && data.length <= 100000) {
-        return await sendCodePreview(conn, m.chat, m, relativeName(target), data.toString('utf8'))
+        return await sendCodePreview(conn, m.chat, relativeName(target), data.toString('utf8'))
       }
       if (/^(عرض|show)$/i.test(action) && TEXT_EXTENSIONS.has(ext) && data.length <= 6000) {
         return reply(`📄 *${relativeName(target)}*\n\n${data.toString('utf8')}`)
       }
       return conn.sendMessage(m.chat, {
         document: data,
-        fileName,
+        fileName: path.basename(target),
         mimetype: 'application/octet-stream'
-      }, { quoted: m })
+      })
     }
 
     if (/^(حذف|delete|del)$/i.test(action)) {
       const parts = args.slice(1)
       if (parts.at(-1) !== 'تأكيد') return reply('للتأكيد أعد الأمر بهذا الشكل:\n.ملف حذف <المسار> تأكيد')
       const rel = parts.slice(0, -1).join(' ').trim()
-      const target = resolveSafePath(rel, { mutate: true })
+      const target = resolveSafePath(rel)
       if (!fs.statSync(target).isFile()) return reply('❌ الحذف متاح للملفات فقط، وليس للمجلدات.')
       const backup = makeBackup(target)
       fs.unlinkSync(target)
@@ -283,7 +278,7 @@ let handler = async (m, { conn, args = [], usedPrefix = '.' }) => {
       const parts = args.slice(1)
       if (parts.at(-1) !== 'تأكيد') return reply('للتأكيد أعد الأمر بهذا الشكل:\nردّ على ملف أو كود ثم اكتب: .ملف حفظ <المسار> تأكيد')
       const rel = parts.slice(0, -1).join(' ').trim()
-      const target = resolveSafePath(rel, { mustExist: false, mutate: true })
+      const target = resolveSafePath(rel, { mustExist: false })
       const { quoted, doc } = getQuotedDocument(m)
       let buffer
       if (doc) {
@@ -297,8 +292,7 @@ let handler = async (m, { conn, args = [], usedPrefix = '.' }) => {
         buffer = Buffer.from(code, 'utf8')
       }
       if (buffer.length > MAX_FILE_SIZE) return reply('❌ الحد الأقصى للحفظ 10 ميجابايت.')
-      const hadExisting = fs.existsSync(target)
-      const backupPath = hadExisting ? makeBackup(target) : null
+      const backupPath = fs.existsSync(target) ? makeBackup(target) : null
       const temp = `${target}.file-manager-${Date.now()}.tmp`
       fs.writeFileSync(temp, buffer, { flag: 'wx' })
       fs.renameSync(temp, target)
@@ -334,7 +328,7 @@ handler.before = async (m, { conn, isOwner }) => {
   if (!isOwner) return false
   try { return await handleNumberedReply(m, conn) }
   catch (error) {
-    await conn.sendMessage(m.chat, { text: `❌ ${error.message || 'تعذر فتح العنصر.'}` }, { quoted: m })
+    await conn.sendMessage(m.chat, { text: `❌ ${error.message || 'تعذر فتح العنصر.'}` })
     return true
   }
 }
