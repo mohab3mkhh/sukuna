@@ -5,9 +5,9 @@ function tr(text) {
 }
 let handler = async (m, { conn }) => {
   if (global.conn.user.jid === conn.user.jid) {
-    await m.reply(await tr(`╮••─๋︩︪──๋︩︪─═⊐‹⚠️›⊏═─๋︩︪──๋︩︪─┈☇\n╿↵ *⚠️ هذا الأمر يمكن تنفيذه فقط من قبل مستخدم ليس بوت فرعي*\n── • ◈ • ──`));
+    await conn.sendMessage(m.chat, { text:await tr(`╮••─๋︩︪──๋︩︪─═⊐‹⚠️›⊏═─๋︩︪──๋︩︪─┈☇\n╿↵ *⚠️ هذا الأمر يمكن تنفيذه فقط من قبل مستخدم ليس بوت فرعي*\n── • ◈ • ──`));
   } else {
-    await m.reply(await tr(`╮••─๋︩︪──๋︩︪─═⊐‹💔›⊏═─๋︩︪──๋︩︪─┈☇\n╿↵ *وداعًا بوت :(*\n── • ◈ • ──\n*🚫 البوت سيتم إغلاقه الآن*`));
+    await conn.sendMessage(m.chat, { text:await tr(`╮••─๋︩︪──๋︩︪─═⊐‹💔›⊏═─๋︩︪──๋︩︪─┈☇\n╿↵ *وداعًا بوت :(*\n── • ◈ • ──\n*🚫 البوت سيتم إغلاقه الآن*`));
     conn.ws.close();
   }
 };
