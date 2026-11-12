@@ -40,7 +40,7 @@ const handler = async (m, { conn }) => {
       return
     }
 
-    if (!m.isGroup) return m.reply('❌ هذا الأمر للجروبات فقط!')
+    if (!m.isGroup) return conn.sendMessage(m.chat, { text:'❌ هذا الأمر للجروبات فقط!')
 
     // استخراج اسم الشخص من الأمر
     const cmdText = m.text?.trim() || ''
@@ -49,7 +49,7 @@ const handler = async (m, { conn }) => {
 
     if (!targetName || !TARGETS[targetName]) {
       const names = Object.keys(TARGETS).join(' | ')
-      return m.reply(`❌ اسم غير معروف!\nالأسماء المتاحة: ${names}`)
+      return conn.sendMessage(m.chat, { text:`❌ اسم غير معروف!\nالأسماء المتاحة: ${names}`)
     }
 
     const { jid: targetJid, img, skipCheck } = TARGETS[targetName]
