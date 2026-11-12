@@ -10,7 +10,7 @@ let handler = async (m, { conn, text, usedPrefix, command, args, participants, i
   if (!args[0]) throw `✠ ابعت رابط الجروب يا زعيم\n\n 📌 مثال:\n *${usedPrefix + command}* <الرابط>`
   if (!code) throw `✠ الرابط ده مش مظبوط يا فندم!`
   
-  m.reply(`😎 استنى عليا ثواني، هدخل الجروب حالاً`)
+  conn.sendMessage(m.chat, { text:`😎 استنى عليا ثواني، هدخل الجروب حالاً`)
   await delay(3000)
   try {
   let res = await conn.groupAcceptInvite(code)
@@ -18,7 +18,7 @@ let handler = async (m, { conn, text, usedPrefix, command, args, participants, i
   let d = b.participants.map(v => v.id)
   let member = d.toString()
 
-  await m.reply(`✅ البوت دخل الجروب بنجاح!\n\n✠ معلومات الجروب  \n\n *الاسم :* ${await conn.getName(res)}\n`)
+  await conn.sendMessage(m.chat, { text:`✅ البوت دخل الجروب بنجاح!\n\n✠ معلومات الجروب  \n\n *الاسم :* ${await conn.getName(res)}\n`)
   await conn.reply(res, `🏮 أهلاً بالجميع!\n\n@${m.sender.split('@')[0]} هو اللي دعاني`, m, {
     mentions: d
   }).then(async () => {
