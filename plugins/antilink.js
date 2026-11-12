@@ -10,14 +10,14 @@ const linkRegex1 = /whatsapp\.com\/channel\/([0-9A-Za-z]{20,24})/i
 // ════════════════════════════════════════════════════════
 const handler = async function (m, { conn, args, isAdmin, isROwner }) {
   if (!m.isGroup)
-    return conn.sendMessage(m.chat, { text:
+    return m.reply(
       `*╮═≼『⛩️┃تنبيه┃⛩️』≽═╭*\n` +
       `*┇⌗╎ꕥ هذا الأمر للمجموعات فقط ⌗*\n` +
       `*╯✯≼══━━﹂⛩️﹁━━══≽✯*`
     )
 
   if (!isAdmin && !isROwner)
-    return conn.sendMessage(m.chat, { text:
+    return m.reply(
       `*╮═≼『⛩️┃تنبيه┃⛩️』≽═╭*\n` +
       `*┇⌗╎ꕥ هذا الأمر للأدمن فقط ⌗*\n` +
       `*╯✯≼══━━﹂⛩️﹁━━══≽✯*`
@@ -27,7 +27,7 @@ const handler = async function (m, { conn, args, isAdmin, isROwner }) {
 
   // لو مكتبش on أو off — وريه الخيارات
   if (arg !== 'on' && arg !== 'off')
-    return conn.sendMessage(m.chat, { text:
+    return m.reply(
       `*╮═≼『⛩️┃مضاد الروابط┃⛩️』≽═╭*\n\n` +
       `*┇⌗╎ꕥ اختار أحد الخيارات:*\n` +
       `*┇⌗╎ 🟢 .antilink on — تفعيل*\n` +
@@ -40,7 +40,7 @@ const handler = async function (m, { conn, args, isAdmin, isROwner }) {
 
   if (arg === 'on') {
     chat.antiLink = true
-    return conn.sendMessage(m.chat, { text:
+    return m.reply(
       `*╮═≼『⛩️┃مضاد الروابط┃⛩️』≽═╭*\n\n` +
       `*┇⌗╎ 🟢 تم تفعيل مضاد الروابط!*\n` +
       `*┇⌗╎ꕥ أي رابط واتساب سيتم التعامل معه ⌗*\n\n` +
@@ -49,7 +49,7 @@ const handler = async function (m, { conn, args, isAdmin, isROwner }) {
   }
 
   chat.antiLink = false
-  return conn.sendMessage(m.chat, { text:
+  return m.reply(
     `*╮═≼『⛩️┃مضاد الروابط┃⛩️』≽═╭*\n\n` +
     `*┇⌗╎ 🔴 تم تعطيل مضاد الروابط!*\n\n` +
     `*╯✯≼══━━﹂⛩️﹁━━══≽✯*`
