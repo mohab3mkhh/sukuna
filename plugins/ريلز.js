@@ -135,7 +135,7 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
                     messageContextInfo: { deviceListMetadata: {}, deviceListMetadataVersion: 2 },
                     interactiveMessage: proto.Message.InteractiveMessage.fromObject({
                         body: proto.Message.InteractiveMessage.Body.create({ text: `🔍 *${text}*` }),
-                        footer: proto.Message.InteractiveMessage.Footer.create({ text: '✧ 2B' }),
+                        footer: proto.Message.InteractiveMessage.Footer.create({ text: 'SukunaBot' }),
                         header: proto.Message.InteractiveMessage.Header.create({ hasMediaAttachment: false }),
                         carouselMessage: proto.Message.InteractiveMessage.CarouselMessage.fromObject({ cards })
                     })
