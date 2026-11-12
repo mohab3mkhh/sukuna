@@ -146,7 +146,7 @@ async function getArtwork(url) {
 }
 
 let handler = async (m, { conn, text, usedPrefix, command }) => {
-  if (!text) return conn.sendMessage(m.chat, { text:`🎵 *Apple Music*\n\n${usedPrefix}${command} <اسم الأغنية>`);
+  if (!text) return m.reply(`🎵 *Apple Music*\n\n${usedPrefix}${command} <اسم الأغنية>`);
 
   // ✅ تحميل مباشر
   if (text.startsWith('dl_')) {
