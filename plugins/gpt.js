@@ -131,7 +131,7 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
     const result = await askGPTFree(text)
     if (!result.success || !result.answer) {
       await m.react('❌')
-      return conn.sendMessage(m.chat, { text:'❌ فشل الرد من AI')
+      return m.reply('❌ فشل الرد من AI')
     }
     await m.react('✅')
     await splitAndSend(conn, m.chat, result.answer, m)
