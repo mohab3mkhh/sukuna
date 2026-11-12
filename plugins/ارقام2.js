@@ -129,7 +129,7 @@ const handler = async (m, { text, usedPrefix, command }) => {
       global._tgCache2[m.sender] = { buttons, allBtns, msg };
 
       const list = buttons.map((b, i) => `*${i + 1}.* ${b.text}`).join('\n');
-      await conn.sendMessage(m.chat, { text:
+      await m.reply(
         `🌍 *Tech Universe — اختار الدولة:*\n\n${list}\n\n` +
         `مثال: \`${usedPrefix}${command} 1\` أو \`${usedPrefix}${command} sudan\``
       );
@@ -160,7 +160,7 @@ const handler = async (m, { text, usedPrefix, command }) => {
       `${txt}\n\n` +
       `📞 *الأرقام:*\n${numbers.join('\n')}`;
 
-    await conn.sendMessage(m.chat, { text:reply);
+    await m.reply(reply);
     await m.react('✅');
 
     // حدث الـ cache
