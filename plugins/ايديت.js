@@ -455,4 +455,43 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
     await conn.sendMessage(m.chat, { react: { text: '🎨', key: m.key } });
     const result = await getPinterestVideo(text);
     if (!result) return m.reply('❌ مفيش نتائج على Pinterest');
-    await
+    await conn.sendMessage(m.chat, {
+      video: { url: result.url },
+      caption: `📌 *Pinterest Edit*\n🎬 ${result.title}\n🔗 ${result.pinUrl}` + SIGN
+    }, { quoted: m });
+    await conn.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
+    return;
+  }
+
+  if (command === 'ايديت_تيك') {
+    if (!text?.trim()) return m.reply('❌ اكتب اسم الشخصية');
+    await conn.sendMessage(m.chat, { react: { text: '🎵', key: m.key } });
+    const result = await getTikTokVideo(text);
+    if (!result) return m.reply('❌ مفيش نتائج على تيك توك');
+    await conn.sendMessage(m.chat, {
+      video: { url: result.url },
+      caption: `🎵 *TikTok Edit*\n🎬 ${result.title}\n👤 ${result.author}` + SIGN
+    }, { quoted: m });
+    await conn.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
+    return;
+  }
+
+  if (command === 'ايديت_يوت') {
+    if (!text?.trim()) return m.reply('❌ اكتب اسم الشخصية');
+    await conn.sendMessage(m.chat, { react: { text: '▶️', key: m.key } });
+    const result = await getYouTubeShorts(text);
+    if (!result) return m.reply('❌ مفيش نتائج على يوتيوب');
+    await conn.sendMessage(m.chat, {
+      video: { url: result.url },
+      caption: `▶️ *YouTube Edit*\n🎬 ${result.title}` + SIGN
+    }, { quoted: m });
+    await conn.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
+    return;
+  }
+};
+
+handler.command = /^(ايديت|ايديت_بين|ايديت_تيك|ايديت_يوت)$/i;
+handler.tags = ['downloader'];
+handler.help = ['ايديت <اسم>'];
+
+export default handler;
