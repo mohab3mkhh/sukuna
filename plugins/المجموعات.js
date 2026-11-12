@@ -99,7 +99,7 @@ handler.before = async function (m, { conn, usedPrefix, command }) {
 
   } catch (e) {
     console.error('[Groups]', e);
-    return conn.sendMessage(m.chat, { text:`❌ فشل: ${e.message}`);
+    return m.reply(`❌ فشل: ${e.message}`);
   }
 };
 
