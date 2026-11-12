@@ -54,7 +54,7 @@ const handler = async (m, { args }) => {
     }
   }
 
-  if (!changed.length) return conn.sendMessage(m.chat, { text:'✅ مفيش ملفات فيها whiskeysockets/baileys')
+  if (!changed.length) return m.reply('✅ مفيش ملفات فيها whiskeysockets/baileys')
 
   conn.sendMessage(m.chat, { text:
     `${dry ? '🔍 ملفات هتتعدل' : '✅ تم تعديل'} ${changed.length} ملف:\n\n` +
