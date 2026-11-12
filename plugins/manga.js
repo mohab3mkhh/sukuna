@@ -146,11 +146,11 @@ async function downloadChapterZip(conn, m, chapterUrl, chapterTitle) {
     }
 
     await react('⏳')
-    await m.reply('📦 *جاري تجهيز الفصل ZIP...*')
+    await conn.sendMessage(m.chat, { text:'📦 *جاري تجهيز الفصل ZIP...*')
 
     try {
         const images = await getChapterImages(chapterUrl)
-        if (!images.length) return m.reply('❌ لا توجد صور')
+        if (!images.length) return conn.sendMessage(m.chat, { text:'❌ لا توجد صور')
 
         const zip = new JSZip()
         let pagesAdded = 0
@@ -170,7 +170,7 @@ async function downloadChapterZip(conn, m, chapterUrl, chapterTitle) {
             } catch {}
         }
 
-        if (!pagesAdded) return m.reply('❌ فشل التحميل')
+        if (!pagesAdded) return conn.sendMessage(m.chat, { text:'❌ فشل التحميل')
 
         const fileBuffer = await zip.generateAsync({ type: 'nodebuffer' })
         const fileName = `${chapterTitle || 'chapter'}_${Date.now()}.zip`
@@ -186,7 +186,7 @@ async function downloadChapterZip(conn, m, chapterUrl, chapterTitle) {
         await react('✅')
     } catch (e) {
         await react('❌')
-        m.reply('❌ ' + e.message)
+        conn.sendMessage(m.chat, { text:'❌ ' + e.message)
     }
 }
 
@@ -196,12 +196,12 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
     }
 
     if (command === 'مانجا_ليك') {
-        if (!text || !text.startsWith('http')) return m.reply(`❌ *الاستخدام:*\n${usedPrefix}مانجا_ليك [رابط المانجا]`)
+        if (!text || !text.startsWith('http')) return conn.sendMessage(m.chat, { text:`❌ *الاستخدام:*\n${usedPrefix}مانجا_ليك [رابط المانجا]`)
 
         await react('📖')
 
         const info = await getMangaInfo(text)
-        if (!info) return m.reply('❌ فشل جلب المعلومات')
+        if (!info) return conn.sendMessage(m.chat, { text:'❌ فشل جلب المعلومات')
 
         let msg = `📚 *${info.title}*\n\n`
         if (info.desc) msg += `📝 ${info.desc.slice(0, 300)}...\n\n`
@@ -237,7 +237,7 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
     }
 
     if (command === 'تحميل_مانجا') {
-        if (!text || !text.includes('http')) return m.reply(`❌ *الاستخدام:*\n${usedPrefix}تحميل_مانجا [رابط الفصل]`)
+        if (!text || !text.includes('http')) return conn.sendMessage(m.chat, { text:`❌ *الاستخدام:*\n${usedPrefix}تحميل_مانجا [رابط الفصل]`)
         const parts = text.split('|')
         return downloadChapterZip(conn, m, parts[0].trim(), parts[1]?.trim() || 'chapter')
     }
@@ -254,7 +254,7 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
 
     if (!results.length) {
         await react('❌')
-        return m.reply(`❌ *لا توجد نتائج*`)
+        return conn.sendMessage(m.chat, { text:`❌ *لا توجد نتائج*`)
     }
 
     const rows = results.map((r, i) => ({
