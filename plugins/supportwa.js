@@ -56,7 +56,7 @@ let handler = async (m, { conn, args }) => {
 
   } catch (err) {
     console.error(err)
-    return conn.sendMessage(m.chat, { text:"❌ حدث خطأ أثناء محاولة إرسال الطلب. حاول مرة أخرى.")
+    return m.reply("❌ حدث خطأ أثناء محاولة إرسال الطلب. حاول مرة أخرى.")
   }
 }
 
