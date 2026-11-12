@@ -16,7 +16,7 @@ handler.before = async function (m) {
         } else if (similarity(m.text.toLowerCase(), json.response.toLowerCase().trim()) >= threshold) {
             conn.sendMessage(m.chat, { text:`*❍━━━══━━❪⚡️❫━━══━━━❍*\n*｢👾｣⇇اقـتـربـت مـن الاجـابـه*\n*❍━━━══━━❪👹❫━━══━━━❍*`)
         } else {
-            conn.sendMessage(m.chat, { text:'*❍━━━══━━❪⚡️❫━━══━━━❍*\n*｢👾｣⇇الاجـابـه خـلـط*\n*❍━━━══━━❪👹❫━━══━━━❍*')
+            m.reply('*❍━━━══━━❪⚡️❫━━══━━━❍*\n*｢👾｣⇇الاجـابـه خـلـط*\n*❍━━━══━━❪👹❫━━══━━━❍*')
         }
     }
     return !0
