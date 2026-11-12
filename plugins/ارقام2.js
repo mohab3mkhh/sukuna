@@ -129,7 +129,7 @@ const handler = async (m, { text, usedPrefix, command }) => {
       global._tgCache2[m.sender] = { buttons, allBtns, msg };
 
       const list = buttons.map((b, i) => `*${i + 1}.* ${b.text}`).join('\n');
-      await m.reply(
+      await conn.sendMessage(m.chat, { text:
         `🌍 *Tech Universe — اختار الدولة:*\n\n${list}\n\n` +
         `مثال: \`${usedPrefix}${command} 1\` أو \`${usedPrefix}${command} sudan\``
       );
@@ -148,7 +148,7 @@ const handler = async (m, { text, usedPrefix, command }) => {
     const targetBtn = findBtn(cached.allBtns, input);
     if (!targetBtn) {
       await m.react('❌');
-      return m.reply(`❌ مش لاقي "${input}"\nابعت \`${usedPrefix}${command}\` تشوف القائمة`);
+      return conn.sendMessage(m.chat, { text:`❌ مش لاقي "${input}"\nابعت \`${usedPrefix}${command}\` تشوف القائمة`);
     }
 
     console.log('[TG2] Clicking:', targetBtn.text);
@@ -160,7 +160,7 @@ const handler = async (m, { text, usedPrefix, command }) => {
       `${txt}\n\n` +
       `📞 *الأرقام:*\n${numbers.join('\n')}`;
 
-    await m.reply(reply);
+    await conn.sendMessage(m.chat, { text:reply);
     await m.react('✅');
 
     // حدث الـ cache
@@ -172,7 +172,7 @@ const handler = async (m, { text, usedPrefix, command }) => {
   } catch (e) {
     console.error('[Numbers2]', e.message);
     await m.react('❌');
-    await m.reply(`❌ *فشل*\n\n⚠️ ${e.message}`);
+    await conn.sendMessage(m.chat, { text:`❌ *فشل*\n\n⚠️ ${e.message}`);
   }
 };
 
