@@ -49,7 +49,7 @@ const handler = async (m, { conn, text }) => {
   } catch (e) {
     // تنظيف في حالة حدوث خطأ
     if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
-    return conn.sendMessage(m.chat, { text:`❌ حدث خطأ أثناء التحميل: ${e.message}`);
+    return m.reply(`❌ حدث خطأ أثناء التحميل: ${e.message}`);
   }
 };
 
