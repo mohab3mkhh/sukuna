@@ -216,7 +216,7 @@ const handler = async (m, { conn, text, usedPrefix, command, isROwner, groupMeta
         case '1': settingValue = 'all';      settingText = 'الجميع'; break
         case '2': settingValue = 'contacts'; settingText = 'جهات الاتصال فقط'; break
         case '3': settingValue = 'none';     settingText = 'لا أحد'; break
-        default:  return conn.sendMessage(m.chat, { text:'❌ رقم غير صحيح! استخدم 1، 2، أو 3')
+        default:  return m.reply('❌ رقم غير صحيح! استخدم 1، 2، أو 3')
       }
 
       await conn.sendMessage(m.chat, { text:`⏳ *جاري تغيير إعدادات الخصوصية إلى:* ${settingText}...`)
@@ -302,7 +302,7 @@ const handler = async (m, { conn, text, usedPrefix, command, isROwner, groupMeta
           privacyValue = 'contacts' // أقرب إعداد رسمي، والباقي بيتم تطبيقه عن طريق البوت
           break
         default:
-          return conn.sendMessage(m.chat, { text:'❌ رقم غير صحيح! استخدم 1، 2، أو 3')
+          return m.reply('❌ رقم غير صحيح! استخدم 1، 2، أو 3')
       }
 
       global.addSettings.mode = settingValue
