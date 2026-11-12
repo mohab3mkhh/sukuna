@@ -1,6 +1,6 @@
 let handler = async (m, { conn, isPrems }) => {
   let user = global.db.data.users[m.sender]
-  if (!user) return conn.sendMessage(m.chat, { text:'*┇⌗╎حدث خطأ، حاول مرة أخرى*')
+  if (!user) return m.reply('*┇⌗╎حدث خطأ، حاول مرة أخرى*')
 
   const free = 5000
   const prem = 20000
