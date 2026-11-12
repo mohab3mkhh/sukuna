@@ -68,7 +68,7 @@ const handler = async (m, { conn }) => {
   }
 
   if (targets.length === 0) {
-    return m.reply(`╭─「 📦 *كات بوكس* 」
+    return conn.sendMessage(m.chat, { text:`╭─「 📦 *كات بوكس* 」
 │
 │  ⚠️ *استخدم الأمر بشكل صحيح*
 │
@@ -94,7 +94,7 @@ const handler = async (m, { conn }) => {
       const type = getMediaType(mime)
 
       try {
-        await m.reply(`📤 *جاري رفع ${type} ${i + 1} من ${targets.length}...*`)
+        await conn.sendMessage(m.chat, { text:`📤 *جاري رفع ${type} ${i + 1} من ${targets.length}...*`)
         const buffer = await target.download()
         const link = await uploadToCatbox(buffer, mime)
         links.push({ num: i + 1, type, link })
@@ -111,11 +111,11 @@ const handler = async (m, { conn }) => {
     msg += `│  💡 *ملاحظات:*\n│  • الملفات تبقى دائمة\n│  • الحد الأقصى: 200 ميجابايت\n│\n╰──────────────`
 
     await m.react('✅')
-    await m.reply(msg)
+    await conn.sendMessage(m.chat, { text:msg)
 
   } catch (error) {
     await m.react('❌')
-    await m.reply(`❌ *خطأ:* ${error.message}`)
+    await conn.sendMessage(m.chat, { text:`❌ *خطأ:* ${error.message}`)
   }
 }
 
