@@ -294,7 +294,7 @@ let handler = async (m, { conn, text }) => {
   const hasImage = /image\/(jpeg|png|webp)/.test(mime)
 
   if (!hasImage && !text) {
-    return m.reply(
+    return conn.sendMessage(m.chat, { text:
       `🎨 *نانو بنانا - تعديل الصور بالذكاء الاصطناعي*\n\n` +
       `*مع صورة:*\n` +
       `ارسل صورة مع الأمر كـ caption أو رد على صورة:\n` +
@@ -309,7 +309,7 @@ let handler = async (m, { conn, text }) => {
     )
   }
 
-  if (!text) return m.reply('⚠️ أين الوصف؟\nمثال: .تعديل حولها لأنمي')
+  if (!text) return conn.sendMessage(m.chat, { text:'⚠️ أين الوصف؟\nمثال: .تعديل حولها لأنمي')
 
   const prompt = text.trim()
   const wait = await conn.sendMessage(m.chat, { text: '⏳ جاري تعديل صورتك بواسطة nanobanana' }, { quoted: m })
