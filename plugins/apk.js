@@ -131,7 +131,7 @@ const formatSize = (bytes) => {
 
 const handler = async (m, { conn, text }) => {
   if (!text) {
-    return conn.sendMessage(m.chat, { text:
+    return m.reply(
       `╭─「 📦 تحميل APK 」
 │
 │  📌 اكتب اسم أي تطبيق أو لعبة
@@ -171,7 +171,7 @@ const handler = async (m, { conn, text }) => {
           caption
         }, { quoted: m })
       } else {
-        await conn.sendMessage(m.chat, { text:caption)
+        await m.reply(caption)
       }
 
       await m.reply('📥 جاري إرسال ملف APK...')
