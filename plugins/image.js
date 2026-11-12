@@ -309,7 +309,7 @@ let handler = async (m, { conn, text }) => {
     )
   }
 
-  if (!text) return conn.sendMessage(m.chat, { text:'⚠️ أين الوصف؟\nمثال: .تعديل حولها لأنمي')
+  if (!text) return m.reply('⚠️ أين الوصف؟\nمثال: .تعديل حولها لأنمي')
 
   const prompt = text.trim()
   const wait = await conn.sendMessage(m.chat, { text: '⏳ جاري تعديل صورتك بواسطة nanobanana' }, { quoted: m })
