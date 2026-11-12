@@ -200,7 +200,7 @@ const handler = async (m, { conn, args, usedPrefix, command }) => {
   // 4) .غنيه mp4 <رابط> <دقة> → تنزيل فيديو بالدقّة
 
   if (!args.length) {
-    return m.reply(
+    return conn.sendMessage(m.chat, { text:
 `🧞 الاستخدام:
 • *${usedPrefix + command} <اسم/رابط>* ← يعرض اختيار MP3/MP4
 • *${usedPrefix + command} mp3 <اسم/رابط>* ← تحميل صوت
@@ -225,7 +225,7 @@ const handler = async (m, { conn, args, usedPrefix, command }) => {
       const r = await yts(query).catch(() => null)
       if (!r?.videos?.length) {
         await conn.sendMessage(m.chat, { react: { text: '✖️', key: m.key } })
-        return m.reply('❌ لم يتم العثور على نتائج.')
+        return conn.sendMessage(m.chat, { text:'❌ لم يتم العثور على نتائج.')
       }
       const v = r.videos[0]
       url = v.url
@@ -244,7 +244,7 @@ const handler = async (m, { conn, args, usedPrefix, command }) => {
       const r = await yts(query).catch(() => null)
       if (!r?.videos?.length) {
         await conn.sendMessage(m.chat, { react: { text: '✖️', key: m.key } })
-        return m.reply('❌ لم يتم العثور على نتائج.')
+        return conn.sendMessage(m.chat, { text:'❌ لم يتم العثور على نتائج.')
       }
       url = r.videos[0].url
     }
@@ -252,14 +252,14 @@ const handler = async (m, { conn, args, usedPrefix, command }) => {
     const res = await savetube.getDownload(url, 'mp3')
     if (!res.status) {
       await conn.sendMessage(m.chat, { react: { text: '✖️', key: m.key } })
-      return m.reply(`❌ فشل التنزيل:\n${res.error || 'غير معروف'}`)
+      return conn.sendMessage(m.chat, { text:`❌ فشل التنزيل:\n${res.error || 'غير معروف'}`)
     }
 
     const { title, download } = res.result
     const head = await headInfo(download)
     if (!head.ok) {
       await conn.sendMessage(m.chat, { react: { text: '✖️', key: m.key } })
-      return m.reply('❌ الرابط غير متاح حالياً.')
+      return conn.sendMessage(m.chat, { text:'❌ الرابط غير متاح حالياً.')
     }
     if (head.size > SEND_LIMIT_AUDIO) {
       await conn.sendMessage(m.chat, { text: `⚠️ الملف كبير (${sizeStr(head.size)}). رابط مباشر:\n${download}` }, { quoted: m })
@@ -289,7 +289,7 @@ const handler = async (m, { conn, args, usedPrefix, command }) => {
     const r = await yts(query).catch(() => null)
     if (!r?.videos?.length) {
       await conn.sendMessage(m.chat, { react: { text: '✖️', key: m.key } })
-      return m.reply('❌ لم يتم العثور على نتائج.')
+      return conn.sendMessage(m.chat, { text:'❌ لم يتم العثور على نتائج.')
     }
     const v = r.videos[0]
     url = v.url
@@ -308,7 +308,7 @@ const handler = async (m, { conn, args, usedPrefix, command }) => {
   }
 
   if (!VIDEO_QUALITIES.includes(quality)) {
-    return m.reply(`❌ دقّة غير مدعومة. الدقات المتاحة: ${VIDEO_QUALITIES.join(', ')}`)
+    return conn.sendMessage(m.chat, { text:`❌ دقّة غير مدعومة. الدقات المتاحة: ${VIDEO_QUALITIES.join(', ')}`)
   }
 
   await conn.sendMessage(m.chat, { react: { text: '🕒', key: m.key } })
@@ -316,14 +316,14 @@ const handler = async (m, { conn, args, usedPrefix, command }) => {
   const res = await savetube.getDownload(url, quality)
   if (!res.status) {
     await conn.sendMessage(m.chat, { react: { text: '✖️', key: m.key } })
-    return m.reply(`❌ فشل التنزيل:\n${res.error || 'غير معروف'}`)
+    return conn.sendMessage(m.chat, { text:`❌ فشل التنزيل:\n${res.error || 'غير معروف'}`)
   }
 
   const { title, download, duration } = res.result
   const head = await headInfo(download)
   if (!head.ok) {
     await conn.sendMessage(m.chat, { react: { text: '✖️', key: m.key } })
-    return m.reply('❌ الرابط غير متاح حالياً.')
+    return conn.sendMessage(m.chat, { text:'❌ الرابط غير متاح حالياً.')
   }
   if (head.size > SEND_LIMIT_VIDEO) {
     await conn.sendMessage(m.chat, { text: `⚠️ الملف كبير (${sizeStr(head.size)}). رابط مباشر:\n${download}` }, { quoted: m })
