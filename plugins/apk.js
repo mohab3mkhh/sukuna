@@ -148,7 +148,7 @@ const handler = async (m, { conn, text }) => {
 
   // لو اختار package من القائمة
   if (/^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*){1,}$/i.test(text.trim())) {
-    await conn.sendMessage(m.chat, { text:'⏬ جاري جلب معلومات التطبيق...')
+    await m.reply('⏬ جاري جلب معلومات التطبيق...')
     try {
       const info = await getDownloadInfo(text.trim())
 
@@ -174,7 +174,7 @@ const handler = async (m, { conn, text }) => {
         await conn.sendMessage(m.chat, { text:caption)
       }
 
-      await conn.sendMessage(m.chat, { text:'📥 جاري إرسال ملف APK...')
+      await m.reply('📥 جاري إرسال ملف APK...')
 
       await conn.sendMessage(m.chat, {
         document: { url: info.downloadUrl },
@@ -183,7 +183,7 @@ const handler = async (m, { conn, text }) => {
       }, { quoted: m })
 
       if (info.obb_link) {
-        await conn.sendMessage(m.chat, { text:'📦 جاري إرسال ملف OBB...')
+        await m.reply('📦 جاري إرسال ملف OBB...')
         const obbName = decodeURIComponent(info.obb_link.split('/').pop().split('?')[0])
         await conn.sendMessage(m.chat, {
           document: { url: info.obb_link },
@@ -203,10 +203,10 @@ const handler = async (m, { conn, text }) => {
   }
 
   // وضع البحث
-  await conn.sendMessage(m.chat, { text:'🔍 جاري البحث...')
+  await m.reply('🔍 جاري البحث...')
   try {
     const apps = await searchApps(text)
-    if (!apps.length) return conn.sendMessage(m.chat, { text:'❌ لم يتم العثور على نتائج\n\nجرب كتابة اسم التطبيق بالإنجليزي')
+    if (!apps.length) return m.reply('❌ لم يتم العثور على نتائج\n\nجرب كتابة اسم التطبيق بالإنجليزي')
 
     const rows = apps.map(app => ({
       title: app.name,
