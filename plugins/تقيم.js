@@ -1,51 +1,41 @@
-import { prepareWAMessageMedia, generateWAMessageFromContent, getDevice } from '@whiskeysockets/baileys';
+/**
+ * plugins/تقييم.js
+ * نظام تقييم البوت
+ */
 
-const handler = async (message, { conn, text, usedPrefix }) => { 
-    const deviceType = await getDevice(message.key.id);
+import { sendButtons, btn, getButtonId } from '../lib/buttons.js';
 
-    if (deviceType !== "desktop" && deviceType !== "web") {
-        const mediaMessage = await prepareWAMessageMedia({
-            image: { url: "https://files.catbox.moe/o1ewkf.jpg" }
-        }, { upload: conn.waUploadToServer });
+// ✅ رقم المطور
+const DEVELOPER = '201016855501@s.whatsapp.net';
 
-        const interactiveContent = {
-            body: { text: '' },
-            footer: { text: "يمكنك إستخدامه عبر الاختيار من الاسفل\n*─[𝑺𝑼𝑲𝑼𝑵𝑨_ 𝑩𝑶𝑻]*🌟✨" },
-            header: {
-                title: "مرحبا يا حب 👋 أتمنى أنك بخير ♥️\nالان يمكنك تقييم البوت لكي يتحسن اكثر",
-                subtitle: "خـلــيك صـــادق فــي تــقــيــمـك يا حب ❤️🥹\n\n\n\n.",
-                hasMediaAttachment: true,
-                imageMessage: mediaMessage.imageMessage
-            },
-            nativeFlowMessage: {
-                buttons: [
-                    { name: "quick_reply", buttonParamsJson: "{\"display_text\":\"⭐\",\"id\":\".قيم 1\"}" },
-                    { name: "quick_reply", buttonParamsJson: "{\"display_text\":\"⭐⭐\",\"id\":\".قيم 2\"}" },
-                    { name: "quick_reply", buttonParamsJson: "{\"display_text\":\"⭐⭐⭐\",\"id\":\".قيم 3\"}" },
-                    { name: "quick_reply", buttonParamsJson: "{\"display_text\":\"⭐⭐⭐⭐\",\"id\":\".قيم 4\"}" },
-                    { name: "quick_reply", buttonParamsJson: "{\"display_text\":\"⭐⭐⭐⭐⭐\",\"id\":\".قيم 5\"}" }
-                ],
-                messageParamsJson: ''
-            }
-        };
+const IMAGE_URL = 'https://files.catbox.moe/o1ewkf.jpg';
 
-        let waMessage = generateWAMessageFromContent(message.chat, {
-            viewOnceMessage: { message: { interactiveMessage: interactiveContent } }
-        }, {
-            userJid: conn.user.jid,
-            quoted: message
-        });
-
-        conn.relayMessage(message.chat, waMessage.message, { messageId: waMessage.key.id });
-    } else {
-        conn.sendFile(message.chat, "JoAnimi•Error.jpg", message);
-    }
+// ══════════════════════════════════════════════════
+//  الأمر الرئيسي
+// ══════════════════════════════════════════════════
+const handler = async (message, { conn }) => {
+    // ✅ إرسال رسالة التقييم باستخدام sendButtons
+    await sendButtons(conn, message.chat, {
+        title: '⭐ تقييم البوت',
+        subtitle: 'كن صادقاً في تقييمك',
+        text: `مرحبا يا حب 👋 أتمنى أنك بخير ♥️\nالان يمكنك تقييم البوت لكي يتحسن اكثر\n\n*خلـيك صـادق فـي تـقـيـمـك يا حب* ❤️🥹`,
+        footer: '⛩️ SUKUNA BOT',
+        image: IMAGE_URL,
+        buttons: [
+            btn.reply('⭐', '.قيم 1'),
+            btn.reply('⭐⭐', '.قيم 2'),
+            btn.reply('⭐⭐⭐', '.قيم 3'),
+            btn.reply('⭐⭐⭐⭐', '.قيم 4'),
+            btn.reply('⭐⭐⭐⭐⭐', '.قيم 5')
+        ]
+    }, message);
 };
 
-// دالة إرسال الرد بعد التقييم
+// ══════════════════════════════════════════════════
+//  معالج التقييم
+// ══════════════════════════════════════════════════
 const sendFeedbackResponse = async (stars, m, conn) => {
     let feedbackMessage = '';
-    let developerContact = '+201016855501@s.whatsapp.net'; // تأكد أن الرقم صحيح
 
     switch (stars) {
         case 1:
@@ -68,18 +58,58 @@ const sendFeedbackResponse = async (stars, m, conn) => {
             break;
     }
 
-    let developerMessage = `*❒═[تم استلام تقييم للبوت]═❒*\n\n*❒ التقييم: [ ${stars} نجوم ]*\n*❒ بواسطة: [ +${m.sender.split`@`[0]} ]*\n\n*❒ نأمل أن نكون عند حسن ظنك.*`;
+    let developerMessage = `*❒═[تم استلام تقييم للبوت]═❒*\n\n*❒ التقييم: [ ${stars} نجوم ]*\n*❒ بواسطة: [ +${m.sender.split('@')[0]} ]*\n\n*❒ نأمل أن نكون عند حسن ظنك.*`;
 
     try {
-        await conn.sendMessage(developerContact, { text: developerMessage }, { quoted: m });
+        await conn.sendMessage(DEVELOPER, { text: developerMessage }, { quoted: m });
     } catch (error) {
         console.error("❌ فشل إرسال التقييم للمطور:", error);
     }
 
-    m.reply(feedbackMessage + `\n\n*رابط التواصل مع المطور:* wa.me/${developerContact.split('@')[0]}`);
+    await m.reply(feedbackMessage + `\n\n*رابط التواصل مع المطور:* wa.me/${DEVELOPER.split('@')[0]}`);
 };
 
-handler.customPrefix = /.تقيم/i; 
+// ══════════════════════════════════════════════════
+//  معالج الأزرار
+// ══════════════════════════════════════════════════
+handler.before = async function (m, { conn }) {
+    // ✅ التحقق من زر التقييم
+    const buttonId = getButtonId(m);
+    
+    if (buttonId && buttonId.startsWith('.قيم ')) {
+        const stars = parseInt(buttonId.replace('.قيم ', '').trim());
+        
+        if (isNaN(stars) || stars < 1 || stars > 5) {
+            return m.reply('❌ اختار تقييم من 1 لـ 5');
+        }
+
+        await m.react('⭐');
+        await sendFeedbackResponse(stars, m, conn);
+        return true;
+    }
+
+    // ✅ التحقق من النص العادي (لو المستخدم كتب .قيم 3)
+    if (m.text && m.text.startsWith('.قيم ')) {
+        const stars = parseInt(m.text.replace('.قيم ', '').trim());
+        
+        if (isNaN(stars) || stars < 1 || stars > 5) {
+            return m.reply('❌ اختار تقييم من 1 لـ 5');
+        }
+
+        await m.react('⭐');
+        await sendFeedbackResponse(stars, m, conn);
+        return true;
+    }
+
+    return false;
+};
+
+// ══════════════════════════════════════════════════
+//  إعدادات الأمر
+// ══════════════════════════════════════════════════
+handler.customPrefix = /^[.!#]?(تقييم|قيم)$/i;
 handler.command = new RegExp();
+handler.tags = ['tools'];
+handler.help = ['تقييم'];
 
 export default handler;
