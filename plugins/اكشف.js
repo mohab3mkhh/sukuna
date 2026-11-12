@@ -9,7 +9,7 @@ if (!global._msgCache)    global._msgCache    = {}
 const MAX = 50 // خلي الكاش أكبر عشان نقدر نفلتر
 
 const handler = async (m, { conn, usedPrefix, command, isROwner }) => {
-  if (!isROwner) return m.reply('❌ هذا الأمر للمالك فقط')
+  if (!isROwner) return conn.sendMessage(m.chat, { text:'❌ هذا الأمر للمالك فقط')
 
   const chatId = m.chat
 
