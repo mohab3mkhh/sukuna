@@ -21,7 +21,7 @@ const handler = async (m) => {
         answer = "لما تبعد عن النكد.";
     }
 
-    return m.reply(withCredit(`${decorateTitle("أنا والفرحة 🌸")}\n\n${answer}`));
+    return conn.sendMessage(m.chat, { text:withCredit(`${decorateTitle("أنا والفرحة 🌸")}\n\n${answer}`));
 };
 
 handler.help = ['أنا_والفرحة'];
