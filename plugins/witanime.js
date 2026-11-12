@@ -244,7 +244,7 @@ async function downloadEpisode(conn, m, episodeUrl) {
     const servers = await getServers(episodeUrl)
     if (!servers.length) return m.reply('❌ *لا توجد سيرفرات*')
 
-    await conn.sendMessage(m.chat, { text:`📺 *${servers.length} سيرفر*\n⏳ جاري التحميل...`)
+    await m.reply(`📺 *${servers.length} سيرفر*\n⏳ جاري التحميل...`)
 
     const errors = []
 
@@ -256,7 +256,7 @@ async function downloadEpisode(conn, m, episodeUrl) {
                 continue
             }
 
-            await conn.sendMessage(m.chat, { text:`📥 *جاري التحميل من ${server.name}...*`)
+            await m.reply(`📥 *جاري التحميل من ${server.name}...*`)
 
             const videoPath = await downloadVideo(m3u8)
 
@@ -302,12 +302,12 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
     }
 
     if (command === 'تحميل_انمي') {
-        if (!text || !text.startsWith('http')) return conn.sendMessage(m.chat, { text:`❌ *الاستخدام:*\n${usedPrefix}تحميل_انمي [رابط الحلقة]`)
+        if (!text || !text.startsWith('http')) return m.reply(`❌ *الاستخدام:*\n${usedPrefix}تحميل_انمي [رابط الحلقة]`)
         return downloadEpisode(conn, m, text)
     }
 
     if (command === 'سيرفرات_انمي') {
-        if (!text || !text.startsWith('http')) return conn.sendMessage(m.chat, { text:`❌ *الاستخدام:*\n${usedPrefix}سيرفرات_انمي [رابط الحلقة]`)
+        if (!text || !text.startsWith('http')) return m.reply(`❌ *الاستخدام:*\n${usedPrefix}سيرفرات_انمي [رابط الحلقة]`)
 
         await react('🎬')
 
@@ -326,7 +326,7 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
     }
 
     if (command === 'حلقات_انمي') {
-        if (!text || !text.startsWith('http')) return conn.sendMessage(m.chat, { text:`❌ *الاستخدام:*\n${usedPrefix}حلقات_انمي [رابط الانمي]`)
+        if (!text || !text.startsWith('http')) return m.reply(`❌ *الاستخدام:*\n${usedPrefix}حلقات_انمي [رابط الانمي]`)
 
         await react('📺')
 
@@ -383,7 +383,7 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
 
     if (!results.length) {
         await react('❌')
-        return conn.sendMessage(m.chat, { text:`❌ *لا توجد نتائج*\n\n🔍 *بحثت عن:* ${text || 'الرئيسية'}`)
+        return m.reply(`❌ *لا توجد نتائج*\n\n🔍 *بحثت عن:* ${text || 'الرئيسية'}`)
     }
 
     const rows = results.slice(0, 50).map((a, i) => ({
