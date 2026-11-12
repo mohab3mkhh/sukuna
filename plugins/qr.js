@@ -43,7 +43,7 @@ function waitForPhoto(client, timeout = 30000) {
 
 const handler = async (m, { conn }) => {
   const url = m.text.split(' ').slice(1).join(' ').trim();
-  if (!url) return m.reply('ابعت الرابط مع الأمر\nمثال: `.qr https://...`');
+  if (!url) return conn.sendMessage(m.chat, { text:'ابعت الرابط مع الأمر\nمثال: `.qr https://...`');
 
   try {
     const client = await getClient();
@@ -64,7 +64,7 @@ const handler = async (m, { conn }) => {
   } catch (e) {
     console.error('[QR]', e.message);
     await m.react('❌');
-    await m.reply(`❌ فشل\n⚠️ ${e.message}`);
+    await conn.sendMessage(m.chat, { text:`❌ فشل\n⚠️ ${e.message}`);
   }
 };
 
