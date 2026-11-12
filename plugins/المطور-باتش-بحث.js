@@ -26,7 +26,7 @@ const handler = async (m, { conn, isROwner, usedPrefix, command, text }) => {
   }
 
   if (foundFiles.length === 0) {
-    return m.reply(`✯≼══━━﹂⛩️﹁━━══≽✯\n\n*لم يتم العثور على الكلمة* *"${text}"* *في أي ملف من الملفات الموجودة.*\n\n✯≼══━━﹂⛩️﹁━━══≽✯`);
+    return conn.sendMessage(m.chat, { text:`✯≼══━━﹂⛩️﹁━━══≽✯\n\n*لم يتم العثور على الكلمة* *"${text}"* *في أي ملف من الملفات الموجودة.*\n\n✯≼══━━﹂⛩️﹁━━══≽✯`);
   }
 
   for (let file of foundFiles) {
