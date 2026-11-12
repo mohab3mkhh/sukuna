@@ -52,7 +52,7 @@ const maxAttempts = 5;
 if (global.conns instanceof Array) console.log()
 else global.conns = []
 let handler = async (m, { conn, args, usedPrefix, command, isOwner }) => {
-//if (!global.db.data.settings[conn.user.jid].jadibotmd) return m.reply(`${lenguajeGB['smsSoloOwnerJB']()}`)
+//if (!global.db.data.settings[conn.user.jid].jadibotmd) return conn.sendMessage(m.chat, { text:`${lenguajeGB['smsSoloOwnerJB']()}`)
 if (m.fromMe || conn.user.jid === m.sender) return
 //if (conn.user.jid !== global.conn.user.jid) return conn.reply(m.chat, `${lenguajeGB['smsJBPrincipal']()} wa.me/${global.conn.user.jid.split`@`[0]}&text=${usedPrefix + command}`, m) 
 let who = m.mentionedJid && m.mentionedJid[0] ? m.mentionedJid[0] : m.fromMe ? conn.user.jid : m.sender
@@ -160,7 +160,7 @@ if (qr && mcode) {
 let secret = await sock.requestPairingCode((m.sender.split`@`[0]))
 secret = secret.match(/.{1,4}/g)?.join("-")
 txtCode = await conn.sendMessage(m.chat, { image: { url: 'https://cdn.dorratz.com/files/1742816530181.jpg' || imageUrl.getRandom() }, caption: rtx2.trim() + '\n' + drmer.toString("utf-8") }, { quoted: m })
-codeBot = await m.reply(secret)
+codeBot = await conn.sendMessage(m.chat, { text:secret)
 console.log(secret)
 }
 if ((txtCode && txtCode.key) || (txtCode && txtCode.id)) {
