@@ -131,7 +131,7 @@ const formatSize = (bytes) => {
 
 const handler = async (m, { conn, text }) => {
   if (!text) {
-    return m.reply(
+    return conn.sendMessage(m.chat, { text:
       `╭─「 📦 تحميل APK 」
 │
 │  📌 اكتب اسم أي تطبيق أو لعبة
@@ -148,7 +148,7 @@ const handler = async (m, { conn, text }) => {
 
   // لو اختار package من القائمة
   if (/^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*){1,}$/i.test(text.trim())) {
-    await m.reply('⏬ جاري جلب معلومات التطبيق...')
+    await conn.sendMessage(m.chat, { text:'⏬ جاري جلب معلومات التطبيق...')
     try {
       const info = await getDownloadInfo(text.trim())
 
@@ -171,10 +171,10 @@ const handler = async (m, { conn, text }) => {
           caption
         }, { quoted: m })
       } else {
-        await m.reply(caption)
+        await conn.sendMessage(m.chat, { text:caption)
       }
 
-      await m.reply('📥 جاري إرسال ملف APK...')
+      await conn.sendMessage(m.chat, { text:'📥 جاري إرسال ملف APK...')
 
       await conn.sendMessage(m.chat, {
         document: { url: info.downloadUrl },
@@ -183,7 +183,7 @@ const handler = async (m, { conn, text }) => {
       }, { quoted: m })
 
       if (info.obb_link) {
-        await m.reply('📦 جاري إرسال ملف OBB...')
+        await conn.sendMessage(m.chat, { text:'📦 جاري إرسال ملف OBB...')
         const obbName = decodeURIComponent(info.obb_link.split('/').pop().split('?')[0])
         await conn.sendMessage(m.chat, {
           document: { url: info.obb_link },
@@ -197,16 +197,16 @@ const handler = async (m, { conn, text }) => {
     } catch (e) {
       console.error('[APK DL]', e.message)
       await m.react('❌')
-      await m.reply(`❌ فشل التحميل\n\n⚠️ ${e.message}`)
+      await conn.sendMessage(m.chat, { text:`❌ فشل التحميل\n\n⚠️ ${e.message}`)
     }
     return
   }
 
   // وضع البحث
-  await m.reply('🔍 جاري البحث...')
+  await conn.sendMessage(m.chat, { text:'🔍 جاري البحث...')
   try {
     const apps = await searchApps(text)
-    if (!apps.length) return m.reply('❌ لم يتم العثور على نتائج\n\nجرب كتابة اسم التطبيق بالإنجليزي')
+    if (!apps.length) return conn.sendMessage(m.chat, { text:'❌ لم يتم العثور على نتائج\n\nجرب كتابة اسم التطبيق بالإنجليزي')
 
     const rows = apps.map(app => ({
       title: app.name,
@@ -226,7 +226,7 @@ const handler = async (m, { conn, text }) => {
   } catch (e) {
     console.error('[APK Search]', e.message)
     await m.react('❌')
-    await m.reply(`❌ حدث خطأ\n\n⚠️ ${e.message}`)
+    await conn.sendMessage(m.chat, { text:`❌ حدث خطأ\n\n⚠️ ${e.message}`)
   }
 }
 
