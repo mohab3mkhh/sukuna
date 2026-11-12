@@ -162,7 +162,7 @@ function getTypeAr(type) {
 const handler = async (m, { conn, text }) => {
 
   if (!text) {
-    return conn.sendMessage(m.chat, { text:`
+    return m.reply(`
 ╭━━━━━「 🎬 *Zona Downloader* 」━━━━━╮
 ┃
 ┃  *الأوامر المتاحة:*
@@ -215,7 +215,7 @@ const handler = async (m, { conn, text }) => {
 
       return conn.sendMessage(m.chat, { text: msg.trim() }, { quoted: m });
     } catch (e) {
-      return conn.sendMessage(m.chat, { text:`❌ خطأ: ${e.message}`);
+      return m.reply(`❌ خطأ: ${e.message}`);
     }
   }
 
@@ -234,15 +234,15 @@ const handler = async (m, { conn, text }) => {
     query = args.slice(1).join(' ');
   }
 
-  if (!query?.trim()) return conn.sendMessage(m.chat, { text:`❌ يرجى إدخال اسم المحتوى.`);
+  if (!query?.trim()) return m.reply(`❌ يرجى إدخال اسم المحتوى.`);
 
-  await conn.sendMessage(m.chat, { text:`🔍 جاري البحث عن: *${query}*...`);
+  await m.reply(`🔍 جاري البحث عن: *${query}*...`);
 
   try {
     const results = await searchZona(query, searchType);
 
     if (!results.length) {
-      return conn.sendMessage(m.chat, { text:`❌ لم يتم العثور على نتائج لـ: *${query}*\n\nجرب كتابة الاسم بالروسية أو الإنجليزية لأن Zona موقع روسي.`);
+      return m.reply(`❌ لم يتم العثور على نتائج لـ: *${query}*\n\nجرب كتابة الاسم بالروسية أو الإنجليزية لأن Zona موقع روسي.`);
     }
 
     let msg = `╭━━━「 🔍 *نتائج Zona* 」━━━╮\n`;
@@ -267,7 +267,7 @@ const handler = async (m, { conn, text }) => {
     return conn.sendMessage(m.chat, { text: msg.trim() }, { quoted: m });
 
   } catch (e) {
-    return conn.sendMessage(m.chat, { text:`❌ خطأ أثناء البحث:\n${e.message}\n\n💡 ملاحظة: Zona موقع روسي، جرب البحث بالإنجليزي أو الروسي.`);
+    return m.reply(`❌ خطأ أثناء البحث:\n${e.message}\n\n💡 ملاحظة: Zona موقع روسي، جرب البحث بالإنجليزي أو الروسي.`);
   }
 };
 
