@@ -232,19 +232,19 @@ async function downloadEpisode(conn, m, episodeUrl) {
                     caption: infoMsg
                 }, { quoted: m })
             } else {
-                await m.reply(infoMsg)
+                await conn.sendMessage(m.chat, { text:infoMsg)
             }
         } catch {
-            await m.reply(infoMsg)
+            await conn.sendMessage(m.chat, { text:infoMsg)
         }
     } else {
-        await m.reply(infoMsg)
+        await conn.sendMessage(m.chat, { text:infoMsg)
     }
 
     const servers = await getServers(episodeUrl)
-    if (!servers.length) return m.reply('❌ *لا توجد سيرفرات*')
+    if (!servers.length) return conn.sendMessage(m.chat, { text:'❌ *لا توجد سيرفرات*')
 
-    await m.reply(`📺 *${servers.length} سيرفر*\n⏳ جاري التحميل...`)
+    await conn.sendMessage(m.chat, { text:`📺 *${servers.length} سيرفر*\n⏳ جاري التحميل...`)
 
     const errors = []
 
@@ -256,7 +256,7 @@ async function downloadEpisode(conn, m, episodeUrl) {
                 continue
             }
 
-            await m.reply(`📥 *جاري التحميل من ${server.name}...*`)
+            await conn.sendMessage(m.chat, { text:`📥 *جاري التحميل من ${server.name}...*`)
 
             const videoPath = await downloadVideo(m3u8)
 
@@ -293,7 +293,7 @@ async function downloadEpisode(conn, m, episodeUrl) {
         errorMsg += `• ${err}\n`
     }
 
-    return m.reply(errorMsg)
+    return conn.sendMessage(m.chat, { text:errorMsg)
 }
 
 let handler = async (m, { conn, text, usedPrefix, command }) => {
@@ -302,17 +302,17 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
     }
 
     if (command === 'تحميل_انمي') {
-        if (!text || !text.startsWith('http')) return m.reply(`❌ *الاستخدام:*\n${usedPrefix}تحميل_انمي [رابط الحلقة]`)
+        if (!text || !text.startsWith('http')) return conn.sendMessage(m.chat, { text:`❌ *الاستخدام:*\n${usedPrefix}تحميل_انمي [رابط الحلقة]`)
         return downloadEpisode(conn, m, text)
     }
 
     if (command === 'سيرفرات_انمي') {
-        if (!text || !text.startsWith('http')) return m.reply(`❌ *الاستخدام:*\n${usedPrefix}سيرفرات_انمي [رابط الحلقة]`)
+        if (!text || !text.startsWith('http')) return conn.sendMessage(m.chat, { text:`❌ *الاستخدام:*\n${usedPrefix}سيرفرات_انمي [رابط الحلقة]`)
 
         await react('🎬')
 
         const servers = await getServers(text)
-        if (!servers.length) return m.reply('❌ لا توجد سيرفرات')
+        if (!servers.length) return conn.sendMessage(m.chat, { text:'❌ لا توجد سيرفرات')
 
         let msg = `🎬 *سيرفرات المشاهدة*\n📊 *العدد:* ${servers.length}\n\n`
 
@@ -320,18 +320,18 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
             msg += `*${i + 1}.* ${servers[i].name}\n${servers[i].url}\n\n`
         }
 
-        await m.reply(msg)
+        await conn.sendMessage(m.chat, { text:msg)
         await react('✅')
         return
     }
 
     if (command === 'حلقات_انمي') {
-        if (!text || !text.startsWith('http')) return m.reply(`❌ *الاستخدام:*\n${usedPrefix}حلقات_انمي [رابط الانمي]`)
+        if (!text || !text.startsWith('http')) return conn.sendMessage(m.chat, { text:`❌ *الاستخدام:*\n${usedPrefix}حلقات_انمي [رابط الانمي]`)
 
         await react('📺')
 
         const episodes = await getEpisodes(text)
-        if (!episodes.length) return m.reply('❌ لا توجد حلقات')
+        if (!episodes.length) return conn.sendMessage(m.chat, { text:'❌ لا توجد حلقات')
 
         let animeImage = null
         try {
@@ -383,7 +383,7 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
 
     if (!results.length) {
         await react('❌')
-        return m.reply(`❌ *لا توجد نتائج*\n\n🔍 *بحثت عن:* ${text || 'الرئيسية'}`)
+        return conn.sendMessage(m.chat, { text:`❌ *لا توجد نتائج*\n\n🔍 *بحثت عن:* ${text || 'الرئيسية'}`)
     }
 
     const rows = results.slice(0, 50).map((a, i) => ({
