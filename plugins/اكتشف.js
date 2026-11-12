@@ -35,7 +35,7 @@ const handler = async (m) => {
 `.trim();
 
     fs.unlinkSync(`./tmp/${m.sender}.${ext}`);
-    conn.sendMessage(m.chat, { text:txt);
+    m.reply(txt);
   } else {
     throw '*\`『 اعمل ريب ع اغنيه في فيديو قصير او ملف صوتي وهجبلك التفصيل وهنزلك الصوت🧚🏻‍♂️ 』\`*';
   }
