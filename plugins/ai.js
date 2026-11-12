@@ -225,7 +225,7 @@ const handler = async (m, { conn, args, text }) => {
       return m.reply('❌ لم أتمكن من الحصول على رد. حاول مرة أخرى لاحقاً.');
     }
 
-    await conn.sendMessage(m.chat, { text:result);
+    await m.reply(result);
     await m.react('✅');
 
   } catch (error) {
@@ -241,7 +241,7 @@ const handler = async (m, { conn, args, text }) => {
       errorMsg += 'حدث خطأ. حاول مرة أخرى.';
     }
     
-    return conn.sendMessage(m.chat, { text:errorMsg);
+    return m.reply(errorMsg);
   }
 };
 
