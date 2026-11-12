@@ -58,7 +58,7 @@ const handler = async (m, { conn }) => {
 
   try {
     await m.react('⏳');
-    await conn.sendMessage(m.chat, { text:'⏳ *جاري معالجة الأغنية...*\nسيتم إرسال صوت المغني فقط والأغنية بدون موسيقى');
+    await m.reply('⏳ *جاري معالجة الأغنية...*\nسيتم إرسال صوت المغني فقط والأغنية بدون موسيقى');
 
     const client = await getClient();
     
@@ -92,7 +92,7 @@ const handler = async (m, { conn }) => {
 
     if (results.length === 0) {
       await m.react('❌');
-      return conn.sendMessage(m.chat, { text:'❌ فشل في الحصول على الرد من البوت');
+      return m.reply('❌ فشل في الحصول على الرد من البوت');
     }
 
     // إرسال النتائج
@@ -109,7 +109,7 @@ const handler = async (m, { conn }) => {
     }
 
     await m.react('✅');
-    await conn.sendMessage(m.chat, { text:'✅ *تمت المعالجة بنجاح!*\nتم إرسال صوت المغني والأغنية بدون موسيقى');
+    await m.reply('✅ *تمت المعالجة بنجاح!*\nتم إرسال صوت المغني والأغنية بدون موسيقى');
 
   } catch (error) {
     console.error('[ازاله-الموسيقي]', error.message);
