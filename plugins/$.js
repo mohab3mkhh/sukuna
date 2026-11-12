@@ -4,7 +4,7 @@ const exec = promisify(_exec).bind(cp);
 const handler = async (m, {conn, isOwner, command, text, usedPrefix, args, isROwner}) => {
   if (!isROwner) return;
   if (global.conn.user.jid != conn.user.jid) return;
-  conn.sendMessage(m.chat, { text:'*[❗] جاري التنفيذ...*');
+  m.reply('*[❗] جاري التنفيذ...*');
   let o;
   try {
     o = await exec(command.trimStart() + ' ' + text.trimEnd());
