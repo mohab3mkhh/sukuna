@@ -1,8 +1,26 @@
-// plugins/jemini.js
-// ♡ Raiden Shogun - Plane of Euthymia - Gemini AI 🤖
+// plugins/جيميني.js
+// ⛩️ SUKUNA BOT - Gemini AI 🤖
 
 import axios from "axios";
-import { theme } from '../core/theme.js';
+
+// ━━━ بديل بسيط لـ theme.build (مفيش اعتماد على core/theme.js) ━━━
+const theme = {
+  build(cards) {
+    return cards.map(c => {
+      switch (c.type) {
+        case 'title': return `*${c.text}*`;
+        case 'divider': return '━━━━━━━━━━━━━━━━';
+        case 'spacer': return '';
+        case 'info': return `${c.label} ↬ ${c.value}`;
+        case 'tip': return `_${c.text}_`;
+        case 'error': return `⚠️ ${c.text}`;
+        default: return c.text || '';
+      }
+    }).join('\n');
+  }
+};
+
+const SIGN = '\n\n⛩️ *SUKUNA BOT* ⛩️';
 
 async function gemini(input = {}) {
   const payload = typeof input === "string" ? { message: input } : input || {};
@@ -108,13 +126,14 @@ async function gemini(input = {}) {
     const { data } = await axios.post(
       "https://gemini.google.com/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate?bl=boq_assistant-bard-web-server_20250729.06_p0&f.sid=4206607810970164620&hl=en-US&_reqid=2813378&rt=c",
       new URLSearchParams({ "f.req": JSON.stringify(payloadData) }).toString(),
-      { 
+      {
         headers: {
           "content-type": "application/x-www-form-urlencoded;charset=UTF-8",
           "x-goog-ext-525001261-jspb":
             '[1,null,null,null,"9ec249fc9ad08861",null,null,null,[4]]',
           cookie: cookie,
         },
+        timeout: 60000,
       },
     );
 
@@ -173,10 +192,10 @@ async function gemini(input = {}) {
   }
 }
 
-async function splitAndSend(conn, chat, text, quoted) {
+async function splitAndSend(conn, chat, text) {
   const MAX_LENGTH = 4000;
   if (text.length <= MAX_LENGTH) {
-    return conn.sendMessage(chat, { text }, { quoted });
+    return conn.sendMessage(chat, { text });
   }
 
   const parts = [];
@@ -184,7 +203,7 @@ async function splitAndSend(conn, chat, text, quoted) {
   while (remaining.length > 0) {
     let chunk = remaining.slice(0, MAX_LENGTH);
     const lastNewline = chunk.lastIndexOf('\n');
-    if (lastNewline > MAX_LENGTH / 2) {
+    if (lastNewline > MAX_LENGTH / 2 && remaining.length > MAX_LENGTH) {
       chunk = chunk.slice(0, lastNewline);
     }
     parts.push(chunk);
@@ -192,8 +211,8 @@ async function splitAndSend(conn, chat, text, quoted) {
   }
 
   for (let i = 0; i < parts.length; i++) {
-    const header = parts.length > 1 ? `📄 *جزء ${i + 1}/${parts.length}*\n\n` : '';
-    await conn.sendMessage(chat, { text: header + parts[i] }, { quoted: i === 0 ? quoted : null });
+    const header = `📄 *جزء ${i + 1}/${parts.length}*\n\n`;
+    await conn.sendMessage(chat, { text: header + parts[i] });
   }
 }
 
@@ -202,48 +221,46 @@ async function splitAndSend(conn, chat, text, quoted) {
 // ═══════════════════════════════════════════════════════════════
 
 let handler = async (m, { conn, text, usedPrefix, command }) => {
+  const send = t => conn.sendMessage(m.chat, { text: t });
   const prompt = text?.trim();
 
   if (!prompt) {
-    return conn.sendMessage(m.chat, {
-      text: theme.build([
-        { type: 'title', text: '🤖 Gemini AI' },
-        { type: 'divider' },
-        { type: 'line', text: '💬 نموذج Gemini من Google' },
-        { type: 'spacer' },
-        { type: 'info', label: '📌 الاستخدام', value: `${usedPrefix + command} <سؤال>` },
-        { type: 'info', label: '📋 مثال', value: `${usedPrefix + command} ما هو التعلم العميق؟` },
-        { type: 'divider' },
-        { type: 'tip', text: '💡 يدعم المحادثات المتواصلة تلقائياً' }
-      ])
-    }, { quoted: m });
+    return send(theme.build([
+      { type: 'title', text: '🤖 Gemini AI' },
+      { type: 'divider' },
+      { type: 'line', text: '💬 نموذج Gemini من Google' },
+      { type: 'spacer' },
+      { type: 'info', label: '📌 الاستخدام', value: `${usedPrefix + command} <سؤال>` },
+      { type: 'info', label: '📋 مثال', value: `${usedPrefix + command} ما هو التعلم العميق؟` },
+      { type: 'divider' },
+      { type: 'tip', text: '💡 اكتب سؤالك بعد الأمر' }
+    ]) + SIGN);
   }
 
-  await conn.sendMessage(m.chat, { react: { text: '⏳', key: m.key } });
+  try { await conn.sendMessage(m.chat, { react: { text: '⏳', key: m.key } }); } catch {}
 
   try {
     const result = await gemini({ message: prompt });
-
     const replyText = result.text?.trim();
 
     if (!replyText) {
-      await conn.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
-      return m.reply(theme.build([
+      try { await conn.sendMessage(m.chat, { react: { text: '❌', key: m.key } }); } catch {}
+      return send(theme.build([
         { type: 'title', text: '⚠️ رد فارغ' },
         { type: 'line', text: 'لم يتم استلام رد من Gemini' }
-      ]));
+      ]) + SIGN);
     }
 
-    await conn.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
-    await splitAndSend(conn, m.chat, replyText, m);
+    try { await conn.sendMessage(m.chat, { react: { text: '✅', key: m.key } }); } catch {}
+    await splitAndSend(conn, m.chat, replyText);
 
   } catch (e) {
     console.error('[Gemini] Error:', e);
-    await conn.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
-    return m.reply(theme.build([
+    try { await conn.sendMessage(m.chat, { react: { text: '❌', key: m.key } }); } catch {}
+    return send(theme.build([
       { type: 'title', text: '❌ خطأ' },
       { type: 'error', text: e.message?.slice(0, 200) || 'حدث خطأ غير معروف' }
-    ]));
+    ]) + SIGN);
   }
 };
 
