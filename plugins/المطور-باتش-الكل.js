@@ -20,7 +20,7 @@ let listFiles = async () => {
 };
 
 let handler = async (m, { isROwner }) => {
-    await m.reply(global.wait);
+    await conn.sendMessage(m.chat, { text:global.wait);
     if (!isROwner) return;
 
     try {
@@ -30,10 +30,10 @@ let handler = async (m, { isROwner }) => {
         let fileListMessage = `قائمة الملفات في الدليل:\n\n`;
         fileListMessage += files.join('\n');
 
-        m.reply(fileListMessage);
+        conn.sendMessage(m.chat, { text:fileListMessage);
     } catch (e) {
         console.error(`حدث خطأ أثناء عرض قائمة الملفات: ${e.message}`);
-        m.reply(`حدث خطأ أثناء عرض قائمة الملفات: ${e.message}`);
+        conn.sendMessage(m.chat, { text:`حدث خطأ أثناء عرض قائمة الملفات: ${e.message}`);
     }
 };
 
