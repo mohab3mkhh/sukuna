@@ -1,12 +1,11 @@
 /**
  * plugins/ايفوتبول.js
- * لعبة خمن مهارة اللاعب من الصورة - كل شخص له لعبة مستقلة
+ * لعبة خمن مهارة اللاعب من الصورة
  */
 
-import * as pkg from '@whiskeysockets/baileys';
-const { generateWAMessageFromContent, prepareWAMessageMedia } = pkg;
+// ✅ استخدام ملف الأزرار
+import { sendButtons, btn, getButtonId } from '../lib/buttons.js';
 
-// ✅ قائمة المهارات مع صور اللاعبين (تم التحديث)
 const SKILLS = [
   { name: '𝑨𝑪𝑪𝑬𝑳𝑹𝑨𝑻𝑰𝑶𝑵 𝑩𝑼𝑹𝑺𝑻', img: 'https://files.catbox.moe/n6wvjf.png', player: 'لاعب 1' },
   { name: '𝑩𝑳𝑰𝑻𝒁 𝑪𝑼𝑹𝑳𝑬𝑹', img: 'https://files.catbox.moe/cvex35.png', player: 'لاعب 2' },
@@ -30,8 +29,7 @@ const SKILLS = [
   { name: '𝑩𝑳𝑰𝑻𝒁 𝑪𝑼𝑹𝑳𝑬𝑹', img: 'https://files.catbox.moe/k8g54y.png', player: 'لاعب 20' },
   { name: '𝑳𝑶𝑾 𝑺𝑪𝑹𝑬𝑨𝑴𝑬𝑹', img: 'https://files.catbox.moe/kt5cbp.png', player: 'لاعب 21' },
   { name: '𝑾𝑰𝑳𝑳𝑷𝑶𝑾𝑬𝑹', img: 'https://files.catbox.moe/vf1j8p.png', player: 'لاعب 22' },
-  { name: '𝑷𝑯𝑬𝑵𝑶𝑴𝑬𝑵𝑨𝑳 𝑭𝑰𝑵𝑰𝑺𝑯𝑰𝑵𝑮', img: 'https://files.catbox.moe/v9exlk.png', player: 'لاعب 23' },
-  // ✅ إضافات جديدة
+  { name: '𝑷𝑯𝑬𝑵𝑶𝑴𝑬𝑵𝑶𝑵𝑨𝑳 𝑭𝑰𝑵𝑰𝑺𝑯𝑰𝑵𝑮', img: 'https://files.catbox.moe/v9exlk.png', player: 'لاعب 23' },
   { name: '𝑬𝑫𝑮𝑬𝑫 𝑪𝑹𝑶𝑺𝑺𝑰𝑵𝑮', img: 'https://files.catbox.moe/fklktn.png', player: 'لاعب 24' },
   { name: '𝑨𝑻𝑻𝑨𝑪𝑲𝑰𝑵𝑮 𝑺𝑼𝑹𝑮𝑬', img: 'https://files.catbox.moe/cd2ecg.png', player: 'لاعب 25' },
   { name: '𝑬𝑫𝑮𝑬𝑫 𝑪𝑹𝑶𝑺𝑺𝑰𝑵𝑮', img: 'https://files.catbox.moe/k16z0v.png', player: 'لاعب 26' },
@@ -55,7 +53,6 @@ function getChoices(correct, all) {
   return shuffle(choices);
 }
 
-// ✅ تخزين الألعاب النشطة لكل مستخدم
 if (!global._skillGames) global._skillGames = {};
 
 const handler = async (m, { conn }) => {
@@ -72,48 +69,37 @@ const handler = async (m, { conn }) => {
 
   try {
     const imgRes = await fetch(correct.img, {
-      headers: { 
+      headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8'
       }
     });
-    
+
     if (!imgRes.ok) throw new Error(`HTTP ${imgRes.status}`);
     const imgBuffer = Buffer.from(await imgRes.arrayBuffer());
 
-    const imageMessage = await prepareWAMessageMedia(
-      { image: imgBuffer },
-      { upload: conn.waUploadToServer }
+    // ✅ بناء الأزرار باستخدام btn.reply
+    const buttons = choices.map((s, i) =>
+      btn.reply(`${['1️⃣','2️⃣','3️⃣','4️⃣'][i]} ${s.name}`, `مهارة_اجابة_${s.name}`)
     );
 
-    const buttons = choices.map((s, i) => ({
-      name: 'quick_reply',
-      buttonParamsJson: JSON.stringify({
-        display_text: `${['1️⃣','2️⃣','3️⃣','4️⃣'][i]} ${s.name}`,
-        id: `مهارة_اجابة_${s.name}`
-      })
-    }));
+    // ✅ إرسال باستخدام sendButtons
+    const sentMsg = await sendButtons(conn, chatId, {
+      title: '⚡ خمن المهارة',
+      subtitle: `@${userId.split('@')[0]}`,
+      text: `⚡ *@${userId.split('@')[0]} خمن مهارة اللاعب!*\n\n🕒 عندك 60 ثانية\n💰 الجائزة: 5000 XP\n📌 اختار المهارة الصحيحة للاعب في الصورة`,
+      footer: '⚽ خمن مهارة اللاعب',
+      image: imgBuffer,
+      buttons,
+      mentions: [userId]
+    }, m);
 
-    const msg = generateWAMessageFromContent(chatId, {
-      viewOnceMessage: {
-        message: {
-          interactiveMessage: {
-            header: { hasMediaAttachment: true, ...imageMessage },
-            body: { text: `⚡ *@${userId.split('@')[0]} خمن مهارة اللاعب!*\n\n🕒 عندك 60 ثانية\n💰 الجائزة: 5000 XP\n📌 اختار المهارة الصحيحة للاعب في الصورة` },
-            footer: { text: '⚽ خمن مهارة اللاعب' },
-            nativeFlowMessage: { buttons }
-          }
-        }
-      }
-    }, { userJid: conn.user.id });
-
-    await conn.relayMessage(chatId, msg.message, { messageId: msg.key.id });
-
+    // ✅ حفظ اللعبة
     global._skillGames[gameKey] = {
       answer: correct.name,
       choices: choices.map(c => c.name),
       starter: userId,
-      messageId: msg.key.id,
+      messageId: sentMsg.key.id,
       chatId: chatId,
       player: correct.player,
       timeout: setTimeout(() => {
@@ -126,7 +112,7 @@ const handler = async (m, { conn }) => {
         }
       }, 60000)
     };
-    
+
   } catch (error) {
     console.error('[خطأ في التحميل]', error.message);
     await m.reply(`❌ فشل تحميل الصورة. حاول مرة أخرى.`);
@@ -136,10 +122,10 @@ const handler = async (m, { conn }) => {
 handler.before = async function (m) {
   const chatId = m.chat;
   const userId = m.sender;
-  
+
   let activeGameKey = null;
   let activeGame = null;
-  
+
   for (const key in global._skillGames) {
     const game = global._skillGames[key];
     if (game.starter === userId && game.chatId === chatId) {
@@ -148,30 +134,33 @@ handler.before = async function (m) {
       break;
     }
   }
-  
+
   if (!activeGame) return false;
-  
+
+  // ✅ استخدام getButtonId
+  const buttonId = getButtonId(m);
+  const isButtonPress = buttonId && buttonId.includes('مهارة_اجابة_');
+
   const isReplyingToGame = m.quoted && m.quoted.key && m.quoted.key.id === activeGame.messageId;
-  const isButtonPress = m.text && m.text.includes('مهارة_اجابة_');
-  const isNumberReply = isReplyingToGame && /^[1-4]$/.test(m.text?.trim());
-  
+  const isNumberReply = isReplyingToGame && /^[1-4]$/.test((m.text || '').trim());
+
   if (!isButtonPress && !isNumberReply) return false;
-  
+
   let userAnswer = null;
-  
+
   if (isButtonPress) {
-    userAnswer = m.text.replace('مهارة_اجابة_', '').toLowerCase().trim();
+    userAnswer = buttonId.replace('مهارة_اجابة_', '').toLowerCase().trim();
   } else if (isNumberReply) {
     const choiceNum = parseInt(m.text.trim());
     if (activeGame.choices && activeGame.choices[choiceNum - 1]) {
       userAnswer = activeGame.choices[choiceNum - 1].toLowerCase();
     }
   }
-  
+
   if (!userAnswer) return false;
-  
+
   const isCorrect = userAnswer === activeGame.answer.toLowerCase();
-  
+
   if (!isCorrect) {
     await this.sendMessage(chatId, {
       text: `❌ *إجابة غلط يا @${userId.split('@')[0]}!*\n\n✅ المهارة الصحيحة: *${activeGame.answer}*\n👤 اللاعب: ${activeGame.player}\n\n💡 حاول تاني المرة الجاية`,
@@ -200,8 +189,8 @@ handler.before = async function (m) {
   return false;
 };
 
-handler.help    = ['ايفوتبول'];
-handler.tags    = ['games'];
+handler.help = ['ايفوتبول'];
+handler.tags = ['games'];
 handler.command = /^(ايفوتبول|evofootball|efootball)$/i;
 
 export default handler;
