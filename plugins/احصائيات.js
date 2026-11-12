@@ -23,7 +23,7 @@ const parseRange = (text) => {
 };
 
 let handler = async (m, { conn, text, isAdmin, isOwner }) => {
-  if (!isAdmin && !isOwner) return conn.sendMessage(m.chat, { text:'❌ هذا الأمر للأدمنز فقط!');
+  if (!isAdmin && !isOwner) return m.reply('❌ هذا الأمر للأدمنز فقط!');
 
   const id = m.chat;
   const stats = global.groupStats[id] || {};
