@@ -112,7 +112,7 @@ const handler = async (m) => {
     return await conn.sendMessage(m.chat, { text:withCredit(response));
   } catch (err) {
     console.error('خطأ في أمر الأحكام:', err);
-    return conn.sendMessage(m.chat, { text:'❌ حصل خطأ غير متوقع، حاول تاني.');
+    return m.reply('❌ حصل خطأ غير متوقع، حاول تاني.');
   }
 };
 
