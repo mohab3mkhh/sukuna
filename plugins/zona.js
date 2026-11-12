@@ -162,7 +162,7 @@ function getTypeAr(type) {
 const handler = async (m, { conn, text }) => {
 
   if (!text) {
-    return m.reply(`
+    return conn.sendMessage(m.chat, { text:`
 ╭━━━━━「 🎬 *Zona Downloader* 」━━━━━╮
 ┃
 ┃  *الأوامر المتاحة:*
@@ -192,9 +192,9 @@ const handler = async (m, { conn, text }) => {
   // ===== جلب روابط من صفحة مباشرة =====
   if (sub === 'رابط' || sub === 'link') {
     const url = args[1];
-    if (!url || !url.startsWith('http')) return m.reply('❌ يرجى إدخال رابط صحيح.\nمثال: `.zona رابط https://w140.zona.plus/movies/inception`');
+    if (!url || !url.startsWith('http')) return conn.sendMessage(m.chat, { text:'❌ يرجى إدخال رابط صحيح.\nمثال: `.zona رابط https://w140.zona.plus/movies/inception`');
 
-    await m.reply('⏳ جاري جلب روابط التحميل...');
+    await conn.sendMessage(m.chat, { text:'⏳ جاري جلب روابط التحميل...');
     try {
       const content = await getZonaContent(url);
       
@@ -215,7 +215,7 @@ const handler = async (m, { conn, text }) => {
 
       return conn.sendMessage(m.chat, { text: msg.trim() }, { quoted: m });
     } catch (e) {
-      return m.reply(`❌ خطأ: ${e.message}`);
+      return conn.sendMessage(m.chat, { text:`❌ خطأ: ${e.message}`);
     }
   }
 
@@ -234,15 +234,15 @@ const handler = async (m, { conn, text }) => {
     query = args.slice(1).join(' ');
   }
 
-  if (!query?.trim()) return m.reply(`❌ يرجى إدخال اسم المحتوى.`);
+  if (!query?.trim()) return conn.sendMessage(m.chat, { text:`❌ يرجى إدخال اسم المحتوى.`);
 
-  await m.reply(`🔍 جاري البحث عن: *${query}*...`);
+  await conn.sendMessage(m.chat, { text:`🔍 جاري البحث عن: *${query}*...`);
 
   try {
     const results = await searchZona(query, searchType);
 
     if (!results.length) {
-      return m.reply(`❌ لم يتم العثور على نتائج لـ: *${query}*\n\nجرب كتابة الاسم بالروسية أو الإنجليزية لأن Zona موقع روسي.`);
+      return conn.sendMessage(m.chat, { text:`❌ لم يتم العثور على نتائج لـ: *${query}*\n\nجرب كتابة الاسم بالروسية أو الإنجليزية لأن Zona موقع روسي.`);
     }
 
     let msg = `╭━━━「 🔍 *نتائج Zona* 」━━━╮\n`;
@@ -267,7 +267,7 @@ const handler = async (m, { conn, text }) => {
     return conn.sendMessage(m.chat, { text: msg.trim() }, { quoted: m });
 
   } catch (e) {
-    return m.reply(`❌ خطأ أثناء البحث:\n${e.message}\n\n💡 ملاحظة: Zona موقع روسي، جرب البحث بالإنجليزي أو الروسي.`);
+    return conn.sendMessage(m.chat, { text:`❌ خطأ أثناء البحث:\n${e.message}\n\n💡 ملاحظة: Zona موقع روسي، جرب البحث بالإنجليزي أو الروسي.`);
   }
 };
 
