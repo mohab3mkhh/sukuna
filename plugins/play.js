@@ -29,7 +29,7 @@ const tr = async (text) => {
 // معالج الأوامر
 const handler = async (m, { conn, command, args, text, usedPrefix }) => {
   if (!text) {
-    return m.reply(`*🤔 ${await tr("Que está buscando?")} 🤔*\n*${await tr("Ingrese el nombre de la canción")}*\n\n*${await tr("Ejemplo:")}*\n${usedPrefix + command} emilia 420`);
+    return conn.sendMessage(m.chat, { text:`*🤔 ${await tr("Que está buscando?")} 🤔*\n*${await tr("Ingrese el nombre de la canción")}*\n\n*${await tr("Ejemplo:")}*\n${usedPrefix + command} emilia 420`);
   }
 
   const tipoDescarga = command === 'play' || command === 'musica' ? 'صوت' : command === 'play2' ? 'فيديو' : '';
