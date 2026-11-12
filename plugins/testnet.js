@@ -32,7 +32,7 @@ let handler = async (m, { conn }) => {
   }
 
   await m.react('✅')
-  conn.sendMessage(m.chat, { text:`╭─「 🌐 فحص الشبكة 」\n│\n${results.map(r => `│  ${r}`).join('\n')}\n│\n╰──────────────`)
+  m.reply(`╭─「 🌐 فحص الشبكة 」\n│\n${results.map(r => `│  ${r}`).join('\n')}\n│\n╰──────────────`)
 }
 
 handler.help = ['testnet']
