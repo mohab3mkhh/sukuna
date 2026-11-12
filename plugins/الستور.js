@@ -7,7 +7,7 @@ let handler = async (m, { conn, text }) => {
 
   try {
     let result = await CleanDx(text);
-    await conn.sendMessage(m.chat, { text:`*╮━━━━━━━🎩━━━━━━━🔪*\n『 💀 』${result}\n*╯━━━━━━━🎩━━━━━━━🔪*`);
+    await m.reply(`*╮━━━━━━━🎩━━━━━━━🔪*\n『 💀 』${result}\n*╯━━━━━━━🎩━━━━━━━🔪*`);
   } catch (e) {
     await m.reply("『 💀 』هل تظن أنني أهتم؟ حتى الـ AI لا يتوانى عن تجاهلك.");
   }
