@@ -85,7 +85,7 @@ const lastJudgmentByChat = new Map();
 const handler = async (m) => {
   try {
     if (!Array.isArray(allJudgments) || allJudgments.length === 0) {
-      return m.reply(withCredit('⚠️ بنك الأحكام فاضي حالياً، حاول تاني بعدين.'));
+      return conn.sendMessage(m.chat, { text:withCredit('⚠️ بنك الأحكام فاضي حالياً، حاول تاني بعدين.'));
     }
 
     const chatId = m.chat;
@@ -109,10 +109,10 @@ const handler = async (m) => {
       `🔥 ${randomJudgment}\n\n` +
       `نفذ بسرعة وبدون تهرب! ⚔️`;
 
-    return await m.reply(withCredit(response));
+    return await conn.sendMessage(m.chat, { text:withCredit(response));
   } catch (err) {
     console.error('خطأ في أمر الأحكام:', err);
-    return m.reply('❌ حصل خطأ غير متوقع، حاول تاني.');
+    return conn.sendMessage(m.chat, { text:'❌ حصل خطأ غير متوقع، حاول تاني.');
   }
 };
 
