@@ -192,9 +192,9 @@ const handler = async (m, { conn, text }) => {
   // ===== جلب روابط من صفحة مباشرة =====
   if (sub === 'رابط' || sub === 'link') {
     const url = args[1];
-    if (!url || !url.startsWith('http')) return conn.sendMessage(m.chat, { text:'❌ يرجى إدخال رابط صحيح.\nمثال: `.zona رابط https://w140.zona.plus/movies/inception`');
+    if (!url || !url.startsWith('http')) return m.reply('❌ يرجى إدخال رابط صحيح.\nمثال: `.zona رابط https://w140.zona.plus/movies/inception`');
 
-    await conn.sendMessage(m.chat, { text:'⏳ جاري جلب روابط التحميل...');
+    await m.reply('⏳ جاري جلب روابط التحميل...');
     try {
       const content = await getZonaContent(url);
       
