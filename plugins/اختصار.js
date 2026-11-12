@@ -10,7 +10,7 @@ let handler = async (m, { conn, args, text }) => {
 
     let done = `*اختصار اللنكات*\n\n*اللينك الاصلي:*\n${text}\n*اللنك المختصر:*\n${shortUrl}`.trim()
 
-    conn.sendMessage(m.chat, { text:done)
+    m.reply(done)
   } catch (e) {
     console.error('[اختصار]', e.message)
     m.reply('*خطأ: ' + e.message + '*')
