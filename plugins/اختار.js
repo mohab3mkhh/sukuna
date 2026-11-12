@@ -38,14 +38,14 @@ let handler = async (m, { conn }) => {
   const match = m.text.trim().match(/^[.!#]اختار\s+(\d+)$/u);
   if (!match) return;
 
-  if (!m.quoted) return m.reply('❌ لازم ترد على الـ poll.');
+  if (!m.quoted) return conn.sendMessage(m.chat, { text:'❌ لازم ترد على الـ poll.');
 
   const pollData = global.pollStore.get(m.quoted.id);
-  if (!pollData) return m.reply('❌ الـ poll ده مش معروف!\nلازم يكون poll بعته البوت بأمر `.تصويت`');
+  if (!pollData) return conn.sendMessage(m.chat, { text:'❌ الـ poll ده مش معروف!\nلازم يكون poll بعته البوت بأمر `.تصويت`');
 
   const optionNumber = parseInt(match[1], 10);
   const selected = pollData.options[optionNumber - 1];
-  if (!selected) return m.reply(`❌ في ${pollData.options.length} اختيارات بس.`);
+  if (!selected) return conn.sendMessage(m.chat, { text:`❌ في ${pollData.options.length} اختيارات بس.`);
 
   const botJid = conn.user?.jid || conn.user?.id;
 
@@ -81,10 +81,10 @@ let handler = async (m, { conn }) => {
       messageId: generateMessageIDV2(),
     });
 
-    return m.reply(`✅ اخترت: ${selected}`);
+    return conn.sendMessage(m.chat, { text:`✅ اخترت: ${selected}`);
   } catch (err) {
     console.log('اختار error:', err);
-    return m.reply('❌ حصل خطأ: ' + err.message);
+    return conn.sendMessage(m.chat, { text:'❌ حصل خطأ: ' + err.message);
   }
 };
 
