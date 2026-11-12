@@ -6,7 +6,7 @@ import fetch from "node-fetch";
 let handler = async (m, { conn, text, usedPrefix, command }) => {
   // تحقق من وجود النص
   if (!text) {
-    return conn.sendMessage(m.chat, { text:`🎬 *الاستخدام:* ${usedPrefix + command} <وصف الفيديو>\n📌 *مثال:*\n${usedPrefix + command} قطة تجري بسرعة`);
+    return m.reply(`🎬 *الاستخدام:* ${usedPrefix + command} <وصف الفيديو>\n📌 *مثال:*\n${usedPrefix + command} قطة تجري بسرعة`);
   }
 
   // رسالة انتظار
@@ -20,7 +20,7 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
 
     // تحقق من النتيجة
     if (!data.status || !data.videoUrl) {
-      return conn.sendMessage(m.chat, { text:`❌ *فشل في إنشاء الفيديو.*\n📄 *السبب:* ${data.message || "غير معروف"}`);
+      return m.reply(`❌ *فشل في إنشاء الفيديو.*\n📄 *السبب:* ${data.message || "غير معروف"}`);
     }
 
     // إرسال الفيديو للمستخدم
@@ -32,7 +32,7 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
   } catch (err) {
     // عرض الخطأ الفعلي
     console.error(err);
-    conn.sendMessage(m.chat, { text:`⚠️ *حدث خطأ أثناء إنشاء الفيديو:*\n${err.message}`);
+    m.reply(`⚠️ *حدث خطأ أثناء إنشاء الفيديو:*\n${err.message}`);
   }
 };
 
