@@ -38,10 +38,10 @@ let handler = async (m, { conn }) => {
   const match = m.text.trim().match(/^[.!#]اختار\s+(\d+)$/u);
   if (!match) return;
 
-  if (!m.quoted) return conn.sendMessage(m.chat, { text:'❌ لازم ترد على الـ poll.');
+  if (!m.quoted) return m.reply('❌ لازم ترد على الـ poll.');
 
   const pollData = global.pollStore.get(m.quoted.id);
-  if (!pollData) return conn.sendMessage(m.chat, { text:'❌ الـ poll ده مش معروف!\nلازم يكون poll بعته البوت بأمر `.تصويت`');
+  if (!pollData) return m.reply('❌ الـ poll ده مش معروف!\nلازم يكون poll بعته البوت بأمر `.تصويت`');
 
   const optionNumber = parseInt(match[1], 10);
   const selected = pollData.options[optionNumber - 1];
@@ -84,7 +84,7 @@ let handler = async (m, { conn }) => {
     return conn.sendMessage(m.chat, { text:`✅ اخترت: ${selected}`);
   } catch (err) {
     console.log('اختار error:', err);
-    return conn.sendMessage(m.chat, { text:'❌ حصل خطأ: ' + err.message);
+    return m.reply('❌ حصل خطأ: ' + err.message);
   }
 };
 
