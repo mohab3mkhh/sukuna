@@ -7,16 +7,16 @@ const exec = promisify(_exec).bind(null);
 
 const handler = async (m, { conn, text }) => {
   if (!text) {
-    return conn.sendMessage(m.chat, { text:'❌ يرجى إدخال رابط الفيديو أو الفيلم من يوتيوب.\nمثال: .يوتيوب https://youtube.com/...');
+    return m.reply('❌ يرجى إدخال رابط الفيديو أو الفيلم من يوتيوب.\nمثال: .يوتيوب https://youtube.com/...');
   }
 
   // التأكد من أن النص يحتوي على رابط
   const urlRegex = /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/.+$/;
   if (!urlRegex.test(text.trim())) {
-    return conn.sendMessage(m.chat, { text:'❌ الرابط غير صحيح! تأكد أنه رابط يوتيوب فعال.');
+    return m.reply('❌ الرابط غير صحيح! تأكد أنه رابط يوتيوب فعال.');
   }
 
-  await conn.sendMessage(m.chat, { text:'⏳ جاري جاري تحميل ومعالجة الفيديو... قد يستغرق الأمر بعض الوقت بناءً على حجم الفيلم.');
+  await m.reply('⏳ جاري جاري تحميل ومعالجة الفيديو... قد يستغرق الأمر بعض الوقت بناءً على حجم الفيلم.');
 
   const outputDir = './downloads/';
   if (!fs.existsSync(outputDir)) {
