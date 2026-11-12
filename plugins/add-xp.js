@@ -9,7 +9,7 @@ const OWNERS = [
 let handler = async (m, { conn, text, usedPrefix, command }) => {
   // ✅ التأكد إن الأمر من أحد المالكين فقط
   if (!OWNERS.includes(m.sender)) {
-    return conn.sendMessage(m.chat, { text:'❌ *للأسف، هذا الأمر للمالك فقط.*')
+    return m.reply('❌ *للأسف، هذا الأمر للمالك فقط.*')
   }
 
   // ✅ التأكد من وجود رقم
@@ -27,7 +27,7 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
   let amount = parseInt(parts[0])
   
   if (isNaN(amount) || amount <= 0) {
-    return conn.sendMessage(m.chat, { text:'❌ *ادخل كمية صحيحة (رقم أكبر من 0)*')
+    return m.reply('❌ *ادخل كمية صحيحة (رقم أكبر من 0)*')
   }
 
   // ✅ تحديد الشخص المستهدف
