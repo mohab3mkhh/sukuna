@@ -1,11 +1,8 @@
 // plugins/احزر.js - كويز الشخصيات (صورة + 4 أزرار: 3 خطأ + 1 صح)
+// نفس أسلوب أمر عين الشغال عندك (أزرار buttons)، من غير أي اعتماد على baileys
 // npm i axios
 
 import axios from "axios";
-import * as _baileys from "@whiskeysockets/baileys";
-
-const B = _baileys.generateWAMessageFromContent ? _baileys : (_baileys.default || _baileys);
-const { generateWAMessageFromContent, prepareWAMessageMedia, proto } = B;
 
 const SIGN = "⛩️ *SUKUNA ⚡️ BOT* ⛩️";
 const SESSION_TTL_MS = 120_000;
@@ -14,7 +11,7 @@ const PREFIX = "guess_answer::"; // مختلف عن أمر عين عشان ما 
 const GIST_URL = "https://gist.githubusercontent.com/Kyutaka101/98d564d49cbf9b539fee19f744de7b26/raw/f2a3e68bbcdd2b06f9dbd5f30d70b9fda42fec14/guessflag";
 
 function shuffle(a){ for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]] } return a }
-function pick(arr,n=1){ const s = shuffle(arr.slice()); return n===1 ? s[0] : s.slice(0,n) }
+function pick(arr){ return shuffle(arr.slice())[0] }
 
 const FALLBACK_LIST = [
   {"img":"https://telegra.ph/file/1ad5efd1f25887764b15f.jpg","name":"روبين"},
@@ -51,49 +48,6 @@ function findLevelLocal(xp, multiplier = 1) {
   return --level;
 }
 
-// ━━━ إرسال الصورة + أزرار native flow (proto مباشر) ━━━
-const withTimeout = (p, ms, label) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(label + " timeout")), ms))]);
-
-async function fetchImageBuffer(url) {
-  const r = await axios.get(url, { responseType: "arraybuffer", timeout: 15000, headers: { "User-Agent": "Mozilla/5.0" } });
-  return Buffer.from(r.data);
-}
-
-async function sendButtons(conn, jid, { imageUrl, body, footer, options }) {
-  const imgBuf = await fetchImageBuffer(imageUrl);
-  const media = await withTimeout(prepareWAMessageMedia({ image: imgBuf }, { upload: conn.waUploadToServer }), 30000, "upload");
-
-  const interactiveMessage = proto.Message.InteractiveMessage.fromObject({
-    body: { text: body },
-    footer: { text: footer },
-    header: { hasMediaAttachment: true, imageMessage: media.imageMessage },
-    nativeFlowMessage: {
-      buttons: options.slice(0, 4).map(opt => ({
-        name: "quick_reply",
-        buttonParamsJson: JSON.stringify({ display_text: opt, id: PREFIX + opt }),
-      })),
-    },
-  });
-
-  const msg = generateWAMessageFromContent(jid, {
-    viewOnceMessage: {
-      message: {
-        messageContextInfo: { deviceListMetadata: {}, deviceListMetadataVersion: 2 },
-        interactiveMessage,
-      },
-    },
-  }, { userJid: conn.user?.id || conn.user?.jid });
-
-  const relayOpts = { messageId: msg.key.id };
-  if (!jid.endsWith("@g.us")) {
-    relayOpts.additionalNodes = [
-      { tag: "biz", attrs: {}, content: [{ tag: "interactive", attrs: { type: "native_flow", v: "1" }, content: [{ tag: "native_flow", attrs: { v: "9", name: "mixed" } }] }] },
-      { tag: "bot", attrs: { biz_bot: "1" } },
-    ];
-  }
-  await conn.relayMessage(jid, msg.message, relayOpts);
-}
-
 // ━━━ استخراج اختيار المستخدم من أي نوع رد ━━━
 function unwrap(message) {
   let msg = message || {};
@@ -107,7 +61,7 @@ function unwrap(message) {
 function extractChoice(message) {
   const msg = unwrap(message);
 
-  // native flow (الجديد)
+  // الأزرار الجديدة (native flow)
   const flow = msg.interactiveResponseMessage?.nativeFlowResponseMessage;
   if (flow?.paramsJson) {
     try {
@@ -116,20 +70,18 @@ function extractChoice(message) {
       if (id) return String(id);
     } catch {}
   }
-  // القديم
+  // الأزرار القديمة
   if (msg.buttonsResponseMessage) return msg.buttonsResponseMessage.selectedButtonId || msg.buttonsResponseMessage.selectedDisplayText;
   if (msg.listResponseMessage) return msg.listResponseMessage.singleSelectReply?.selectedRowId;
   if (msg.templateButtonReplyMessage) return msg.templateButtonReplyMessage.selectedId;
+  const im = msg.interactiveMessage;
+  if (im?.buttonsResponseMessage) return im.buttonsResponseMessage.selectedButtonId;
   return null;
 }
 
 function getPlainText(message) {
   const msg = unwrap(message);
   return msg.conversation || msg.extendedTextMessage?.text || null;
-}
-
-async function reply(conn, jid, text, mentions = []) {
-  await conn.sendMessage(jid, { text, mentions }).catch(() => {});
 }
 
 async function handleAnswer(conn, jid, senderJid, chosen) {
@@ -161,13 +113,13 @@ async function handleAnswer(conn, jid, senderJid, chosen) {
     } catch (e) {
       console.warn("[احزر] xp error:", e?.message);
     }
-    await reply(conn, jid, `✅ *إجابة صحيحة يا ${tag}!*\n\n⛩️ الشخصية: *${correct}*${extra}\n\n${SIGN}`, mentions);
+    await conn.sendMessage(jid, { text: `✅ *إجابة صحيحة يا ${tag}!*\n\n⛩️ الشخصية: *${correct}*${extra}\n\n${SIGN}`, mentions }).catch(() => {});
   } else {
-    await reply(conn, jid, `❌ *إجابة خاطئة يا ${tag}!*\n\n💭 إجابتك: ${chosen}\n✅ الصحيحة: ${correct}\n\n${SIGN}`, mentions);
+    await conn.sendMessage(jid, { text: `❌ *إجابة خاطئة يا ${tag}!*\n\n💭 إجابتك: ${chosen}\n✅ الصحيحة: ${correct}\n\n${SIGN}`, mentions }).catch(() => {});
   }
 }
 
-export function attachConverter(conn){
+export function attachGuessConverter(conn){
   if(!conn || attached.has(conn) || !conn.ev) return;
   attached.add(conn);
 
@@ -188,9 +140,9 @@ export function attachConverter(conn){
           continue;
         }
 
-        // 2) لو الأزرار ما ظهرتش: إجابة كتابة (رقم 1-4 أو الاسم بالظبط)
+        // 2) إجابة كتابة (رقم 1-4 أو الاسم بالظبط) لو الأزرار ما ظهرتش
         const typed = (getPlainText(m.message) || "").trim();
-        if (typed && session.options) {
+        if (typed) {
           if (/^[1-4]$/.test(typed) && session.options[Number(typed) - 1]) {
             await handleAnswer(conn, jid, senderJid, session.options[Number(typed) - 1]);
           } else if (session.options.includes(typed)) {
@@ -199,8 +151,7 @@ export function attachConverter(conn){
           continue;
         }
 
-        // تشخيص: رد من نوع مش متوقع أثناء وجود سؤال
-        if (!typed) console.log("[احزر] نوع رد غير معروف:", Object.keys(unwrap(m.message)));
+        console.log("[احزر] نوع رد غير معروف:", Object.keys(unwrap(m.message)));
       }
     } catch(e) {
       console.error("[احزر] listener error:", e?.message);
@@ -223,24 +174,23 @@ async function handler(m, { conn }){
   try{
     if(!conn) return;
     console.log("[احزر] الأمر وصل من", m.chat);
-    try { await conn.sendMessage(m.chat, { react: { text: "🎯", key: m.key } }); } catch {}
-    attachConverter(conn);
+    attachGuessConverter(conn);
 
     const choicesList = await loadChoices();
     if(!choicesList?.length){
-      return conn.sendMessage(m.chat, { text: "❌ خطأ في تحميل البيانات" });
+      return conn.sendMessage(m.chat, { text: "❌ فشل تحميل قائمة الشخصيات." }, { quoted: m });
     }
 
-    const correctItem = pick(choicesList);
-    const correctName = correctItem.name;
-    const imageUrl = correctItem.img;
+    const correct = pick(choicesList);
+    const correctName = correct.name;
+    const imageUrl = correct.img;
 
     const wrongNames = [...new Set(choicesList.filter(i => i.name !== correctName).map(i => i.name))];
     const options = shuffle([correctName, ...shuffle(wrongNames).slice(0, 3)]);
 
-    const caption = `⛩️ *SUKUNA  QUIZ* ⛩️\n\n🎯 *من هذه الشخصية؟*\n\n⏳ المتبقي: 120 ثانية`;
+    const caption = `⛩️ *SUKUNA QUIZ* ⛩️\n\n🎯 من هذه الشخصية؟\n⏳ لديك 120 ثانية\n\n${SIGN}`;
 
-    // حفظ الجلسة قبل الإرسال (عشان أي ضغطة سريعة تتحسب)
+    // الجلسة قبل الإرسال
     const old = sessions.get(m.chat);
     if (old) clearTimeout(old.timeout);
 
@@ -254,22 +204,25 @@ async function handler(m, { conn }){
     }, SESSION_TTL_MS);
 
     sessions.set(m.chat, { answer: correctName, options, timeout, answered: false, createdAt: Date.now() });
-    conn.quizSession = conn.quizSession || {};
-    conn.quizSession[m.chat] = { answer: correctName };
+
+    // نفس طريقة أمر عين بالظبط
+    const buttons = options.slice(0, 4).map(opt => ({
+      buttonId: PREFIX + opt,
+      buttonText: { displayText: opt },
+      type: 1
+    }));
 
     try {
-      await sendButtons(conn, m.chat, { imageUrl, body: caption, footer: SIGN, options });
+      await conn.sendMessage(m.chat, {
+        image: { url: imageUrl },
+        caption,
+        buttons,
+        headerType: 4
+      }, { quoted: m });
     } catch (e) {
       console.error("[احزر] الأزرار فشلت:", e?.message);
-      // fallback: صورة + خيارات مرقمة (الإجابة برقم أو بالاسم)
       const txt = [caption, "", ...options.map((o, i) => `${i + 1}. ${o}`), "", "✍️ اكتب رقم الإجابة أو الاسم"].join("\n");
-      try {
-        const buf = await fetchImageBuffer(imageUrl);
-        await conn.sendMessage(m.chat, { image: buf, caption: txt });
-      } catch (e2) {
-        console.error("[احزر] الصورة فشلت:", e2?.message);
-        await conn.sendMessage(m.chat, { text: txt });
-      }
+      await conn.sendMessage(m.chat, { text: txt }, { quoted: m });
     }
   }catch(err){
     console.error("[احزر] error:", err);
