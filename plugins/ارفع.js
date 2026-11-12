@@ -29,7 +29,7 @@ const handler = async (m, { conn }) => {
     cap += `*📂 الاسم:* ${fileName}\n`;
     cap += `*📁 الامتداد:* ${ext}\n`;
     cap += `*🔗 الرابط:* ${url}`;
-    conn.sendMessage(m.chat, { text:cap);
+    m.reply(cap);
   } catch (err) {
     console.error(err);
     m.reply(`❌ خطأ أثناء رفع الملف: ${err.message}`);
