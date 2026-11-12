@@ -1,19 +1,19 @@
 import fetch from 'node-fetch'
 
 let handler = async (m, { conn, args, text }) => {
-  if (!text) return conn.sendMessage(m.chat, { text:'*فين اللنك اللي عايز تختصره.*')
+  if (!text) return m.reply('*فين اللنك اللي عايز تختصره.*')
 
   try {
     let shortUrl = await (await fetch(`https://tinyurl.com/api-create.php?url=${encodeURIComponent(text)}`)).text()
 
-    if (!shortUrl || !shortUrl.startsWith('http')) return conn.sendMessage(m.chat, { text:'*خطأ في الاختصار، جرب تاني.*')
+    if (!shortUrl || !shortUrl.startsWith('http')) return m.reply('*خطأ في الاختصار، جرب تاني.*')
 
     let done = `*اختصار اللنكات*\n\n*اللينك الاصلي:*\n${text}\n*اللنك المختصر:*\n${shortUrl}`.trim()
 
     conn.sendMessage(m.chat, { text:done)
   } catch (e) {
     console.error('[اختصار]', e.message)
-    conn.sendMessage(m.chat, { text:'*خطأ: ' + e.message + '*')
+    m.reply('*خطأ: ' + e.message + '*')
   }
 }
 
