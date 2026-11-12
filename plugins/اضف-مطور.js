@@ -18,7 +18,7 @@ const resolveLid = async (jid, conn, groupId) => {
 
 const handler = async (m, { conn }) => {
   let targetJid = m.mentionedJid?.[0] || m.quoted?.sender
-  if (!targetJid) return conn.sendMessage(m.chat, { text:'❌ منشن الشخص أو رد على رسالته')
+  if (!targetJid) return m.reply('❌ منشن الشخص أو رد على رسالته')
 
   // حل الـ lid
   if (targetJid.endsWith('@lid')) {
@@ -26,7 +26,7 @@ const handler = async (m, { conn }) => {
   }
 
   if (targetJid.endsWith('@lid')) {
-    return conn.sendMessage(m.chat, { text:'❌ مش قادر أتعرف على رقم الشخص، اطلب منه يبعت رسالة في الجروب وجرب تاني')
+    return m.reply('❌ مش قادر أتعرف على رقم الشخص، اطلب منه يبعت رسالة في الجروب وجرب تاني')
   }
 
   const num = targetJid.replace('@s.whatsapp.net', '').replace(/\D/g, '')
