@@ -146,11 +146,11 @@ async function downloadChapterZip(conn, m, chapterUrl, chapterTitle) {
     }
 
     await react('⏳')
-    await conn.sendMessage(m.chat, { text:'📦 *جاري تجهيز الفصل ZIP...*')
+    await m.reply('📦 *جاري تجهيز الفصل ZIP...*')
 
     try {
         const images = await getChapterImages(chapterUrl)
-        if (!images.length) return conn.sendMessage(m.chat, { text:'❌ لا توجد صور')
+        if (!images.length) return m.reply('❌ لا توجد صور')
 
         const zip = new JSZip()
         let pagesAdded = 0
@@ -170,7 +170,7 @@ async function downloadChapterZip(conn, m, chapterUrl, chapterTitle) {
             } catch {}
         }
 
-        if (!pagesAdded) return conn.sendMessage(m.chat, { text:'❌ فشل التحميل')
+        if (!pagesAdded) return m.reply('❌ فشل التحميل')
 
         const fileBuffer = await zip.generateAsync({ type: 'nodebuffer' })
         const fileName = `${chapterTitle || 'chapter'}_${Date.now()}.zip`
@@ -186,7 +186,7 @@ async function downloadChapterZip(conn, m, chapterUrl, chapterTitle) {
         await react('✅')
     } catch (e) {
         await react('❌')
-        conn.sendMessage(m.chat, { text:'❌ ' + e.message)
+        m.reply('❌ ' + e.message)
     }
 }
 
@@ -201,7 +201,7 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
         await react('📖')
 
         const info = await getMangaInfo(text)
-        if (!info) return conn.sendMessage(m.chat, { text:'❌ فشل جلب المعلومات')
+        if (!info) return m.reply('❌ فشل جلب المعلومات')
 
         let msg = `📚 *${info.title}*\n\n`
         if (info.desc) msg += `📝 ${info.desc.slice(0, 300)}...\n\n`
