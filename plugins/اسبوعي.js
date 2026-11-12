@@ -9,14 +9,14 @@ let handler = async (m, { conn, isPrems }) => {
 
   if (user.lastweekly && (now - user.lastweekly) < week) {
     const left = user.lastweekly + week - now
-    return conn.sendMessage(m.chat, { text:`*╮═≼『⛩️┃تنبيه┃⛩️』≽═╭*\n*┇⌗╎🎁 جمعت الهدية الأسبوعية بالفعل*\n*┇⌗╎🕚 ادخل بعد ${clockString(left)}*\n*╯✯≼══━━﹂⛩️﹁━━══≽✯*`)
+    return m.reply(`*╮═≼『⛩️┃تنبيه┃⛩️』≽═╭*\n*┇⌗╎🎁 جمعت الهدية الأسبوعية بالفعل*\n*┇⌗╎🕚 ادخل بعد ${clockString(left)}*\n*╯✯≼══━━﹂⛩️﹁━━══≽✯*`)
   }
 
   const reward = isPrems ? prem : free
   user.exp += reward
   user.lastweekly = now
 
-  await conn.sendMessage(m.chat, { text:`*╮═≼『⛩️┃هدية أسبوعية┃⛩️』≽═╭*\n*┇⌗╎🎁 لقد حصلت على هديتك الأسبوعية*\n*┇⌗╎🆙 XP : +${reward}*\n*╯✯≼══━━﹂⛩️﹁━━══≽✯*`)
+  await m.reply(`*╮═≼『⛩️┃هدية أسبوعية┃⛩️』≽═╭*\n*┇⌗╎🎁 لقد حصلت على هديتك الأسبوعية*\n*┇⌗╎🆙 XP : +${reward}*\n*╯✯≼══━━﹂⛩️﹁━━══≽✯*`)
 }
 
 handler.help    = ['اسبوعي']
