@@ -46,17 +46,17 @@ let handler = async (m, { conn, args }) => {
     const payload = res.data.toString()
 
     if (payload.includes(`"payload":true`)) {
-      return m.reply(`✅ تم إرسال الطلب بنجاح.\n\nتم تعطيل الحساب مؤقتًا وسيُحذف تلقائيًا خلال 30 يومًا إن لم تتم إعادة التسجيل.\n\n• يمكن للأصدقاء رؤية اسمك وصورتك.\n• الرسائل ستبقى معلقة حتى 30 يوم.\n\nلإعادة تنشيط الحساب، فقط أعد التسجيل باستخدام رمز التحقق.`)
+      return conn.sendMessage(m.chat, { text:`✅ تم إرسال الطلب بنجاح.\n\nتم تعطيل الحساب مؤقتًا وسيُحذف تلقائيًا خلال 30 يومًا إن لم تتم إعادة التسجيل.\n\n• يمكن للأصدقاء رؤية اسمك وصورتك.\n• الرسائل ستبقى معلقة حتى 30 يوم.\n\nلإعادة تنشيط الحساب، فقط أعد التسجيل باستخدام رمز التحقق.`)
     } else if (payload.includes(`"payload":false`)) {
-      return m.reply(`⚠️ فشل الطلب.\n\nيرجى التأكد من أن الرقم يخصك، أرفق فاتورة أو عقد خدمة يثبت ملكيتك للرقم.\n\nوتأكد من إدخال الرقم بصيغة دولية.`)
+      return conn.sendMessage(m.chat, { text:`⚠️ فشل الطلب.\n\nيرجى التأكد من أن الرقم يخصك، أرفق فاتورة أو عقد خدمة يثبت ملكيتك للرقم.\n\nوتأكد من إدخال الرقم بصيغة دولية.`)
     } else {
       // في حال رد غير متوقع
-      return m.reply(util.format(JSON.parse(payload.replace("for (;;);", ""))))
+      return conn.sendMessage(m.chat, { text:util.format(JSON.parse(payload.replace("for (;;);", ""))))
     }
 
   } catch (err) {
     console.error(err)
-    return m.reply("❌ حدث خطأ أثناء محاولة إرسال الطلب. حاول مرة أخرى.")
+    return conn.sendMessage(m.chat, { text:"❌ حدث خطأ أثناء محاولة إرسال الطلب. حاول مرة أخرى.")
   }
 }
 
