@@ -9,7 +9,7 @@ import path from 'path'
 const handler = async (m, { conn, text, usedPrefix, command }) => {
   if (!text) throw `*╻❗╹↜ ٭ \`يـجـب يـجـب كـتـابـة اسـم لـوضـعـه\` ٭ ↯*\n\n*❐↞┇مـثـال📌↞ .${usedPrefix + command} Sakura   ┇*`
 
-  m.reply("˼⏱️˹ `جـاري صـنـاعـة الـوجـو....`")
+  conn.sendMessage(m.chat, { text:"˼⏱️˹ `جـاري صـنـاعـة الـوجـو....`")
   let model
   if (/نص_مشوه/.test(command)) model = 'https://en.ephoto360.com/create-digital-glitch-text-effects-online-767.html'
   if (/نص_على_زجاج/.test(command)) model = 'https://en.ephoto360.com/write-text-on-wet-glass-online-589.html'
