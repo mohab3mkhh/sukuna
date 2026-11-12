@@ -13,7 +13,7 @@ const handler = async (m) => {
 
   if (/audio|video/.test(mime)) {
     if ((q.msg || q).seconds > 120) 
-      return conn.sendMessage(m.chat, { text:'*\`『 الصوت ميعديش دقتين 』\`*');
+      return m.reply('*\`『 الصوت ميعديش دقتين 』\`*');
 
     const media = await q.download();
     const ext = mime.split('/')[1];
