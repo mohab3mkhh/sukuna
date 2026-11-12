@@ -32,7 +32,7 @@ const handler = async (m, { text, conn, usedPrefix, command }) => {
   }
 
   if (groups.length === 0) {
-    return m.reply('❌ البوت ليس عضواً في أي مجموعة حالياً.');
+    return conn.sendMessage(m.chat, { text:'❌ البوت ليس عضواً في أي مجموعة حالياً.');
   }
 
   // ✅ بناء sections للقائمة
@@ -70,7 +70,7 @@ handler.before = async function (m, { conn, usedPrefix, command }) {
 
   try {
     const metadata = await conn.groupMetadata(groupJid).catch(() => null);
-    if (!metadata) return m.reply('❌ مش قادر أجيب بيانات المجموعة');
+    if (!metadata) return conn.sendMessage(m.chat, { text:'❌ مش قادر أجيب بيانات المجموعة');
 
     const owner = metadata.owner || metadata.subjectOwner || '';
     const creation = metadata.creation || null;
@@ -99,7 +99,7 @@ handler.before = async function (m, { conn, usedPrefix, command }) {
 
   } catch (e) {
     console.error('[Groups]', e);
-    return m.reply(`❌ فشل: ${e.message}`);
+    return conn.sendMessage(m.chat, { text:`❌ فشل: ${e.message}`);
   }
 };
 
