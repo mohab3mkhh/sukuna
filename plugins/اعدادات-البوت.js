@@ -24,13 +24,13 @@ const handler = async (m, { conn, text, usedPrefix, command, isROwner, groupMeta
     // ══════════════════════════════════════════
     if (/^(اسمك|botname|setname)$/i.test(command)) {
 
-      if (!isROwner) return m.reply(
+      if (!isROwner) return conn.sendMessage(m.chat, { text:
         `*╮═≼『🔱┃تنبيه┃🔱』≽═╭*\n` +
         `*┇⌗╎ꕥ هذا الأمر للمالك فقط ⌗*\n` +
         `*╯✯≼══━━﹂🔱﹁━━══≽✯*`
       )
 
-      if (!text?.trim()) return m.reply(
+      if (!text?.trim()) return conn.sendMessage(m.chat, { text:
         `❌ *استخدام خاطئ!*\n\n` +
         `📝 *الاستخدام الصحيح:*\n` +
         `${usedPrefix + command} <الاسم الجديد>\n\n` +
@@ -39,7 +39,7 @@ const handler = async (m, { conn, text, usedPrefix, command, isROwner, groupMeta
       )
 
       const newName = text.trim()
-      await m.reply(`⏳ *جاري تغيير الاسم إلى:* ${newName}...`)
+      await conn.sendMessage(m.chat, { text:`⏳ *جاري تغيير الاسم إلى:* ${newName}...`)
 
       try {
         if (conn.updateProfileName) {
@@ -57,14 +57,14 @@ const handler = async (m, { conn, text, usedPrefix, command, isROwner, groupMeta
           })
         }
 
-        return m.reply(
+        return conn.sendMessage(m.chat, { text:
           `✅ *تم تغيير اسم البوت بنجاح!*\n\n` +
           `🤖 *الاسم الجديد:* ${newName}\n\n` +
           `⚠️ *ملاحظة:* قد يستغرق التحديث بضع دقائق ليظهر للجميع`
         )
       } catch (err) {
         console.error('[اسمك Error]', err)
-        return m.reply(
+        return conn.sendMessage(m.chat, { text:
           `❌ *فشل تغيير الاسم!*\n\n` +
           `📝 قد لا تكون هذه الخاصية مدعومة في واتساب بيزنيس.\n\n` +
           `💡 *بديل:* قم بتغيير الاسم يدوياً من إعدادات حساب واتساب`
@@ -77,7 +77,7 @@ const handler = async (m, { conn, text, usedPrefix, command, isROwner, groupMeta
     // ══════════════════════════════════════════
     if (/^(صورتك|botpp|setpp|setphoto)$/i.test(command)) {
 
-      if (!isROwner) return m.reply(
+      if (!isROwner) return conn.sendMessage(m.chat, { text:
         `*╮═≼『🔱┃تنبيه┃🔱』≽═╭*\n` +
         `*┇⌗╎ꕥ هذا الأمر للمالك فقط ⌗*\n` +
         `*╯✯≼══━━﹂🔱﹁━━══≽✯*`
@@ -86,14 +86,14 @@ const handler = async (m, { conn, text, usedPrefix, command, isROwner, groupMeta
       const quoted = m.quoted || m
       const mime   = (quoted.msg || quoted)?.mimetype || ''
 
-      if (!mime.startsWith('image/')) return m.reply(
+      if (!mime.startsWith('image/')) return conn.sendMessage(m.chat, { text:
         `❌ *استخدام خاطئ!*\n\n` +
         `📝 *الاستخدام الصحيح:*\n` +
         `ريبلاي على صورة ثم اكتب ${usedPrefix + command}\n\n` +
         `💡 الصورة يجب أن تكون JPG أو PNG`
       )
 
-      await m.reply(`⏳ *جاري تغيير صورة البوت...*`)
+      await conn.sendMessage(m.chat, { text:`⏳ *جاري تغيير صورة البوت...*`)
 
       let imageBuffer
       try {
@@ -122,14 +122,14 @@ const handler = async (m, { conn, text, usedPrefix, command, isROwner, groupMeta
           })
         }
 
-        return m.reply(
+        return conn.sendMessage(m.chat, { text:
           `✅ *تم تغيير صورة البوت بنجاح!*\n\n` +
           `🖼️ الصورة الجديدة تم تفعيلها\n\n` +
           `⚠️ *ملاحظة:* قد يستغرق التحديث بضع دقائق ليظهر للجميع`
         )
       } catch (err) {
         console.error('[صورتك Error]', err)
-        return m.reply(
+        return conn.sendMessage(m.chat, { text:
           `❌ *فشل تغيير الصورة!*\n\n` +
           `📝 قد لا تكون هذه الخاصية مدعومة في واتساب بيزنيس.\n\n` +
           `💡 *بديل:* قم بتغيير الصورة يدوياً من إعدادات حساب واتساب`
@@ -142,7 +142,7 @@ const handler = async (m, { conn, text, usedPrefix, command, isROwner, groupMeta
     // ══════════════════════════════════════════
     if (/^(معرف|groupid|gid)$/i.test(command)) {
 
-      if (!m.isGroup) return m.reply(
+      if (!m.isGroup) return conn.sendMessage(m.chat, { text:
         `*╮═≼『🔱┃تنبيه┃🔱』≽═╭*\n` +
         `*┇⌗╎ꕥ هذا الأمر للمجموعات فقط ⌗*\n` +
         `*╯✯≼══━━﹂🔱﹁━━══≽✯*`
@@ -188,7 +188,7 @@ const handler = async (m, { conn, text, usedPrefix, command, isROwner, groupMeta
     // ══════════════════════════════════════════
     if (/^(خصوصية|privacy|settings)$/i.test(command)) {
 
-      if (!isROwner) return m.reply(
+      if (!isROwner) return conn.sendMessage(m.chat, { text:
         `*╮═≼『🔱┃تنبيه┃🔱』≽═╭*\n` +
         `*┇⌗╎ꕥ هذا الأمر للمالك فقط ⌗*\n` +
         `*╯✯≼══━━﹂🔱﹁━━══≽✯*`
@@ -197,7 +197,7 @@ const handler = async (m, { conn, text, usedPrefix, command, isROwner, groupMeta
       const choice = text?.trim()
 
       if (!choice) {
-        return m.reply(
+        return conn.sendMessage(m.chat, { text:
           `🔒 *إعدادات الخصوصية - من يمكنه رؤية صورة البوت*\n\n` +
           `1️⃣ *الكل* - الجميع يقدر يشوف صور البوت\n` +
           `2️⃣ *جهات الاتصال فقط* - اللي في جهات الاتصال بس\n` +
@@ -216,22 +216,22 @@ const handler = async (m, { conn, text, usedPrefix, command, isROwner, groupMeta
         case '1': settingValue = 'all';      settingText = 'الجميع'; break
         case '2': settingValue = 'contacts'; settingText = 'جهات الاتصال فقط'; break
         case '3': settingValue = 'none';     settingText = 'لا أحد'; break
-        default:  return m.reply('❌ رقم غير صحيح! استخدم 1، 2، أو 3')
+        default:  return conn.sendMessage(m.chat, { text:'❌ رقم غير صحيح! استخدم 1، 2، أو 3')
       }
 
-      await m.reply(`⏳ *جاري تغيير إعدادات الخصوصية إلى:* ${settingText}...`)
+      await conn.sendMessage(m.chat, { text:`⏳ *جاري تغيير إعدادات الخصوصية إلى:* ${settingText}...`)
 
       try {
         if (typeof conn.updateProfilePicturePrivacy === 'function') {
           await conn.updateProfilePicturePrivacy(settingValue)
-          return m.reply(
+          return conn.sendMessage(m.chat, { text:
             `✅ *تم تغيير إعدادات الخصوصية بنجاح!*\n\n` +
             `🔒 *الإعداد الجديد:* ${settingText}`
           )
         }
         else if (typeof conn.updatePrivacySettings === 'function') {
           await conn.updatePrivacySettings('profilePicture', settingValue)
-          return m.reply(
+          return conn.sendMessage(m.chat, { text:
             `✅ *تم تغيير إعدادات الخصوصية بنجاح!*\n\n` +
             `🔒 *الإعداد الجديد:* ${settingText}`
           )
@@ -242,7 +242,7 @@ const handler = async (m, { conn, text, usedPrefix, command, isROwner, groupMeta
 
       } catch (err) {
         console.error('[Privacy Error]', err)
-        return m.reply(
+        return conn.sendMessage(m.chat, { text:
           `⚠️ *خاصية الخصوصية غير مدعومة في واتساب بيزنيس*\n\n` +
           `📝 الخاصية متوفرة فقط في واتساب العادي.\n\n` +
           `💡 *بديل:* استخدم الأمر .صورتك لتغيير الصورة يدوياً`
@@ -255,7 +255,7 @@ const handler = async (m, { conn, text, usedPrefix, command, isROwner, groupMeta
     // ══════════════════════════════════════════
     if (/^(اضافة|addgroup|invite)$/i.test(command)) {
 
-      if (!isROwner) return m.reply(
+      if (!isROwner) return conn.sendMessage(m.chat, { text:
         `*╮═≼『🔱┃تنبيه┃🔱』≽═╭*\n` +
         `*┇⌗╎ꕥ هذا الأمر للمالك فقط ⌗*\n` +
         `*╯✯≼══━━﹂🔱﹁━━══≽✯*`
@@ -271,7 +271,7 @@ const handler = async (m, { conn, text, usedPrefix, command, isROwner, groupMeta
           case '3': currentText = 'المالك فقط (+201016855501)'; break
         }
 
-        return m.reply(
+        return conn.sendMessage(m.chat, { text:
           `➕ *إعدادات إضافة البوت للمجموعات*\n\n` +
           `🔘 *الإعداد الحالي:* ${currentText}\n\n` +
           `1️⃣ *الكل* - أي حد يقدر يضيف البوت لأي جروب\n` +
@@ -302,7 +302,7 @@ const handler = async (m, { conn, text, usedPrefix, command, isROwner, groupMeta
           privacyValue = 'contacts' // أقرب إعداد رسمي، والباقي بيتم تطبيقه عن طريق البوت
           break
         default:
-          return m.reply('❌ رقم غير صحيح! استخدم 1، 2، أو 3')
+          return conn.sendMessage(m.chat, { text:'❌ رقم غير صحيح! استخدم 1، 2، أو 3')
       }
 
       global.addSettings.mode = settingValue
@@ -323,7 +323,7 @@ const handler = async (m, { conn, text, usedPrefix, command, isROwner, groupMeta
         extraNote = `\n\n⚠️ *ملاحظة:* واتساب رسمياً ما يدعمش "المالك فقط"، لكن البوت دلوقتي بيطبّق الحماية دي بنفسه عند الإضافة لجروب جديد.`
       }
 
-      return m.reply(
+      return conn.sendMessage(m.chat, { text:
         `✅ *تم تغيير إعدادات الإضافة بنجاح!*\n\n` +
         `➕ *الإعداد الجديد:* ${settingText}\n` +
         (privacyChanged
@@ -335,7 +335,7 @@ const handler = async (m, { conn, text, usedPrefix, command, isROwner, groupMeta
 
   } catch (error) {
     console.error('[BotSettings] Error:', error)
-    await m.reply(
+    await conn.sendMessage(m.chat, { text:
       `❌ *حدث خطأ!*\n\n` +
       `📝 ${error.message}`
     )
