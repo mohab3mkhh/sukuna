@@ -148,7 +148,7 @@ const handler = async (m, { text, usedPrefix, command }) => {
     const targetBtn = findBtn(cached.allBtns, input);
     if (!targetBtn) {
       await m.react('❌');
-      return conn.sendMessage(m.chat, { text:`❌ مش لاقي "${input}"\nابعت \`${usedPrefix}${command}\` تشوف القائمة`);
+      return m.reply(`❌ مش لاقي "${input}"\nابعت \`${usedPrefix}${command}\` تشوف القائمة`);
     }
 
     console.log('[TG2] Clicking:', targetBtn.text);
@@ -172,7 +172,7 @@ const handler = async (m, { text, usedPrefix, command }) => {
   } catch (e) {
     console.error('[Numbers2]', e.message);
     await m.react('❌');
-    await conn.sendMessage(m.chat, { text:`❌ *فشل*\n\n⚠️ ${e.message}`);
+    await m.reply(`❌ *فشل*\n\n⚠️ ${e.message}`);
   }
 };
 
