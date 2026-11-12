@@ -90,7 +90,7 @@ const handler = async (m, { conn, text, usedPrefix, command }) => {
       const buttons  = startMsg.replyMarkup?.rows?.flatMap(r => r.buttons) || [];
 
       if (!buttons.length) {
-        return conn.sendMessage(m.chat, { text:startMsg.text || 'مفيش أزرار');
+        return m.reply(startMsg.text || 'مفيش أزرار');
       }
 
       // بعت القائمة للمستخدم
@@ -100,7 +100,7 @@ const handler = async (m, { conn, text, usedPrefix, command }) => {
       if (!global._tgButtons) global._tgButtons = {};
       global._tgButtons[m.sender] = { buttons, msg: startMsg };
 
-      await conn.sendMessage(m.chat, { text:
+      await m.reply(
         `🌍 *اختار الدولة:*\n\n${list}\n\n` +
         `ابعت الرقم أو اسم الدولة\n` +
         `مثال: \`${usedPrefix}${command} 1\``
