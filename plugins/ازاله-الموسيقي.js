@@ -53,7 +53,7 @@ const handler = async (m, { conn }) => {
   const mime = quoted.mimetype || '';
   
   if (!mime.startsWith('audio/') && !mime.startsWith('voice/')) {
-    return conn.sendMessage(m.chat, { text:`🎵 *طريقة الاستخدام:*\n\nرد على رسالة صوتية أو أغنية واكتب:\n.ازاله-الموسيقي\n\n📌 *مثال:*\n• رد على أغنية واكتب .ازاله-الموسيقي\n• البوت هيبعتلك الأغنية بدون موسيقى`);
+    return m.reply(`🎵 *طريقة الاستخدام:*\n\nرد على رسالة صوتية أو أغنية واكتب:\n.ازاله-الموسيقي\n\n📌 *مثال:*\n• رد على أغنية واكتب .ازاله-الموسيقي\n• البوت هيبعتلك الأغنية بدون موسيقى`);
   }
 
   try {
@@ -114,7 +114,7 @@ const handler = async (m, { conn }) => {
   } catch (error) {
     console.error('[ازاله-الموسيقي]', error.message);
     await m.react('❌');
-    await conn.sendMessage(m.chat, { text:`❌ *فشل المعالجة*\n\n⚠️ ${error.message}`);
+    await m.reply(`❌ *فشل المعالجة*\n\n⚠️ ${error.message}`);
   }
 };
 
