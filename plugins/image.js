@@ -294,7 +294,7 @@ let handler = async (m, { conn, text }) => {
   const hasImage = /image\/(jpeg|png|webp)/.test(mime)
 
   if (!hasImage && !text) {
-    return conn.sendMessage(m.chat, { text:
+    return m.reply(
       `🎨 *نانو بنانا - تعديل الصور بالذكاء الاصطناعي*\n\n` +
       `*مع صورة:*\n` +
       `ارسل صورة مع الأمر كـ caption أو رد على صورة:\n` +
