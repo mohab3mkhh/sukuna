@@ -9,12 +9,12 @@ const OWNERS = [
 let handler = async (m, { conn, text, usedPrefix, command }) => {
   // ✅ التأكد إن الأمر من أحد المالكين فقط
   if (!OWNERS.includes(m.sender)) {
-    return m.reply('❌ *للأسف، هذا الأمر للمالك فقط.*')
+    return conn.sendMessage(m.chat, { text:'❌ *للأسف، هذا الأمر للمالك فقط.*')
   }
 
   // ✅ التأكد من وجود رقم
   if (!text) {
-    return m.reply(
+    return conn.sendMessage(m.chat, { text:
       `📌 *طريقة الاستخدام:*\n\n` +
       `${usedPrefix}${command} <الكمية> <@منشن>\n\n` +
       `📌 *مثال:*\n` +
@@ -27,7 +27,7 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
   let amount = parseInt(parts[0])
   
   if (isNaN(amount) || amount <= 0) {
-    return m.reply('❌ *ادخل كمية صحيحة (رقم أكبر من 0)*')
+    return conn.sendMessage(m.chat, { text:'❌ *ادخل كمية صحيحة (رقم أكبر من 0)*')
   }
 
   // ✅ تحديد الشخص المستهدف
@@ -58,7 +58,7 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
   let name = await conn.getName(who) || who.split('@')[0]
 
   await m.react('✅')
-  await m.reply(
+  await conn.sendMessage(m.chat, { text:
     `✅ *تمت الإضافة بنجاح!*\n\n` +
     `👤 *المستخدم:* ${name}\n` +
     `➕ *تم إضافة:* ${amount} XP\n` +
