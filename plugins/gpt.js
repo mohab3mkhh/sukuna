@@ -125,7 +125,7 @@ async function splitAndSend(conn, chat, text, quoted) {
 }
 
 let handler = async (m, { conn, text, usedPrefix, command }) => {
-  if (!text) return conn.sendMessage(m.chat, { text:`🤖 *GPTFree AI*\n\n📌 ${usedPrefix + command} <سؤال>`)
+  if (!text) return m.reply(`🤖 *GPTFree AI*\n\n📌 ${usedPrefix + command} <سؤال>`)
   await m.react('⏳')
   try {
     const result = await askGPTFree(text)
@@ -137,7 +137,7 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
     await splitAndSend(conn, m.chat, result.answer, m)
   } catch (e) {
     await m.react('❌')
-    await conn.sendMessage(m.chat, { text:`❌ خطأ: ${e.message}`)
+    await m.reply(`❌ خطأ: ${e.message}`)
   }
 }
 
