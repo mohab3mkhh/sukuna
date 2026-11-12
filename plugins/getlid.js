@@ -19,10 +19,10 @@ const handler = async (m, { conn, text }) => {
       return num === searchNum
     })
     if (found.length) {
-      return conn.sendMessage(m.chat, { text:`✅ الـ JID:\n${found.map(p => p.id).join('\n')}`)
+      return m.reply(`✅ الـ JID:\n${found.map(p => p.id).join('\n')}`)
     }
     // لو مش لاقيه بالرقم، ممكن يكون lid
-    return conn.sendMessage(m.chat, { text:`❌ مش لاقيه\n\nعدد المشاركين: ${metadata.participants.length}\nأول 5 منهم:\n${metadata.participants.slice(0,5).map(p=>p.id).join('\n')}`)
+    return m.reply(`❌ مش لاقيه\n\nعدد المشاركين: ${metadata.participants.length}\nأول 5 منهم:\n${metadata.participants.slice(0,5).map(p=>p.id).join('\n')}`)
   }
 
   // لو مفيش نص، اطبع كل المشاركين
