@@ -29,47 +29,80 @@ function getMediaType(mime) {
   return 'ملف'
 }
 
-async function post(url, buffer, mime, extra = {}) {
+// إرسال multipart بحجم معروف (Content-Length) — بعض السيرفرات بترفض الـ chunked
+async function send(url, field, buffer, mime, extra = {}) {
   const form = new FormData()
   for (const [k, v] of Object.entries(extra)) form.append(k, v)
-  form.append('reqtype', 'fileupload')
-  form.append('fileToUpload', buffer, { filename: `file.${getExtFromMime(mime)}`, contentType: mime })
+  form.append(field, buffer, { filename: `file.${getExtFromMime(mime)}`, contentType: mime })
 
+  const body = form.getBuffer()
   const res = await fetch(url, {
     method: 'POST',
-    body: form,
-    headers: { ...form.getHeaders(), 'User-Agent': UA }
+    body,
+    headers: { ...form.getHeaders(), 'Content-Length': String(body.length), 'User-Agent': UA }
   })
   const text = (await res.text()).trim()
-  if (/^https?:\/\//i.test(text)) return text
-  throw new Error(text.slice(0, 100) || `HTTP ${res.status}`)
+  if (!res.ok && !text) throw new Error(`HTTP ${res.status}`)
+  return text
 }
 
-// 1) Catbox (دائم)  2) Litterbox (مؤقت 72 ساعة) كاحتياطي
-async function upload(buffer, mime) {
-  const errors = []
+const asUrl = (text) => {
+  if (/^https?:\/\//i.test(text)) return text.split('\n')[0].trim()
+  throw new Error(text.replace(/\s+/g, ' ').slice(0, 100) || 'رد فاضي')
+}
 
-  try {
-    const link = await post('https://catbox.moe/user/api.php', buffer, mime, USERHASH ? { userhash: USERHASH } : {})
-    return { link, host: 'Catbox.moe', permanent: true }
-  } catch (e) {
-    errors.push(`catbox: ${e.message}`)
-    // لو المشكلة في الـ userhash جرّب مجهول قبل ما نروح للاحتياطي
-    if (USERHASH && /invalid uploader/i.test(e.message)) {
-      try {
-        const link = await post('https://catbox.moe/user/api.php', buffer, mime)
-        return { link, host: 'Catbox.moe', permanent: true }
-      } catch (e2) { errors.push(`catbox-anon: ${e2.message}`) }
+const asJson = (text) => {
+  try { return JSON.parse(text) } catch { throw new Error(text.replace(/\s+/g, ' ').slice(0, 100) || 'رد فاضي') }
+}
+
+const PROVIDERS = [
+  {
+    name: 'Catbox.moe', permanent: true,
+    run: async (buf, mime) => asUrl(await send('https://catbox.moe/user/api.php', 'fileToUpload', buf, mime,
+      { reqtype: 'fileupload', ...(USERHASH ? { userhash: USERHASH } : {}) }))
+  },
+  {
+    name: 'Litterbox (مؤقت 72 ساعة)', permanent: false,
+    run: async (buf, mime) => asUrl(await send('https://litterbox.catbox.moe/resources/internals/api.php', 'fileToUpload', buf, mime,
+      { reqtype: 'fileupload', time: '72h' }))
+  },
+  {
+    name: 'Uguu.se (مؤقت 3 ساعات)', permanent: false,
+    run: async (buf, mime) => asUrl(await send('https://uguu.se/upload?output=text', 'files[]', buf, mime))
+  },
+  {
+    name: 'qu.ax', permanent: false,
+    run: async (buf, mime) => {
+      const j = asJson(await send('https://qu.ax/upload.php', 'files[]', buf, mime))
+      const url = j?.files?.[0]?.url
+      if (!url) throw new Error(JSON.stringify(j).slice(0, 100))
+      return url
+    }
+  },
+  {
+    name: 'tmpfiles.org (مؤقت ساعة)', permanent: false,
+    run: async (buf, mime) => {
+      const j = asJson(await send('https://tmpfiles.org/api/v1/upload', 'file', buf, mime))
+      const url = j?.data?.url
+      if (!url) throw new Error(JSON.stringify(j).slice(0, 100))
+      return url.replace('tmpfiles.org/', 'tmpfiles.org/dl/')
     }
   }
+]
 
-  try {
-    const link = await post('https://litterbox.catbox.moe/resources/internals/api.php', buffer, mime, { time: '72h' })
-    return { link, host: 'Litterbox (مؤقت 72 ساعة)', permanent: false }
-  } catch (e) {
-    errors.push(`litterbox: ${e.message}`)
+async function upload(buffer, mime) {
+  const errors = []
+  for (const p of PROVIDERS) {
+    try {
+      const link = await p.run(buffer, mime)
+      console.log(`[Catbox] ✅ ${p.name}`)
+      return { link, host: p.name, permanent: p.permanent }
+    } catch (e) {
+      const msg = `${p.name.split(' ')[0]}: ${e?.message || e}`
+      errors.push(msg)
+      console.error(`[Catbox] ❌ ${msg}`)
+    }
   }
-
   throw new Error(errors.join(' | '))
 }
 
@@ -113,7 +146,7 @@ const handler = async (m, { conn }) => {
         results.push({ num: i + 1, type, link, host, permanent, ok: true })
       } catch (error) {
         console.error('[Catbox Error]', error?.message || error)
-        results.push({ num: i + 1, type, ok: false, link: `❌ *فشل:* ${String(error.message).slice(0, 90)}` })
+        results.push({ num: i + 1, type, ok: false, link: `❌ *فشل:* ${String(error.message).slice(0, 200)}` })
       }
     }
 
@@ -129,7 +162,7 @@ const handler = async (m, { conn }) => {
       msg += `│  💡 *ملاحظات:*\n`
       msg += okList.every(r => r.permanent)
         ? `│  • الملفات تبقى دائمة\n│  • الحد الأقصى: 200 ميجابايت\n`
-        : `│  • الرابط مؤقت (72 ساعة) لأن Catbox رفض الرفع\n`
+        : `│  • الرابط مؤقت لأن Catbox رفض الرفع، حمّل الملف قبل ما ينتهي\n`
       msg += `│\n`
     }
     msg += `╰──────────────`
