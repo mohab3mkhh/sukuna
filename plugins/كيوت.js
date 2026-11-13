@@ -1,54 +1,54 @@
 // plugins/neko.js
-import fetch from 'node-fetch'
-import pkg from '@whiskeysockets/baileys'
-const { generateWAMessageFromContent, prepareWAMessageMedia } = pkg
+import { sendButtons, btn } from '../lib/buttons.js'
+
+const PROVIDERS = [
+  { name: 'nekos.best', url: 'https://nekos.best/api/v2/neko', pick: d => d?.results?.[0]?.url },
+  { name: 'waifu.pics', url: 'https://api.waifu.pics/sfw/neko', pick: d => d?.url },
+  { name: 'nekos.life', url: 'https://nekos.life/api/v2/img/neko', pick: d => d?.url }
+]
+
+async function fetchJson(url, ms = 12000) {
+  const ctrl = new AbortController()
+  const t = setTimeout(() => ctrl.abort(), ms)
+  try {
+    const res = await fetch(url, { signal: ctrl.signal, headers: { 'User-Agent': 'Mozilla/5.0' } })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    return await res.json()
+  } finally {
+    clearTimeout(t)
+  }
+}
+
+async function getNekoUrl() {
+  const errors = []
+  for (const p of PROVIDERS) {
+    try {
+      const data = await fetchJson(p.url)
+      const url = p.pick(data)
+      if (url && /^https?:\/\//i.test(url)) return url
+      errors.push(`${p.name}: رد بدون رابط`)
+    } catch (e) {
+      errors.push(`${p.name}: ${e?.name === 'AbortError' ? 'timeout' : e?.message || e}`)
+    }
+  }
+  throw new Error(errors.join(' | '))
+}
 
 let handler = async (m, { conn, command, usedPrefix }) => {
   try {
     await m.react('⏳')
-    
-    // جلب صورة neko
-    const response = await fetch('https://nekos.life/api/v2/img/neko')
-    const data = await response.json()
-    const nekoUrl = data.url
-    
-    // تجهيز الصورة
-    const imageMessage = await prepareWAMessageMedia(
-      { image: { url: nekoUrl } },
-      { upload: conn.waUploadToServer }
-    )
-    
-    // بناء الأزرار
-    const buttons = [
-      {
-        name: 'quick_reply',
-        buttonParamsJson: JSON.stringify({
-          display_text: '🐱 التالي 🆕',
-          id: `${usedPrefix}${command}`
-        })
-      }
-    ]
-    
-    // بناء الرسالة التفاعلية
-    const interactiveMessage = {
-      viewOnceMessage: {
-        message: {
-          interactiveMessage: {
-            header: { hasMediaAttachment: true, ...imageMessage },
-            body: { text: 'Nyaww~ 🐾💗\n🐱 قطط أنمي لطيفة' },
-            footer: { text: 'اضغط الزر لصورة جديدة' },
-            nativeFlowMessage: { buttons }
-          }
-        }
-      }
-    }
-    
-    const msg = generateWAMessageFromContent(m.chat, interactiveMessage, { userJid: conn.user.id })
-    await conn.relayMessage(m.chat, msg.message, { messageId: msg.key.id })
+    const imageUrl = await getNekoUrl()
+
+    await sendButtons(conn, m.chat, {
+      image: imageUrl,
+      text: 'Nyaww~ 🐾💗\n🐱 قطط أنمي لطيفة',
+      footer: 'اضغط الزر لصورة جديدة',
+      buttons: [btn.reply('🐱 التالي 🆕', `${usedPrefix}${command}`)]
+    }, m)
+
     await m.react('✅')
-    
   } catch (error) {
-    console.error(error)
+    console.error('[neko]', error?.message || error)
     await m.react('❌')
     await m.reply('❌ حدث خطأ في جلب الصورة، حاول مرة أخرى')
   }
