@@ -1,22 +1,28 @@
-import pkg from '@whiskeysockets/baileys';
-import moment from 'moment-timezone';
-const { generateWAMessageFromContent, prepareWAMessageMedia, proto } = pkg;
+/**
+ * plugins/منشن.js
+ * منشن الكل / الأعضاء / المشرفين
+ */
 
-let handler = async (m, { isOwner, isAdmin, conn, command, groupMetadata }) => {
+import moment from 'moment-timezone';
+
+// ✅ استخدام ملف الأزرار
+import { sendButtons, btn, getButtonId } from '../lib/buttons.js';
+
+const COVER_IMAGE_URL = 'https://i.postimg.cc/mDPmxFLv/9b1bbcfd49629dc706d7c4437228cb9f.jpg';
+
+// ══════════════════════════════════════════════════
+//  الأمر الرئيسي
+// ══════════════════════════════════════════════════
+let handler = async (m, { isOwner, isAdmin, conn, command }) => {
   if (!(isAdmin || isOwner)) {
     global.dfail?.('admin', m, conn);
     throw false;
   }
 
   const chatId = m.chat;
-  const coverImageUrl = 'https://i.postimg.cc/mDPmxFLv/9b1bbcfd49629dc706d7c4437228cb9f.jpg';
 
+  // ✅ أمر .منشن — عرض القائمة
   if (command === 'منشن') {
-    const media = await prepareWAMessageMedia(
-      { image: { url: coverImageUrl } },
-      { upload: conn.waUploadToServer }
-    );
-
     const textMsg = `
 *◞👥‟⌝╎قــائـمـة أوامـر المنـشـن ⸃⤹*  
 
@@ -28,57 +34,48 @@ let handler = async (m, { isOwner, isAdmin, conn, command, groupMetadata }) => {
 > *╰*
 `;
 
-    const msg = generateWAMessageFromContent(chatId, {
-      viewOnceMessage: {
-        message: {
-          interactiveMessage: proto.Message.InteractiveMessage.create({
-            body: { text: textMsg },
-            header: media,
-            nativeFlowMessage: {
-              buttons: [
-                { name: "quick_reply", buttonParamsJson: `{"display_text":"👥 منشن الكل","id":".منشن_الكل"}` },
-                { name: "quick_reply", buttonParamsJson: `{"display_text":"🌟 منشن الأعضاء","id":".منشن_اعضاء"}` },
-                { name: "quick_reply", buttonParamsJson: `{"display_text":"👑 منشن المشرفين","id":".منشن_مشرفين"}` }
-              ]
-            },
-            contextInfo: { mentionedJid: [m.sender] }
-          })
-        }
-      }
-    }, {});
-
-    await conn.relayMessage(chatId, msg.message, { messageId: msg.key.id });
+    await sendButtons(conn, chatId, {
+      title: '👥 المنشن',
+      subtitle: 'اختر النوع',
+      text: textMsg,
+      footer: '⛩️ SUKUNA BOT',
+      image: COVER_IMAGE_URL,
+      buttons: [
+        btn.reply('👥 منشن الكل', '.منشن_الكل'),
+        btn.reply('🌟 منشن الأعضاء', '.منشن_اعضاء'),
+        btn.reply('👑 منشن المشرفين', '.منشن_مشرفين')
+      ],
+      mentions: [m.sender]
+    }, m);
     return;
   }
 
-  // ✅ جيب الأعضاء من groupMetadata مباشرةً
-  const meta = await conn.groupMetadata(chatId).catch(() => null)
-  if (!meta) return m.reply('⚠️ تعذر جلب بيانات المجموعة.')
+  // ✅ جلب الأعضاء
+  const meta = await conn.groupMetadata(chatId).catch(() => null);
+  if (!meta) return m.reply('⚠️ تعذر جلب بيانات المجموعة.');
 
-  const allParticipants = meta.participants || []
+  const allParticipants = meta.participants || [];
 
   let time = moment.tz('Asia/Riyadh').format('hh:mm A');
   let date = moment.tz('Asia/Riyadh').format('YYYY/MM/DD');
 
   let filteredParticipants =
-    command === 'منشن_اعضاء'   ? allParticipants.filter(p => !p.admin) :
-    command === 'منشن_مشرفين'  ? allParticipants.filter(p => p.admin)  :
+    command === 'منشن_اعضاء' ? allParticipants.filter(p => !p.admin) :
+    command === 'منشن_مشرفين' ? allParticipants.filter(p => p.admin) :
     allParticipants;
 
   if (filteredParticipants.length === 0) {
     return m.reply('⚠️ لا يوجد أعضاء متاحين للمنشن.');
   }
 
-  const media = await prepareWAMessageMedia(
-    { image: { url: coverImageUrl } },
-    { upload: conn.waUploadToServer }
-  );
+  const typeLabel = command === 'منشن_اعضاء' ? 'الأعـضـاء' :
+    command === 'منشن_مشرفين' ? 'المشرفـين' : 'الجميع';
 
   const teks = `
 *◞👥‟⌝╎مـنـشـن جـديـد ⸃⤹*  
 *~⌝˼‏※⪤˹͟͞≽⌯⧽°⸂◞✨◜⸃°⧼⌯≼˹͟͞⪤※˹⌞~*
 
-*⌝📌╎الـنـوع:* ⌞ ${command === 'منشن_اعضاء' ? 'الأعـضـاء' : command === 'منشن_مشرفين' ? 'المشرفـين' : 'الجميع'} ⌞*  
+*⌝📌╎الـنـوع:* ⌞ ${typeLabel} ⌞*  
 > *╭*  
 ${filteredParticipants.map(mem => `> ┊  @${mem.id.split('@')[0]}`).join('\n')}
 > *╰*
@@ -91,10 +88,75 @@ ${filteredParticipants.map(mem => `> ┊  @${mem.id.split('@')[0]}`).join('\n')}
 `;
 
   await conn.sendMessage(chatId, {
-    image: media.imageMessage,
+    image: { url: COVER_IMAGE_URL },
     caption: teks,
     mentions: filteredParticipants.map(a => a.id)
   });
+};
+
+// ══════════════════════════════════════════════════
+//  معالج الأزرار
+// ══════════════════════════════════════════════════
+handler.before = async function (m, { conn, isAdmin, isOwner, command }) {
+  const buttonId = getButtonId(m);
+  if (!buttonId) return false;
+
+  if (!(isAdmin || isOwner)) return false;
+
+  // ✅ إذا ضغط زر، نفذ الأمر
+  const match = buttonId.match(/^\.?(منشن_الكل|منشن_اعضاء|منشن_مشرفين)$/);
+  if (!match) return false;
+
+  const cmd = match[1];
+  const chatId = m.chat;
+
+  const meta = await conn.groupMetadata(chatId).catch(() => null);
+  if (!meta) {
+    await m.reply('⚠️ تعذر جلب بيانات المجموعة.');
+    return true;
+  }
+
+  const allParticipants = meta.participants || [];
+
+  let time = moment.tz('Asia/Riyadh').format('hh:mm A');
+  let date = moment.tz('Asia/Riyadh').format('YYYY/MM/DD');
+
+  let filteredParticipants =
+    cmd === 'منشن_اعضاء' ? allParticipants.filter(p => !p.admin) :
+    cmd === 'منشن_مشرفين' ? allParticipants.filter(p => p.admin) :
+    allParticipants;
+
+  if (filteredParticipants.length === 0) {
+    await m.reply('⚠️ لا يوجد أعضاء متاحين للمنشن.');
+    return true;
+  }
+
+  const typeLabel = cmd === 'منشن_اعضاء' ? 'الأعـضـاء' :
+    cmd === 'منشن_مشرفين' ? 'المشرفـين' : 'الجميع';
+
+  const teks = `
+*◞👥‟⌝╎مـنـشـن جـديـد ⸃⤹*  
+*~⌝˼‏※⪤˹͟͞≽⌯⧽°⸂◞✨◜⸃°⧼⌯≼˹͟͞⪤※˹⌞~*
+
+*⌝📌╎الـنـوع:* ⌞ ${typeLabel} ⌞*  
+> *╭*  
+${filteredParticipants.map(mem => `> ┊  @${mem.id.split('@')[0]}`).join('\n')}
+> *╰*
+
+*⌝🕒╎الـوقـت:* ${time}  
+*⌝📅╎التـاريـخ:* ${date}  
+
+*~⌝˼‏※⪤˹͟͞≽⌯⧽°⸂◞💮◜⸃°⧼⌯≼˹͟͞⪤※˹⌞~*  
+*🤖╎SUKUNA | 𝐁𝐎𝐓 ⛩️*
+`;
+
+  await conn.sendMessage(chatId, {
+    image: { url: COVER_IMAGE_URL },
+    caption: teks,
+    mentions: filteredParticipants.map(a => a.id)
+  });
+
+  return true;
 };
 
 handler.help = ['منشن', 'منشن_الكل', 'منشن_اعضاء', 'منشن_مشرفين'];
