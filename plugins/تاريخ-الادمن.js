@@ -1,6 +1,9 @@
 /**
  * plugins/تاريخ-الادمن.js
- * سجل تعديلات الأدمن
+ * يسجل كل عمليات تعيين/إزالة الأدمن في الجروب
+ * ويعرضها بالأمر .تاريخ-الادمن (للأدمنية فقط)
+ *
+ * v2: يدعم Baileys 7 (participants ممكن تبقى objects) + حماية من البيانات التالفة
  */
 
 import fs from 'fs'
@@ -8,174 +11,192 @@ import path from 'path'
 
 const DB_PATH = path.join(process.cwd(), 'adminHistory.json')
 
-// ✅ تخزين في الذاكرة عشان يشتغل حتى لو الملف فشل
-if (!global._adminHistoryCache) global._adminHistoryCache = {}
-
 function loadDB() {
-  // ✅ استخدم الكاش الأول
-  if (Object.keys(global._adminHistoryCache).length > 0) {
-    return global._adminHistoryCache
-  }
-  
   try {
     const data = JSON.parse(fs.readFileSync(DB_PATH, 'utf8'))
-    global._adminHistoryCache = data
-    return data
+    return data && typeof data === 'object' ? data : {}
   } catch {
     return {}
   }
 }
 
 function saveDB(db) {
-  // ✅ احفظ في الكاش
-  global._adminHistoryCache = db
-  
-  // ✅ احفظ في الملف
-  try {
-    fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2))
-  } catch (e) {
+  try { fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2)) } catch (e) {
     console.error('[AdminHistory] save fail:', e.message)
   }
 }
 
+// يحوّل أي شكل (string / object) لـ JID نصي
+const jidOf = (x) => {
+  if (!x) return null
+  if (typeof x === 'string') return x
+  if (typeof x === 'object') {
+    const v = x.id || x.jid || x.phoneNumber || x.lid || null
+    return typeof v === 'string' ? v : null
+  }
+  return null
+}
+
+const numOf = (jid) => String(jid || '').split('@')[0].split(':')[0]
+
 // ══════════════════════════════════════════════════
-//  مستمع لتحديثات الأعضاء
+//  مستمع لتحديثات الأعضاء (تعيين/إزالة أدمن)
 // ══════════════════════════════════════════════════
 function attachListener(conn) {
-  if (!conn) return
-  if (conn._adminHistoryAttached) return
+  if (!conn?.ev || conn._adminHistoryAttached) return
   conn._adminHistoryAttached = true
-
-  console.log('[AdminHistory] ✅ Listener attached')
 
   conn.ev.on('group-participants.update', async (update) => {
     try {
-      console.log('[AdminHistory] 📥 Event received:', JSON.stringify(update))
-      
-      const { id: groupId, participants, action, author } = update
-      
-      if (action !== 'promote' && action !== 'demote') {
-        console.log('[AdminHistory] ⏭️ Skipping action:', action)
-        return
-      }
+      const { id: groupId, participants = [], action, author } = update
+      if (action !== 'promote' && action !== 'demote') return
 
       const db = loadDB()
-      if (!db[groupId]) db[groupId] = []
+      if (!Array.isArray(db[groupId])) db[groupId] = []
+
+      const by = jidOf(author)
 
       for (const p of participants) {
-        db[groupId].push({
-          target: p,
-          action,
-          by: author || null,
-          time: Date.now()
-        })
-        console.log(`[AdminHistory] ✅ Saved: ${action} for ${p}`)
+        const target = jidOf(p)
+        if (!target) continue
+        db[groupId].push({ target, action, by, time: Date.now() })
       }
 
       if (db[groupId].length > 200) db[groupId] = db[groupId].slice(-200)
       saveDB(db)
-      
-      console.log(`[AdminHistory] 📊 Total events in group: ${db[groupId].length}`)
     } catch (e) {
-      console.error('[AdminHistory] ❌ Listener error:', e.message)
+      console.error('[AdminHistory] listener error:', e.message)
     }
   })
 }
 
-// ✅ ربط الـ listener
-if (global.conn) attachListener(global.conn)
-setInterval(() => {
-  if (global.conn && !global.conn._adminHistoryAttached) {
-    attachListener(global.conn)
-  }
+// مؤقت واحد فقط حتى مع إعادة تحميل الإضافة
+if (global._adminHistoryTimer) clearInterval(global._adminHistoryTimer)
+global._adminHistoryTimer = setInterval(() => {
+  if (global.conn) attachListener(global.conn)
 }, 5000)
 
+if (global.conn) attachListener(global.conn)
+
 // ══════════════════════════════════════════════════
-//  الأمر
+//  الأمر - للأدمنية فقط
 // ══════════════════════════════════════════════════
-const handler = async (m, { conn, isAdmin, isROwner }) => {
-  // ✅ تأكد إن الـ listener مربوط
-  if (conn && !conn._adminHistoryAttached) {
-    attachListener(conn)
-  }
-
-  if (!isAdmin && !isROwner) {
-    return m.reply(`╔═══━━━══━━━❪🚫❫━━━══━━━═══╗
-║  ❪⛔️❫ *هَذَا الأَمْرُ لِلْمُشْرِفِينَ فَقَط* ║
-╚═══━━━══━━━❪🚫❫━━━══━━━═══╝`)
-  }
-
-  if (!m.isGroup) {
-    return m.reply(`╔═══━━━══━━━❪🚫❫━━━══━━━═══╗
-║  ❪👥❫ *هَذَا الأَمْرُ لِلْمَجْمُوعَاتِ فَقَط* ║
-╚═══━━━══━━━❪🚫❫━━━══━━━═══╝`)
-  }
-
-  const groupId = m.chat
-  const db = loadDB()
-  const history = db[groupId] || []
-
-  console.log(`[AdminHistory] 📋 Showing history for ${groupId}, events: ${history.length}`)
-
-  if (!history.length) {
-    return m.reply(`╔═══━━━══━━━❪📭❫━━━══━━━═══╗
-║  ❪📭❫ *لَا يُوجَدُ سِجِلٌّ بَعْدُ* ║
-╚═══━━━══━━━❪📭❫━━━══━━━═══╝
-
-💡 *جرب:*
-• ارفع حد أدمن
-• انزل حد من الأدمن
-• ثم اكتب الأمر تاني
-
-╔═══━━━══━━━❪⚡️❫━━━══━━━═══╗
+const FOOTER = `╔═══━━━══━━━❪⚡️❫━━━══━━━═══╗
 ║  ❪🔥❫ *𝑺𝑼𝑲𝑼𝑵𝑨 𝑩𝑶𝑻*        ║
-╚═══━━━══━━━❪⚡️❫━━━══━━━═══╝`)
-  }
+║  ❪👹❫ *𝑲𝑰𝑵𝑮 𝑶𝑭 𝑪𝑼𝑹𝑺𝑬𝑺*     ║
+╚═══━━━══━━━❪⚡️❫━━━══━━━═══╝`
 
-  const recent = history.slice(-30).reverse()
-  const mentions = new Set()
+const handler = async (m, { conn, isAdmin, isROwner }) => {
+  try {
+    if (!isAdmin && !isROwner) {
+      return m.reply(`╔═══━━━══━━━❪🚫❫━━━══━━━═══╗
+║  ❪⛔️❫ *هَذَا الأَمْرُ*        ║
+║  ❪👑❫ *لِلْمُشْرِفِينَ فَقَط* ║
+╚═══━━━══━━━❪🚫❫━━━══━━━═══╝
 
-  const lines = recent.map((entry, i) => {
-    const date = new Date(entry.time)
-    const dateStr = date.toLocaleString('ar-EG', { dateStyle: 'medium', timeStyle: 'short' })
-    const actionText = entry.action === 'promote' ? '✅ *تَمَّ تَعْيِينُهُ أَدْمِن*' : '❌ *تَمَّ إِزَالَتُهُ مِنَ الأَدْمِن*'
+╔═══━━━══━━━❪🩸❫━━━══━━━═══╗
+║  ❪👹❫ *أَنْتَ لَسْتَ مُشْرِفًا* ║
+║  ❪🔥❫ *لَا تَقْرَبْ مِمَّا لَا يَخُصُّكَ* ║
+╚═══━━━══━━━❪🩸❫━━━══━━━═══╝
 
-    mentions.add(entry.target)
-    let byText = '❓ غَيْرُ مَعْرُوف'
-    if (entry.by) {
-      mentions.add(entry.by)
-      byText = `@${entry.by.split('@')[0]}`
+${FOOTER}`)
     }
 
-    return `┏━ ${i + 1} ━━━━━━━━━━━━━━┓
+    if (!m.isGroup) {
+      return m.reply(`╔═══━━━══━━━❪🚫❫━━━══━━━═══╗
+║  ❪⛔️❫ *هَذَا الأَمْرُ*        ║
+║  ❪👥❫ *لِلْمَجْمُوعَاتِ فَقَط* ║
+╚═══━━━══━━━❪🚫❫━━━══━━━═══╝
+
+${FOOTER}`)
+    }
+
+    const groupId = m.chat
+    const db = loadDB()
+    const history = Array.isArray(db[groupId]) ? db[groupId] : []
+
+    if (!history.length) {
+      return m.reply(`╔═══━━━══━━━❪📭❫━━━══━━━═══╗
+║  ❪📭❫ *لَا يُوجَدُ سِجِلٌّ*    ║
+║  ❪📜❫ *بَعْدُ لِهَذَا الجَّرُوبِ* ║
+╚═══━━━══━━━❪📭❫━━━══━━━═══╝
+
+╔═══━━━══━━━❪🩸❫━━━══━━━═══╗
+║  ❪👹❫ *السِّجِلُ يَبْدَأُ*      ║
+║  ❪🔥❫ *مِنْ لَحْظَةِ تَشْغِيلِ هَذَا الأَمْرِ* ║
+╚═══━━━══━━━❪🩸❫━━━══━━━═══╝
+
+${FOOTER}`)
+    }
+
+    const recent = history.slice(-30).reverse()
+    const mentions = new Set()
+    const lines = []
+
+    for (const entry of recent) {
+      // تخطّي أي سجل تالف (قديم محفوظ كـ object مثلاً)
+      const target = jidOf(entry?.target)
+      if (!target) continue
+
+      const by = jidOf(entry.by)
+      const date = new Date(entry.time)
+      const dateStr = date.toLocaleString('ar-EG', { dateStyle: 'medium', timeStyle: 'short' })
+      const actionText = entry.action === 'promote'
+        ? '✅ *تَمَّ تَعْيِينُهُ أَدْمِن*'
+        : '❌ *تَمَّ إِزَالَتُهُ مِنَ الأَدْمِن*'
+
+      mentions.add(target)
+      let byText = '❓ غَيْرُ مَعْرُوف (تَحْدِيثٌ تِلْقَائِيٌّ مِنْ وَاتسَاب)'
+      if (by) {
+        mentions.add(by)
+        byText = `@${numOf(by)}`
+      }
+
+      lines.push(`┏━━━━━━━━━━━━━━━━━━━┓
 ${actionText}
 ┣━━━━━━━━━━━━━━━━━━━┫
-👤 *الشَّخْصُ:* @${entry.target.split('@')[0]}
+👤 *الشَّخْصُ:* @${numOf(target)}
 👮 *بِوَاسِطَةِ:* ${byText}
 🕐 *الوَقْتُ:* ${dateStr}
-┗━━━━━━━━━━━━━━━━━━━┛`
-  })
+┗━━━━━━━━━━━━━━━━━━━┛`)
+    }
 
-  return conn.sendMessage(groupId, {
-    text: `╔═══━━━══━━━❪👑❫━━━══━━━═══╗
-║  ❪📜❫ *سِجِلُّ التَّعْدِيلَاتِ* ║
+    if (!lines.length) {
+      return m.reply('📭 السجل موجود بس بياناته قديمة/تالفة. هيتسجل من جديد مع أول تعيين أو إزالة أدمن.')
+    }
+
+    return await conn.sendMessage(groupId, {
+      text: `╔═══━━━══━━━❪👑❫━━━══━━━═══╗
+║  ❪📜❫ *𝑨𝑫𝑴𝑰𝑵𝑺*              ║
+║  ❪⚔️❫ *سِجِلُّ التَّعْدِيلَات*   ║
 ╚═══━━━══━━━❪👑❫━━━══━━━═══╝
 
-📊 *عَدَدُ التَّعْدِيلَاتِ:* ${history.length}
-📋 *يُعْرَضُ:* آخِر ${recent.length}
+╔═══━━━══━━━❪🩸❫━━━══━━━═══╗
+║  ❪👑❫ *لِلْمُشْرِفِينَ فَقَط* ║
+║  ──━━━══━━━──                  ║
+║  ❪📊❫ *آخِر ${lines.length} تَعْدِيل* ║
+║  ❪⏳❫ *مِنْذُ تَشْغِيلِ النِّظَامِ* ║
+╚═══━━━══━━━❪🩸❫━━━══━━━═══╝
 
 ${lines.join('\n\n')}
 
-╔═══━━━══━━━❪⚡️❫━━━══━━━═══╗
-║  ❪🔥❫ *𝑺𝑼𝑲𝑼𝑵𝑨 𝑩𝑶𝑻*        ║
-║  ❪👹❫ *𝑲𝑰𝑵𝑮 𝑶𝑭 𝑪𝑼𝑹𝑺𝑬𝑺*     ║
-╚═══━━━══━━━❪⚡️❫━━━══━━━═══╝`,
-    mentions: [...mentions]
-  }, { quoted: m })
+╔═══━━━══━━━❪👑❫━━━══━━━═══╗
+║  ❪🩸❫ *اَلْقُوَّةُ لَا تَأْتِي* ║
+║  ❪🔥❫ *إِلَّا بِالسَّيْطَرَةِ*  ║
+╚═══━━━══━━━❪👑❫━━━══━━━═══╝
+
+${FOOTER}`,
+      mentions: [...mentions]
+    }, { quoted: m })
+
+  } catch (e) {
+    console.error('[AdminHistory] command error:', e?.stack || e)
+    return m.reply(`⚠️ حصل خطأ في الأمر: ${String(e?.message || e).slice(0, 120)}`).catch(() => {})
+  }
 }
 
-handler.help = ['تاريخ-الادمن']
-handler.tags = ['group']
+handler.help    = ['تاريخ-الادمن']
+handler.tags    = ['group']
 handler.command = /^(تاريخ-الادمن|تاريخ_الادمن|سجل-الادمن|adminhistory)$/i
 
 export default handler
