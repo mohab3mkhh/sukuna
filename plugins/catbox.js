@@ -8,6 +8,8 @@ const UA = 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like G
 // من غيره الرفع بيبقى مجهول وبيشتغل عادي. userhash غلط = "Invalid uploader"
 const USERHASH = (process.env.CATBOX_USERHASH || '').trim()
 // اختياري: كوكي جلسة Catbox بالشكل  PHPSESSID=xxxx  (المتصفح بيبعتها مع الـ userhash)
+// اختياري: مفتاح API من api.imgbb.com (للصور فقط، رابط دائم)
+const IMGBB_KEY = (process.env.IMGBB_API_KEY || '').trim()
 const CATBOX_COOKIE = (process.env.CATBOX_COOKIE || '').trim()
 
 function getExtFromMime(mime) {
@@ -58,6 +60,16 @@ const asJson = (text) => {
 }
 
 const PROVIDERS = [
+  {
+    name: 'ImgBB (دائم)', permanent: true,
+    skip: (mime) => !IMGBB_KEY || !mime.startsWith('image/'),
+    run: async (buf, mime) => {
+      const j = asJson(await send(`https://api.imgbb.com/1/upload?key=${encodeURIComponent(IMGBB_KEY)}`, 'image', buf, mime))
+      const url = j?.data?.url || j?.data?.display_url
+      if (!url) throw new Error(JSON.stringify(j?.error || j).slice(0, 100))
+      return url
+    }
+  },
   {
     name: 'Catbox.moe', permanent: true,
     run: async (buf, mime) => {
@@ -114,6 +126,7 @@ const PROVIDERS = [
 async function upload(buffer, mime) {
   const errors = []
   for (const p of PROVIDERS) {
+    if (p.skip?.(mime)) continue
     try {
       const link = await p.run(buffer, mime)
       console.log(`[Catbox] ✅ ${p.name}`)
