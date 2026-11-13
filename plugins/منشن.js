@@ -8,7 +8,7 @@ import moment from 'moment-timezone';
 // ✅ استخدام ملف الأزرار
 import { sendButtons, btn, getButtonId } from '../lib/buttons.js';
 
-const COVER_IMAGE_URL = 'https://i.postimg.cc/mDPmxFLv/9b1bbcfd49629dc706d7c4437228cb9f.jpg';
+const COVER_IMAGE_URL = 'https://ibb.co/XmqxYn1';
 
 // ══════════════════════════════════════════════════
 //  الأمر الرئيسي
