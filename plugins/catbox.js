@@ -7,6 +7,8 @@ const UA = 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like G
 // اختياري: لو عندك حساب Catbox حط الـ userhash بتاعه في متغير بيئة CATBOX_USERHASH
 // من غيره الرفع بيبقى مجهول وبيشتغل عادي. userhash غلط = "Invalid uploader"
 const USERHASH = (process.env.CATBOX_USERHASH || '').trim()
+// اختياري: كوكي جلسة Catbox بالشكل  PHPSESSID=xxxx  (المتصفح بيبعتها مع الـ userhash)
+const CATBOX_COOKIE = (process.env.CATBOX_COOKIE || '').trim()
 
 function getExtFromMime(mime) {
   const map = {
@@ -30,7 +32,7 @@ function getMediaType(mime) {
 }
 
 // إرسال multipart بحجم معروف (Content-Length) — بعض السيرفرات بترفض الـ chunked
-async function send(url, field, buffer, mime, extra = {}) {
+async function send(url, field, buffer, mime, extra = {}, headers = {}) {
   const form = new FormData()
   for (const [k, v] of Object.entries(extra)) form.append(k, v)
   form.append(field, buffer, { filename: `file.${getExtFromMime(mime)}`, contentType: mime })
@@ -39,7 +41,7 @@ async function send(url, field, buffer, mime, extra = {}) {
   const res = await fetch(url, {
     method: 'POST',
     body,
-    headers: { ...form.getHeaders(), 'Content-Length': String(body.length), 'User-Agent': UA }
+    headers: { ...form.getHeaders(), 'Content-Length': String(body.length), 'User-Agent': UA, ...headers }
   })
   const text = (await res.text()).trim()
   if (!res.ok && !text) throw new Error(`HTTP ${res.status}`)
@@ -58,8 +60,27 @@ const asJson = (text) => {
 const PROVIDERS = [
   {
     name: 'Catbox.moe', permanent: true,
-    run: async (buf, mime) => asUrl(await send('https://catbox.moe/user/api.php', 'fileToUpload', buf, mime,
-      { reqtype: 'fileupload', ...(USERHASH ? { userhash: USERHASH } : {}) }))
+    run: async (buf, mime) => {
+      // نفس هيدرز المتصفح (Origin/Referer/XHR + الكوكي لو موجود)
+      const hdr = {
+        Origin: 'https://catbox.moe',
+        Referer: 'https://catbox.moe/',
+        'X-Requested-With': 'XMLHttpRequest',
+        Accept: '*/*',
+        ...(CATBOX_COOKIE ? { Cookie: CATBOX_COOKIE } : {})
+      }
+      // لو عندك userhash جرّبه الأول، وبعدين مجهول
+      const attempts = USERHASH
+        ? [{ reqtype: 'fileupload', userhash: USERHASH }, { reqtype: 'fileupload' }]
+        : [{ reqtype: 'fileupload' }]
+      let lastErr
+      for (const extra of attempts) {
+        try {
+          return asUrl(await send('https://catbox.moe/user/api.php', 'fileToUpload', buf, mime, extra, hdr))
+        } catch (e) { lastErr = e }
+      }
+      throw lastErr
+    }
   },
   {
     name: 'Litterbox (مؤقت 72 ساعة)', permanent: false,
