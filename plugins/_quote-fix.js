@@ -6,7 +6,9 @@
 //   وللتثبيت: غيّر DEFAULT_MODE تحت للرقم الشغال.
 
 const DEFAULT_MODE = 5
-if (global.quoteMode === undefined) global.quoteMode = DEFAULT_MODE
+const VER = 3
+// لو الملف اتحدّث (حتى من غير Restart) بنطبّق الوضع الافتراضي الجديد ونعيد التركيب
+if (global.__quoteVer !== VER) { global.quoteMode = DEFAULT_MODE; global.__quoteVer = VER }
 
 const isPhone = j => typeof j === 'string' && j.endsWith('@s.whatsapp.net')
 
@@ -41,8 +43,8 @@ export function manual(q) {
 }
 
 function patch(conn) {
-    if (!conn || conn.__quotePatched) return
-    const orig = conn.sendMessage.bind(conn)
+    if (!conn || conn.__quotePatched === VER) return
+    const orig = conn.__origSend || conn.sendMessage.bind(conn)
     conn.__origSend = orig
     conn.sendMessage = (jid, content, opts) => {
         try {
@@ -63,7 +65,7 @@ function patch(conn) {
         } catch (e) { console.error('[quote-fix]', e.message) }
         return orig(jid, content, opts)
     }
-    conn.__quotePatched = true
+    conn.__quotePatched = VER
     console.log(`[quote-fix] ✅ وضع الرد: ${global.quoteMode}`)
 }
 
