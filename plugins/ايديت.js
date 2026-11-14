@@ -1,17 +1,17 @@
 // plugins/edit-all-final.js
 // ✧ 𝑺𝑼𝑲𝑼𝑵𝑨 - بحث وتحميل الإيديتات 🎬
 
-import axios from 'axios'
-import * as cheerio from 'cheerio'
-import yts from 'yt-search'
-import fetch from 'node-fetch'
-import crypto from 'crypto'
+const axios = (await import('axios')).default
+const cheerio = await import('cheerio')
+const { default: yts } = await import('yt-search')
+const { default: fetch } = await import('node-fetch')
+const { default: crypto } = await import('node:crypto')
 
-import {
+const {
   generateWAMessageFromContent,
   prepareWAMessageMedia,
   proto
-} from '@whiskeysockets/baileys'
+} = await import('@whiskeysockets/baileys')
 
 // ════════════════════════════════════════════════
 //                     ثوابت
