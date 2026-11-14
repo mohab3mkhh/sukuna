@@ -30,13 +30,25 @@ export function rebuild(q, mode) {
     return { key, message }
 }
 
+// 5 = من غير خيار quoted خالص: بنبني الـ contextInfo بإيدينا
+export function manual(q) {
+    const k = q.key
+    const phone = [k.participantAlt, k.participant, k.remoteJidAlt].find(isPhone)
+    const text = q.text ?? q.msg?.text ?? q.msg?.caption ?? ''
+    return { stanzaId: k.id, participant: phone || k.participant || k.remoteJid, quotedMessage: { conversation: String(text || ' ') } }
+}
+
 function patch(conn) {
     if (!conn || conn.__quotePatched) return
     const orig = conn.sendMessage.bind(conn)
     conn.__origSend = orig
     conn.sendMessage = (jid, content, opts) => {
         try {
-            if (opts?.quoted?.key && global.quoteMode !== 1) {
+            if (opts?.quoted?.key && global.quoteMode === 5 && content && typeof content === 'object') {
+                const { quoted, ...rest } = opts
+                content = { ...content, contextInfo: { ...(content.contextInfo || {}), ...manual(quoted) } }
+                opts = rest
+            } else if (opts?.quoted?.key && global.quoteMode !== 1) {
                 opts = { ...opts, quoted: rebuild(opts.quoted, global.quoteMode) }
             }
         } catch (e) { console.error('[quote-fix]', e.message) }
@@ -52,16 +64,24 @@ let handler = async (m, { conn, command, text, isROwner }) => {
     if (!isROwner) return
     const raw = conn.__origSend || conn.sendMessage.bind(conn)
 
+    if (/^فحص_الرد$/i.test(command)) {
+        const info = { chat: m.chat, key: m.key, sender: m.sender, mtype: m.mtype, isGroup: m.isGroup, mode: global.quoteMode, patched: !!conn.__quotePatched, bot: conn.user?.id }
+        return raw(m.chat, { text: '```' + JSON.stringify(info, null, 1) + '```' })
+    }
+
     if (/^وضع_الرد$/i.test(command)) {
         const n = parseInt(text)
-        if (![1, 2, 3, 4].includes(n)) return raw(m.chat, { text: `الوضع الحالي: ${global.quoteMode}\nاكتب: .وضع_الرد 1 (أو 2 أو 3 أو 4)` }, { quoted: rebuild(m, global.quoteMode) })
+        if (![1, 2, 3, 4, 5].includes(n)) return raw(m.chat, { text: `الوضع الحالي: ${global.quoteMode}\nاكتب: .وضع_الرد 1 (من 1 لـ 5)` }, { quoted: rebuild(m, global.quoteMode) })
         global.quoteMode = n
         return raw(m.chat, { text: `✅ وضع الرد بقى ${n}` }, { quoted: rebuild(m, n) })
     }
 
-    await raw(m.chat, { text: '🧪 هبعت 4 ردود. قولي أرقام اللي ظهر فوقها *اقتباس* لرسالتك على واتساب العادي.' })
-    for (const n of [1, 2, 3, 4]) {
-        try { await raw(m.chat, { text: `رد رقم ${n}` }, { quoted: rebuild(m, n) }) } catch (e) { console.error('[quote-fix test]', n, e.message) }
+    await raw(m.chat, { text: '🧪 هبعت 5 ردود. قولي أرقام اللي ظهر فوقها *اقتباس* لرسالتك على واتساب العادي.' })
+    for (const n of [1, 2, 3, 4, 5]) {
+        try {
+            if (n === 5) await raw(m.chat, { text: `رد رقم 5`, contextInfo: manual(m) })
+            else await raw(m.chat, { text: `رد رقم ${n}` }, { quoted: rebuild(m, n) })
+        } catch (e) { console.error('[quote-fix test]', n, e.message) }
         await wait(1200)
     }
     await raw(m.chat, { text: '✅ خلصت. اكتب لي الأرقام اللي ظهر فيها الاقتباس.' })
@@ -69,9 +89,9 @@ let handler = async (m, { conn, command, text, isROwner }) => {
 
 handler.all = async function () { patch(this) }
 
-handler.help = ['تجربة_الرد', 'وضع_الرد']
+handler.help = ['تجربة_الرد', 'وضع_الرد', 'فحص_الرد']
 handler.tags = ['owner']
-handler.command = /^(تجربة_الرد|وضع_الرد)$/i
+handler.command = /^(تجربة_الرد|وضع_الرد|فحص_الرد)$/i
 handler.owner = true
 
 export default handler
