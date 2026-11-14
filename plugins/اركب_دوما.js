@@ -13,10 +13,11 @@ const TARGETS = {
   'ادم':     { jid: '201150572826@s.whatsapp.net',  img: 'https://i.ibb.co/dwPf4VBX/upload-1778018221395.jpg' },
   'مهند':    { jid: '201096470209@s.whatsapp.net',  img: 'https://i.ibb.co/dwPf4VBX/upload-1778018221395.jpg' },
   'ساسكي':   { jid: '201037418972@s.whatsapp.net',  img: 'https://i.ibb.co/dwPf4VBX/upload-1778018221395.jpg' },
-  'ميزو':    { jid: '2348096265019@s.whatsapp.net',  img: 'https://i.ibb.co/dwPf4VBX/upload-1778018221395.jpg' },
+  'ميزو':    { jid: '2348096265019@s.whatsapp.net', img: 'https://i.ibb.co/dwPf4VBX/upload-1778018221395.jpg' },
 
   // ✅ شركة وي (رقم دعم WE) — بيتخطى فحص العضوية دايمًا
-  'شركة وي': { jid: '201555000111@s.whatsapp.net', img: 'https://i.ibb.co/dwPf4VBX/upload-1778018221395.jpg', {skipCheck: true },
+  'شركة وي': { jid: '201555000111@s.whatsapp.net', img: 'https://i.ibb.co/dwPf4VBX/upload-1778018221395.jpg', skipCheck: true },
+}
 
 const handler = async (m, { conn }) => {
   try {
@@ -49,7 +50,7 @@ const handler = async (m, { conn }) => {
 
     if (!targetName || !TARGETS[targetName]) {
       const names = Object.keys(TARGETS).join(' | ')
-      return conn.sendMessage(m.chat, { text:`❌ اسم غير معروف!\nالأسماء المتاحة: ${names}`)
+      return conn.sendMessage(m.chat, { text: `❌ اسم غير معروف!\nالأسماء المتاحة: ${names}` }, { quoted: m })
     }
 
     const { jid: targetJid, img, skipCheck } = TARGETS[targetName]
@@ -60,7 +61,7 @@ const handler = async (m, { conn }) => {
     const targetLabel = hasJid ? `@${targetNum}` : `*${targetName}*`
 
     let exists = true
-    if (hasJid) {
+    if (hasJid && !skipCheck) {
       // التحقق من وجود الشخص في الجروب (بس لو عنده رقم فعلي)
       const metadata = await conn.groupMetadata(m.chat)
       const last9 = targetNum.slice(-9)
