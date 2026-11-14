@@ -3,6 +3,10 @@
 
 import axios from "axios";
 
+// نفس مكتبة الأزرار اللي بتشتغل على واتساب العادي والأعمال
+let libButtons = null;
+try { libButtons = await import("../lib/buttons.js"); } catch (e) { console.log("[quiz] lib/buttons.js مش متاح:", e.message); }
+
 const SIGN = " ⛩️ *SUKUNA ⚡️ BOT* ⛩️";
 const SESSION_TTL_MS = 120_000;
 const GIST_URL = "https://gist.githubusercontent.com/Kyutaka101/4e01c190b7d67225ad7a86d388eeedf6/raw/67f0de059cea4b965a3f3bf211c12fc9c48043e5/gistfile1.txt";
@@ -87,11 +91,30 @@ export function attachConverter(conn){
           }
         }
 
-        const final = (selectedId || selectedText || '').toString().trim();
-        if (!final) continue;
+        // الطريقة 5: أزرار lib/buttons (native flow)
+        if (!selectedId) {
+          const nf = m.message?.interactiveResponseMessage?.nativeFlowResponseMessage;
+          if (nf?.paramsJson) {
+            try { const p = JSON.parse(nf.paramsJson); selectedId = p.id || p.selectedId || p.row_id || null; } catch {}
+          }
+        }
 
-        // ✅ تحقق من أنه يبدأ بـ "quiz_answer::"
-        if (!final.startsWith("quiz_answer::")) continue;
+        let final = (selectedId || selectedText || '').toString().trim();
+
+        // وضع النص: لو الأزرار ما ظهرتش، الإجابة برقم أو اسم الخيار
+        if (!final.includes("quiz_answer::")) {
+          const sess = sessions.get(m.key.remoteJid);
+          if (sess?.textMode && !sess.answered) {
+            const t = (m.message?.conversation || m.message?.extendedTextMessage?.text || "").trim();
+            const byNum = /^[1-4]$/.test(t) ? sess.options?.[Number(t) - 1] : null;
+            const byName = sess.options?.find(o => o === t);
+            const pickd = byNum || byName;
+            if (pickd) final = "quiz_answer::" + pickd;
+          }
+        }
+        const at = final.indexOf("quiz_answer::");
+        if (at === -1) continue;
+        final = final.slice(at);
 
         const payload = final.slice("quiz_answer::".length).trim();
         const jid = m.key.remoteJid;
@@ -160,6 +183,26 @@ function buildQuickButtons(options){
   }));
 }
 
+// يبعت السؤال: (صورة لو فيه) + أزرار lib/buttons. ولو فشلت الأزرار → قائمة مرقمة.  بيرجّع true لو وضع النص
+async function sendQuestion(conn, m, { imageUrl, caption, options }) {
+  if (imageUrl) await conn.sendMessage(m.chat, { image: { url: imageUrl }, caption }, { quoted: m });
+  try {
+    if (!libButtons?.sendButtons || !libButtons?.btn) throw new Error("lib/buttons مش متاح");
+    const { sendButtons, btn } = libButtons;
+    await sendButtons(conn, m.chat, {
+      text: imageUrl ? "👇 اختار الإجابة" : caption,
+      footer: SIGN,
+      buttons: options.slice(0, 4).map(o => btn.reply(String(o).slice(0, 24), `quiz_answer::${o}`)),
+    }, m);
+    return false;
+  } catch (e) {
+    console.log("[quiz] الأزرار فشلت، هبعت قائمة مرقمة:", e.message);
+    const txt = [imageUrl ? "" : caption, "", ...options.map((o, i) => `${i + 1}. ${o}`), "", "✍️ اكتب رقم الإجابة أو اسمها"].join("\n").trim();
+    await conn.sendMessage(m.chat, { text: txt }, { quoted: m });
+    return true;
+  }
+}
+
 async function loadChoices(){
   try{
     const r = await axios.get(GIST_URL, { timeout: 8000 });
@@ -201,19 +244,7 @@ async function handler(m, { conn }){
 
       const caption = `⛩️ *SUKUNA QUIZ* ⛩️\n\n🎯 من هذه الشخصية؟\n⏳ لديك 120 ثانية\n\n${SIGN}`;
 
-      // ✅ بناء الأزرار
-      try {
-        const buttons = buildQuickButtons(options);
-        await conn.sendMessage(m.chat, {
-          image: { url: imageUrl },
-          caption,
-          buttons,
-          headerType: 4
-        }, { quoted: m });
-      } catch (e) {
-        const txt = [caption, "", ...options.map((o, i) => `${i + 1}. ${o}`)].join("\n");
-        await conn.sendMessage(m.chat, { text: txt }, { quoted: m });
-      }
+      const textMode = await sendQuestion(conn, m, { imageUrl, caption, options });
 
       // ✅ حفظ الجلسة
       const timeout = setTimeout(async () => {
@@ -231,6 +262,7 @@ async function handler(m, { conn }){
 
       sessions.set(m.chat, { 
         answer: correctName, 
+        options, textMode,
         timeout, 
         answered: false, 
         type: qtype, 
@@ -264,16 +296,7 @@ async function handler(m, { conn }){
 
     const caption = `⛩️ *ABILITY QUIZ*  ⛩️\n\n💪 قدرة *${correctName}*\n⏳ لديك 120 ثانية\n\n${SIGN}`;
 
-    try {
-      const buttons = buildQuickButtons(options);
-      await conn.sendMessage(m.chat, {
-        text: caption,
-        buttons
-      }, { quoted: m });
-    } catch (e) {
-      const txt = [caption, "", ...options.map((o, i) => `${i + 1}. ${o}`)].join("\n");
-      await conn.sendMessage(m.chat, { text: txt }, { quoted: m });
-    }
+    const textMode = await sendQuestion(conn, m, { imageUrl: null, caption, options });
 
     const timeout = setTimeout(async () => {
       const s = sessions.get(m.chat);
@@ -290,6 +313,7 @@ async function handler(m, { conn }){
 
     sessions.set(m.chat, { 
       answer: correctAbility, 
+      options, textMode,
       timeout, 
       answered: false, 
       type: qtype, 
