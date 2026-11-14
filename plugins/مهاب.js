@@ -1,4 +1,4 @@
-const OWNER_ID = '201016855501@s.whatsapp.net'
+const OWNER_ID = '201036547166@s.whatsapp.net'
 
 const handler = async (m, { conn }) => {}
 
