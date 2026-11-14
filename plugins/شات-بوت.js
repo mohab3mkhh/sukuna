@@ -48,8 +48,8 @@ async function sendReply(conn, m, text) {
                 text,
                 footer: '⛩️ SUKUNA BOT ⛩️',
                 buttons: [
-                    libButtons.btn.reply('⌈🚀╎المطور╎🚀⌋', '.المطور'),
-                    libButtons.btn.reply('⌈🧩╎الاوامر╎🧩⌋', '.الاوامر')
+                    libButtons.btn.reply('⌈🚀╎المطور╎🚀⌋', '.المطورين'),
+                    libButtons.btn.reply('⌈🧩╎الاوامر╎🧩⌋', '.اوامر')
                 ]
             }, m)
             return
