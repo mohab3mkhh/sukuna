@@ -5,7 +5,7 @@
 //     .وضع_الرد 1..4   → يغيّر الطريقة فورًا (لحد ما البوت يتعمله Restart)
 //   وللتثبيت: غيّر DEFAULT_MODE تحت للرقم الشغال.
 
-const DEFAULT_MODE = 1
+const DEFAULT_MODE = 5
 if (global.quoteMode === undefined) global.quoteMode = DEFAULT_MODE
 
 const isPhone = j => typeof j === 'string' && j.endsWith('@s.whatsapp.net')
@@ -34,7 +34,9 @@ export function rebuild(q, mode) {
 export function manual(q) {
     const k = q.key
     const phone = [k.participantAlt, k.participant, k.remoteJidAlt].find(isPhone)
-    const text = q.text ?? q.msg?.text ?? q.msg?.caption ?? ''
+    const kind = Object.keys(q.message || {})[0] || ''
+    const label = { imageMessage: '📷 صورة', videoMessage: '🎥 فيديو', audioMessage: '🎵 صوت', stickerMessage: '🏷️ ملصق', documentMessage: '📄 ملف' }[kind]
+    const text = q.text || q.msg?.text || q.msg?.caption || label || ''
     return { stanzaId: k.id, participant: phone || k.participant || k.remoteJid, quotedMessage: { conversation: String(text || ' ') } }
 }
 
