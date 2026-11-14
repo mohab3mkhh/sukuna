@@ -1,5 +1,5 @@
 // plugins/edit-all-final.js
-// ✧ 么⃝𝑮𝑬𝑶 - بحث وتحميل الإيديتات 🎬
+// ✧ 𝑺𝑼𝑲𝑼𝑵𝑨 - بحث وتحميل الإيديتات 🎬
 
 import axios from 'axios'
 import * as cheerio from 'cheerio'
@@ -23,14 +23,14 @@ const UA =
 const SIGN = `
 
 ╔════════════════╗
-║   么⃝𝑮𝑬𝑶𖣔𝑩𝑶𝑻   ║
+║  𝑺𝑼𝑲𝑼𝑵𝑨 𝑩𝑶𝑻 🔥  ║
 ╚════════════════╝`
 
 const BOT_CHANNEL_ID =
   '120363413128415519@newsletter'
 
 const BOT_CHANNEL_NAME =
-  '𝐺𝐸𝑂✧𝐵𝑂𝑇'
+  '𝑺𝑼𝑲𝑼𝑵𝑨✧𝑩𝑶𝑻'
 
 // صورة القائمة
 const MENU_IMAGE_URL =
@@ -793,5 +793,249 @@ async function saveNowDownload(url, format = '360') {
 }
 
 async function searchYouTubeStrong(query) {
-  const queries = [
-    `${query} edit
+  try {
+    const r = await yts({ query: `${query} edit`, pages: 2 })
+    const videos = (r.videos || []).filter(v => v.duration?.seconds < 300)
+    if (videos.length) return videos[0]
+  } catch {}
+
+  try {
+    const r = await yts(query + ' amv edit')
+    const videos = (r.videos || []).filter(v => v.duration?.seconds < 300)
+    if (videos.length) return videos[0]
+  } catch {}
+
+  return null
+}
+
+async function getYouTubeVideo(query) {
+  const yt = await searchYouTubeStrong(query)
+  if (!yt) return null
+
+  const ytUrl = yt.url || yt.link || `https://www.youtube.com/watch?v=${yt.videoId}`
+
+  const qualities = ['360', '480', '720']
+
+  for (const q of qualities) {
+    try {
+      const result = await saveTubeDownload(ytUrl, q)
+      if (result?.url) return { url: result.url, title: result.title || yt.title }
+    } catch {}
+  }
+
+  for (const q of qualities) {
+    try {
+      const result = await vidsSaveDownload(ytUrl, q)
+      if (result?.url) return { url: result.url, title: result.title || yt.title }
+    } catch {}
+  }
+
+  for (const fmt of qualities) {
+    try {
+      const result = await saveNowDownload(ytUrl, fmt)
+      if (result?.url) return { url: result.url, title: result.title || yt.title }
+    } catch {}
+  }
+
+  return null
+}
+
+// ════════════════════════════════════════════════
+//          🎬 الدالة الرئيسية للبحث
+// ════════════════════════════════════════════════
+
+async function searchEditVideo(query) {
+  const sources = [
+    { name: 'Pinterest', fn: () => getPinterestVideo(query) },
+    { name: 'TikTok',    fn: () => getTikTokVideo(query) },
+    { name: 'YouTube',   fn: () => getYouTubeVideo(query) }
+  ]
+
+  for (const src of sources) {
+    try {
+      const result = await src.fn()
+      if (result?.url) {
+        return { ...result, source: src.name }
+      }
+    } catch (e) {
+      console.error(`[searchEditVideo] ${src.name} failed:`, e.message)
+    }
+  }
+
+  return null
+}
+
+// ════════════════════════════════════════════════
+//           📋 قائمة الأوامر
+// ════════════════════════════════════════════════
+
+async function sendMenu(m, conn) {
+  const menuText = `
+╔══════════════════════╗
+║   🎬 *بوت الإيديتات*   ║
+╚══════════════════════╝
+
+*الأوامر المتاحة:*
+
+🔍 *.ايديت [اسم]*
+  ← بحث عن إيديت وإرساله
+
+📥 *.تيكتوك [رابط]*
+  ← تحميل فيديو تيكتوك
+
+📥 *.بينترست [رابط]*
+  ← تحميل فيديو بينترست
+
+📥 *.يوتيوب [رابط]*
+  ← تحميل فيديو يوتيوب
+
+❓ *.ايديت مساعدة*
+  ← عرض هذه القائمة
+${SIGN}`.trim()
+
+  try {
+    await conn.sendMessage(m.chat, {
+      image: { url: MENU_IMAGE_URL },
+      caption: menuText
+    }, { quoted: m })
+  } catch {
+    await conn.sendMessage(m.chat, { text: menuText }, { quoted: m })
+  }
+}
+
+// ════════════════════════════════════════════════
+//          📥 تحميل من رابط مباشر
+// ════════════════════════════════════════════════
+
+async function handleDirectDownload(m, conn, platform, url) {
+  const loading = await conn.sendMessage(m.chat, {
+    text: `⏳ جاري تحميل الفيديو من ${platform}...`
+  }, { quoted: m })
+
+  try {
+    let result = null
+
+    if (platform === 'تيكتوك') {
+      const dl = await downloadTikTok(url)
+      if (dl?.success && dl.videoUrl) {
+        result = { url: dl.videoUrl, title: dl.title || 'TikTok Video' }
+      }
+    } else if (platform === 'بينترست') {
+      const pinMatch = url.match(/\/pin\/(\d+)/)
+      if (pinMatch) {
+        const pin = await fetchPinData(pinMatch[1])
+        const videoUrl = extractVideoUrl(pin) || await fetchPinFromPage(pinMatch[1])
+        if (videoUrl) result = { url: videoUrl, title: 'Pinterest Video' }
+      }
+    } else if (platform === 'يوتيوب') {
+      for (const q of ['360', '480', '720']) {
+        try {
+          const r = await saveTubeDownload(url, q)
+          if (r?.url) { result = r; break }
+        } catch {}
+      }
+      if (!result) {
+        for (const q of ['360', '480']) {
+          try {
+            const r = await vidsSaveDownload(url, q)
+            if (r?.url) { result = r; break }
+          } catch {}
+        }
+      }
+    }
+
+    if (!result?.url) {
+      return conn.sendMessage(m.chat, {
+        text: `❌ فشل تحميل الفيديو من ${platform}!\nتأكد من الرابط وحاول مجدداً.`
+      }, { quoted: m })
+    }
+
+    await conn.sendMessage(m.chat, {
+      video: { url: result.url },
+      caption: `✅ *${result.title || platform}*${SIGN}`,
+      mimetype: 'video/mp4'
+    }, { quoted: m })
+
+  } catch (e) {
+    console.error(`[handleDirectDownload] ${platform}:`, e.message)
+    await conn.sendMessage(m.chat, {
+      text: `❌ حدث خطأ أثناء التحميل!\n${e.message}`
+    }, { quoted: m })
+  }
+}
+
+// ════════════════════════════════════════════════
+//              🤖 الهاندلر الرئيسي
+// ════════════════════════════════════════════════
+
+const handler = async (m, { conn }) => {
+  const text = (m.text || '').trim()
+
+  // قائمة المساعدة
+  if (/^[.!#\/\\]ايديت\s+مساعدة$/i.test(text)) {
+    return sendMenu(m, conn)
+  }
+
+  // تحميل من روابط مباشرة
+  const tikMatch   = text.match(/^[.!#\/\\]تيكتوك\s+(https?:\/\/\S+)/i)
+  const pinMatch   = text.match(/^[.!#\/\\]بينترست\s+(https?:\/\/\S+)/i)
+  const ytMatch    = text.match(/^[.!#\/\\]يوتيوب\s+(https?:\/\/\S+)/i)
+
+  if (tikMatch)   return handleDirectDownload(m, conn, 'تيكتوك',    tikMatch[1])
+  if (pinMatch)   return handleDirectDownload(m, conn, 'بينترست',   pinMatch[1])
+  if (ytMatch)    return handleDirectDownload(m, conn, 'يوتيوب',    ytMatch[1])
+
+  // بحث عن إيديت
+  const searchMatch = text.match(/^[.!#\/\\]ايديت\s+(.+)$/i)
+  if (!searchMatch) return
+
+  const query = searchMatch[1].trim()
+  if (!query) return m.reply('❌ اكتب اسم الشخصية!\nمثال: .ايديت ناروتو')
+
+  // رسالة انتظار
+  const waitMsg = `
+🔍 *جاري البحث عن إيديت...*
+
+🎯 الاستعلام: *${query}*
+⏳ قد يستغرق بعض الوقت...
+
+📡 جاري البحث في:
+• Pinterest 🖼️
+• TikTok 🎵
+• YouTube 📺
+  `.trim()
+
+  await conn.sendMessage(m.chat, { text: waitMsg }, { quoted: m })
+
+  const result = await searchEditVideo(query)
+
+  if (!result?.url) {
+    return conn.sendMessage(m.chat, {
+      text: `❌ *لم يتم العثور على إيديت لـ: ${query}*\n\nجرب:\n• اسم مختلف\n• اسم بالإنجليزي\n• كلمة أكثر تحديداً${SIGN}`
+    }, { quoted: m })
+  }
+
+  const caption = `
+🎬 *${result.title || query}*
+
+📡 المصدر: ${result.source}
+${result.author ? `👤 صاحب الإيديت: ${result.author}` : ''}
+${SIGN}`.trim()
+
+  try {
+    await conn.sendMessage(m.chat, {
+      video: { url: result.url },
+      caption,
+      mimetype: 'video/mp4'
+    }, { quoted: m })
+  } catch (e) {
+    console.error('[handler] send video error:', e.message)
+    await conn.sendMessage(m.chat, {
+      text: `❌ تعذر إرسال الفيديو!\n${caption}`
+    }, { quoted: m })
+  }
+}
+
+handler.command = /^(ايديت|تيكتوك|بينترست|يوتيوب)(\s+.*)?$/i
+
+export default handler
