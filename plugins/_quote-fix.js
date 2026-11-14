@@ -46,12 +46,19 @@ function patch(conn) {
     conn.__origSend = orig
     conn.sendMessage = (jid, content, opts) => {
         try {
-            if (opts?.quoted?.key && global.quoteMode === 5 && content && typeof content === 'object') {
-                const { quoted, ...rest } = opts
-                content = { ...content, contextInfo: { ...(content.contextInfo || {}), ...manual(quoted) } }
-                opts = rest
-            } else if (opts?.quoted?.key && global.quoteMode !== 1) {
-                opts = { ...opts, quoted: rebuild(opts.quoted, global.quoteMode) }
+            if (opts?.quoted?.key) {
+                // رسالة "محوّلة" ما بيظهرش عليها اقتباس في واتساب العادي، فبنشيل علامة التحويل لما يكون فيه رد
+                if (global.quoteStripForward !== false && content?.contextInfo) {
+                    const { isForwarded, forwardingScore, forwardedNewsletterMessageInfo, ...ci } = content.contextInfo
+                    content = { ...content, contextInfo: ci }
+                }
+                if (global.quoteMode === 5 && content && typeof content === 'object') {
+                    const { quoted, ...rest } = opts
+                    content = { ...content, contextInfo: { ...(content.contextInfo || {}), ...manual(quoted) } }
+                    opts = rest
+                } else if (global.quoteMode !== 1) {
+                    opts = { ...opts, quoted: rebuild(opts.quoted, global.quoteMode) }
+                }
             }
         } catch (e) { console.error('[quote-fix]', e.message) }
         return orig(jid, content, opts)
