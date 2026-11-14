@@ -6,7 +6,7 @@
 //   وللتثبيت: غيّر DEFAULT_MODE تحت للرقم الشغال.
 
 const DEFAULT_MODE = 5
-const VER = 4
+const VER = 5
 // لو الملف اتحدّث (حتى من غير Restart) بنطبّق الوضع الافتراضي الجديد ونعيد التركيب
 if (global.__quoteVer !== VER) { global.quoteMode = DEFAULT_MODE; global.__quoteVer = VER }
 
@@ -77,7 +77,9 @@ function patch(conn) {
     conn.__origSend = orig
     conn.sendMessage = (jid, content, opts) => {
         try {
-            if (opts?.quoted?.key) {
+            const hadQuote = !!opts?.quoted?.key
+            if (hadQuote) stats.sendQuoted++
+            if (hadQuote) {
                 // رسالة "محوّلة" ما بيظهرش عليها اقتباس في واتساب العادي، فبنشيل علامة التحويل لما يكون فيه رد
                 if (global.quoteStripForward !== false && content?.contextInfo) {
                     const { isForwarded, forwardingScore, forwardedNewsletterMessageInfo, ...ci } = content.contextInfo
@@ -91,7 +93,6 @@ function patch(conn) {
                     opts = { ...opts, quoted: rebuild(opts.quoted, global.quoteMode) }
                 }
             }
-            if (opts?.quoted?.key) stats.sendQuoted++
         } catch (e) { console.error('[quote-fix]', e.message) }
         return orig(jid, content, opts)
     }
