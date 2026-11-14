@@ -6,7 +6,7 @@
 //   وللتثبيت: غيّر DEFAULT_MODE تحت للرقم الشغال.
 
 const DEFAULT_MODE = 5
-const VER = 3
+const VER = 4
 // لو الملف اتحدّث (حتى من غير Restart) بنطبّق الوضع الافتراضي الجديد ونعيد التركيب
 if (global.__quoteVer !== VER) { global.quoteMode = DEFAULT_MODE; global.__quoteVer = VER }
 
@@ -42,6 +42,35 @@ export function manual(q) {
     return { stanzaId: k.id, participant: phone || k.participant || k.remoteJid, quotedMessage: { conversation: String(text || ' ') } }
 }
 
+// ذاكرة صغيرة: id الرسالة → رقم الهاتف ونصها (عشان نصلّح الاقتباس حتى لو الرسالة اتبعتت بـ relayMessage خام، زي الأزرار)
+const seen = new Map()
+const stats = { sendQuoted: 0, relayFixed: 0 }
+function remember(m) {
+    try {
+        const k = m?.key
+        if (!k?.id) return
+        const phone = [k.participantAlt, k.participant, k.remoteJidAlt].find(isPhone)
+        seen.set(k.id, { phone, text: m.text || '' })
+        if (seen.size > 500) seen.delete(seen.keys().next().value)
+    } catch {}
+}
+
+function fixContext(ci) {
+    if (global.quoteStripForward !== false) { delete ci.isForwarded; delete ci.forwardingScore; delete ci.forwardedNewsletterMessageInfo }
+    const info = seen.get(ci.stanzaId)
+    if (info?.phone) ci.participant = info.phone
+    if (info?.text && global.quoteMode >= 3) ci.quotedMessage = { conversation: info.text }
+}
+
+function walk(o, d = 0) {
+    if (!o || typeof o !== 'object' || d > 8) return
+    for (const k of Object.keys(o)) {
+        const v = o[k]
+        if (k === 'contextInfo' && v && typeof v === 'object' && v.stanzaId) { fixContext(v); stats.relayFixed++ }
+        else if (v && typeof v === 'object') walk(v, d + 1)
+    }
+}
+
 function patch(conn) {
     if (!conn || conn.__quotePatched === VER) return
     const orig = conn.__origSend || conn.sendMessage.bind(conn)
@@ -62,8 +91,17 @@ function patch(conn) {
                     opts = { ...opts, quoted: rebuild(opts.quoted, global.quoteMode) }
                 }
             }
+            if (opts?.quoted?.key) stats.sendQuoted++
         } catch (e) { console.error('[quote-fix]', e.message) }
         return orig(jid, content, opts)
+    }
+    if (typeof conn.relayMessage === 'function') {
+        const origRelay = conn.__origRelay || conn.relayMessage.bind(conn)
+        conn.__origRelay = origRelay
+        conn.relayMessage = (jid, message, opts) => {
+            try { if (global.quoteMode !== 1) walk(message) } catch (e) { console.error('[quote-fix relay]', e.message) }
+            return origRelay(jid, message, opts)
+        }
     }
     conn.__quotePatched = VER
     console.log(`[quote-fix] ✅ وضع الرد: ${global.quoteMode}`)
@@ -76,7 +114,7 @@ let handler = async (m, { conn, command, text, isROwner }) => {
     const raw = conn.__origSend || conn.sendMessage.bind(conn)
 
     if (/^فحص_الرد$/i.test(command)) {
-        const info = { chat: m.chat, key: m.key, sender: m.sender, mtype: m.mtype, isGroup: m.isGroup, mode: global.quoteMode, patched: !!conn.__quotePatched, bot: conn.user?.id }
+        const info = { chat: m.chat, key: m.key, sender: m.sender, mtype: m.mtype, isGroup: m.isGroup, mode: global.quoteMode, patched: conn.__quotePatched, stats, bot: conn.user?.id }
         return raw(m.chat, { text: '```' + JSON.stringify(info, null, 1) + '```' })
     }
 
@@ -98,7 +136,7 @@ let handler = async (m, { conn, command, text, isROwner }) => {
     await raw(m.chat, { text: '✅ خلصت. اكتب لي الأرقام اللي ظهر فيها الاقتباس.' })
 }
 
-handler.all = async function () { patch(this) }
+handler.all = async function (m) { patch(this); remember(m) }
 
 handler.help = ['تجربة_الرد', 'وضع_الرد', 'فحص_الرد']
 handler.tags = ['owner']
