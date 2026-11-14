@@ -6,7 +6,7 @@
 //   وللتثبيت: غيّر DEFAULT_MODE تحت للرقم الشغال.
 
 const DEFAULT_MODE = 5
-const VER = 5
+const VER = 6
 // لو الملف اتحدّث (حتى من غير Restart) بنطبّق الوضع الافتراضي الجديد ونعيد التركيب
 if (global.__quoteVer !== VER) { global.quoteMode = DEFAULT_MODE; global.__quoteVer = VER }
 
@@ -38,7 +38,9 @@ export function manual(q) {
     const phone = [k.participantAlt, k.participant, k.remoteJidAlt].find(isPhone)
     const kind = Object.keys(q.message || {})[0] || ''
     const label = { imageMessage: '📷 صورة', videoMessage: '🎥 فيديو', audioMessage: '🎵 صوت', stickerMessage: '🏷️ ملصق', documentMessage: '📄 ملف' }[kind]
-    const text = q.text || q.msg?.text || q.msg?.caption || label || ''
+    const mm = q.message || {}
+    const rawText = mm.conversation || mm.extendedTextMessage?.text || mm.buttonsResponseMessage?.selectedDisplayText || mm.templateButtonReplyMessage?.selectedDisplayText || mm.listResponseMessage?.title || mm.interactiveResponseMessage?.body?.text || ''
+    const text = q.text || q.msg?.text || q.msg?.caption || rawText || label || ''
     return { stanzaId: k.id, participant: phone || k.participant || k.remoteJid, quotedMessage: { conversation: String(text || ' ') } }
 }
 
