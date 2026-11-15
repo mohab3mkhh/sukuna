@@ -6,6 +6,8 @@
 // الأزرار بتتبعت عن طريق lib/buttons.js
 
 import axios from 'axios'
+import fs from 'fs'
+import path from 'path'
 import { sendButtons } from '../lib/buttons.js'
 
 const api_obito = 'https://mr-obito-api.vercel.app/api'
@@ -112,36 +114,68 @@ const PROVIDERS = [
 ]
 
 // ───────── إرسال السؤال ─────────
+// لو حطيت ملف marid.jpg (أو .png) في جذر المشروع بيتبعت كصورة مع كل سؤال، وإلا بنستخدم الرابط
+function localImg() {
+    for (const f of ['marid.jpg', 'marid.jpeg', 'marid.png']) {
+        try {
+            const p = path.join(process.cwd(), f)
+            if (fs.existsSync(p)) return fs.readFileSync(p)
+        } catch {}
+    }
+    return null
+}
+
 async function sendQuestion(conn, jid, question, imgUrl, quoted) {
+    // باقي الخيارات في قايمة عشان الأزرار تفضل قليلة وتظهر على واتساب
+    const other = {
+        name: 'single_select',
+        buttonParamsJson: JSON.stringify({
+            title: '☽✰ ¦ خـيـارات أخـرى 🐤 ¦ ✰☾',
+            sections: [{
+                title: 'خـيـارات',
+                rows: [
+                    { header: '', title: 'ربـمـا', description: '', id: '.مارد ربما' },
+                    { header: '', title: 'لا ربـمـا', description: '', id: '.مارد ربما لا' },
+                    { header: '', title: 'رجَـوع خـطـوه', description: '', id: '.مارد رجوع' },
+                    { header: '', title: 'الـغـاء الـعـبة', description: '', id: '.مارد حذف' },
+                ],
+            }],
+        }),
+    }
     const payload = {
         text: `مارد يـقـول🐤:\n${question}`,
         footer: 'جـاري الـتـخـمـين....🔥',
-        title: 'لـعـبه الـمـارد مارد😂',
+        title: 'لـعـبه الـمـارد😂',
         buttons: [
             { text: '☽✰ ¦ نـعـم 🐤 ¦ ✰☾', id: '.مارد نعم' },
             { text: '☽✰ ¦ لا 🐤 ¦ ✰☾', id: '.مارد لا' },
             { text: '☽✰ ¦ مـش عـارف 🐤 ¦ ✰☾', id: '.مارد لا أعرف' },
-            { text: '☽✰ ¦ ربـمـا 🐤 ¦ ✰☾', id: '.مارد ربما' },
-            { text: '☽✰ ¦ لا ربـمـا 🐤 ¦ ✰☾', id: '.مارد ربما لا' },
-            { text: '☽✰ ¦ رجَـوع خـطـوه 🐤 ¦ ✰☾', id: '.مارد رجوع' },
-            { text: '☽✰ ¦ الـغـاء الـعـبة 🐤 ¦ ✰☾', id: '.مارد حذف' },
+            other,
         ],
         quoted,
     }
-    try {
+
+    // نجرّب: صورة محلية ← صورة من الرابط ← من غير صورة
+    const attempts = []
+    const local = localImg()
+    if (local) attempts.push(local)
+    if (imgUrl) attempts.push({ url: imgUrl })
+    attempts.push(null)
+
+    let lastErr
+    for (const image of attempts) {
         try {
-            const r = await sendButtons(conn, jid, { ...payload, ...(imgUrl ? { image: { url: imgUrl } } : {}) })
-            console.log(`[مارد] الأزرار اتبعتت ${imgUrl ? 'مع صورة: ' + imgUrl : 'من غير صورة'}`)
+            const r = await sendButtons(conn, jid, { ...payload, ...(image ? { image } : {}) })
+            console.log(`[مارد] الأزرار اتبعتت (${image ? (Buffer.isBuffer(image) ? 'صورة محلية' : 'صورة: ' + image.url) : 'من غير صورة'})`)
             return r
         } catch (e) {
-            if (!imgUrl) throw e
-            console.error('[مارد] الصورة فشلت، بنبعت من غير صورة:', e.message)
-            return await sendButtons(conn, jid, payload)
+            lastErr = e
+            console.error('[مارد] محاولة إرسال فشلت:', e?.message || e)
         }
-    } catch (e) {
-        console.error('[مارد] الأزرار فشلت:', e.message)
-        return conn.sendMessage(jid, { text: `مارد يـقـول🐤:\n${question}\n\n✍️ جاوب بـ:\n.مارد نعم | .مارد لا | .مارد لا أعرف | .مارد ربما | .مارد ربما لا\n.مارد رجوع | .مارد حذف` }, { quoted })
     }
+    return conn.sendMessage(jid, {
+        text: `مارد يـقـول🐤:\n${question}\n\n✍️ جاوب بـ:\n.مارد نعم | .مارد لا | .مارد لا أعرف | .مارد ربما | .مارد ربما لا\n.مارد رجوع | .مارد حذف\n\n⚙️ سبب فشل الأزرار: ${String(lastErr?.message || lastErr).slice(0, 150)}`,
+    }, { quoted })
 }
 
 const sendWin = (conn, m, w) => conn.sendMessage(m.chat, {
