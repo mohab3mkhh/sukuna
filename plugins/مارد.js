@@ -410,4 +410,583 @@ CHARACTERS.push(
 CHARACTERS.push(
   ['جمال عبد الناصر', 'real male old arab egyptian politician revolution'],
   ['أنور السادات', 'real male old arab egyptian politician peace'],
-  ['حسني مبارك', 'real male old arab egyptian politicia
+  ['حسني مبارك', 'real male old arab egyptian politician mubarak'],
+  ['نابليون بونابرت', 'real male old politician'],
+  ['دونالد ترامب', 'real male alive politician usapres'],
+  ['باراك أوباما', 'real male alive politician usapres nobel'],
+  ['أبراهام لينكولن', 'real male old politician usapres'],
+  ['ونستون تشرشل', 'real male old politician ww2uk nobel writer'],
+  ['المهاتما غاندي', 'real male old asian politician india'],
+  ['نيلسون مانديلا', 'real male old politician southafrica nobel'],
+  ['صلاح الدين الأيوبي', 'real male old arab politician'],
+  ['الإسكندر الأكبر', 'real male old politician']
+)
+
+// ---------- علماء وتقنية ----------
+CHARACTERS.push(
+  ['ألبرت أينشتاين', 'real male old tech relativity nobel'],
+  ['نيكولا تسلا', 'real male old tech ac'],
+  ['إسحاق نيوتن', 'real male old tech gravity'],
+  ['توماس إديسون', 'real male old tech lightbulb'],
+  ['ستيفن هوكينج', 'real male tech wheelchair'],
+  ['ماري كوري', 'real old tech radium nobel'],
+  ['إيلون ماسك', 'real male alive tech tesla_cars'],
+  ['بيل جيتس', 'real male alive tech microsoft'],
+  ['مارك زوكربيرج', 'real male alive tech facebook'],
+  ['ستيف جوبز', 'real male tech apple'],
+  ['جيف بيزوس', 'real male alive tech amazon']
+)
+
+// ---------- كتّاب وفنانين وصناع محتوى ----------
+CHARACTERS.push(
+  ['طه حسين', 'real male old arab egyptian writer blind'],
+  ['نجيب محفوظ', 'real male old arab egyptian writer nobel'],
+  ['وليم شكسبير', 'real male old writer shakespeare'],
+  ['جي كي رولينج', 'real alive writer hpauthor'],
+  ['ليوناردو دا فينشي', 'real male old artist monalisa'],
+  ['فينسنت فان جوخ', 'real male old artist ear'],
+  ['لودفيج فان بيتهوفن', 'real male old artist deaf'],
+  ['مستر بيست', 'real male alive young youtuber'],
+  ['سبيد (IShowSpeed)', 'real male alive young youtuber siuu'],
+  ['الدحيح (أحمد الغندور)', 'real male alive young arab egyptian youtuber educational']
+)
+
+// ---------- أنمي ----------
+CHARACTERS.push(
+  ['ناروتو أوزوماكي', 'male anime naruto hero powers ninja blond orange kid young'],
+  ['ساسكي أوتشيها', 'male anime naruto powers ninja black kid young sword'],
+  ['كاكاشي هاتاكي', 'male anime naruto hero powers ninja mask whitehair young'],
+  ['مونكي دي لوفي', 'male anime onepiece hero pirate hat powers red young'],
+  ['رورونوا زورو', 'male anime onepiece hero pirate sword greenhair young'],
+  ['غوكو', 'male anime dragonball hero powers alien orange black'],
+  ['فيجيتا', 'male anime dragonball powers alien blue black'],
+  ['إيرين ييغر', 'male anime aot powers soldier kid young'],
+  ['ليفاي أكرمان', 'male anime aot hero soldier black cape'],
+  ['لايت ياغامي', 'male anime deathnote villain young'],
+  ['إل (L)', 'male anime deathnote detective young white black'],
+  ['إيزوكو ميدوريا', 'male anime mha hero superhero powers kid green greenhair young'],
+  ['تانجيرو كامادو', 'male anime demonslayer hero sword kid young powers green black'],
+  ['غون فريكس', 'male anime hxh hero kid young green'],
+  ['سايتاما', 'male anime opm hero superhero powers cape white'],
+  ['إدوارد إلريك', 'male anime fma hero kid blond powers red'],
+  ['كونان إيدوغاوا', 'male anime conan detective hero kid glasses blue'],
+  ['دورايمون', 'male anime doraemon hero robot nonhuman blue white'],
+  ['شين شان', 'male anime shinchan kid red yellow'],
+  ['ساتورو غوجو', 'male anime jujutsu hero powers whitehair mask blue'],
+  ['سوكونا', 'male anime jujutsu villain powers monster nonhuman pink pinkhair'],
+  ['إيتادوري يوجي', 'male anime jujutsu hero kid pinkhair young powers']
+)
+
+// ---------- ألعاب ----------
+CHARACTERS.push(
+  ['كريتوس', 'male game gow hero powers axe soldier red'],
+  ['ماريو', 'male game mario hero red hat'],
+  ['لويجي', 'male game mario hero green hat'],
+  ['لينك', 'male game zelda hero sword hat green blond'],
+  ['سونيك', 'male game sonic hero animal blue nonhuman'],
+  ['بيكاتشو', 'game pokemon hero animal nonhuman yellow mouse'],
+  ['لارا كروفت', 'game tombraider hero gun'],
+  ['ماستر شيف', 'male game halo hero soldier green gun mask'],
+  ['كراش باندیكوت', 'male game crash animal nonhuman orange'],
+  ['جيرالت أوف ريفيا', 'male game witcher hero sword whitehair powers'],
+  ['سكوربيون (مورتال كومبات)', 'male game mortalkombat powers mask yellow ninja'],
+  ['صب زيرو', 'male game mortalkombat powers mask blue ninja'],
+  ['ريو (ستريت فايتر)', 'male game streetfighter hero white'],
+  ['فريدي فازبير', 'male game fnaf villain animal nonhuman brown hat'],
+  ['دونكي كونغ', 'male game donkeykong animal nonhuman brown'],
+  ['كيربي', 'game kirby hero pink'],
+  ['الأميرة زيلدا', 'game zelda princess hero blond'],
+  ['إيزيو أوديتوري', 'male game assassins hero hood sword'],
+  ['سوليد سنيك', 'male game metalgear hero soldier gun'],
+  ['دوم غاي', 'male game doom hero soldier gun green']
+)
+
+// ---------- كرتون ----------
+CHARACTERS.push(
+  ['توم (القط)', 'male cartoon tomjerry animal nonhuman cat'],
+  ['جيري (الفأر)', 'male cartoon tomjerry animal nonhuman mouse brown'],
+  ['سبونج بوب', 'male cartoon spongebob hero sea yellow'],
+  ['باتريك ستار', 'male cartoon spongebob sea pink fat'],
+  ['ميكي ماوس', 'male cartoon mickey disney animal nonhuman mouse black old'],
+  ['البطة دونالد', 'male cartoon mickey disney animal nonhuman bird white blue old hat'],
+  ['بارت سيمبسون', 'male cartoon simpsons kid yellow'],
+  ['هومر سيمبسون', 'male cartoon simpsons fat yellow'],
+  ['باغز باني', 'male cartoon looney animal nonhuman old white'],
+  ['سكوبي دو', 'male cartoon scooby animal nonhuman dog brown detective'],
+  ['ريك سانشيز', 'male cartoon rickmorty powers bluehair'],
+  ['المينيون', 'male cartoon minions yellow glasses'],
+  ['إلسا', 'cartoon frozen disney princess powers blond white'],
+  ['سيمبا', 'male cartoon lionking disney animal nonhuman prince brown'],
+  ['وودي (توي ستوري)', 'male cartoon toystory disney hero hat brown'],
+  ['باز لايتيير', 'male cartoon toystory disney hero robot nonhuman green white'],
+  ['شريك', 'male cartoon shrek dreamworks monster nonhuman green fat'],
+  ['بو (كونغ فو باندا)', 'male cartoon kungfupanda dreamworks animal nonhuman fat black white hero'],
+  ['بيبا بيج', 'cartoon peppapig animal nonhuman pink kid'],
+  ['بن تينيسون', 'male cartoon ben10 hero kid powers'],
+  ['بابا سنفور', 'male cartoon smurfs hero blue red hat'],
+  ['ويني الدبدوب', 'male cartoon winnie animal nonhuman yellow fat red'],
+  ['باباي', 'male cartoon popeye hero old hat'],
+  ['النمر الوردي', 'male cartoon pinkpanther animal nonhuman pink'],
+  ['آنج (أفاتار)', 'male cartoon avatar hero kid powers orange'],
+  ['علاء الدين', 'male cartoon aladdin disney hero']
+)
+
+// ---------- أفلام ومسلسلات ----------
+CHARACTERS.push(
+  ['دارث فيدر', 'male movie starwars villain powers mask black cape'],
+  ['يودا', 'male movie starwars hero powers alien nonhuman green'],
+  ['هاري بوتر', 'male movie hogwarts hero powers kid glasses young'],
+  ['لورد فولدمورت', 'male movie hogwarts villain powers'],
+  ['هيرميوني غرينجر', 'movie hogwarts hero powers kid young'],
+  ['غاندالف', 'male movie lotr hero powers hat whitehair'],
+  ['جيمس بوند', 'male movie bond hero gun'],
+  ['جاك سبارو', 'male movie potc pirate hat sword'],
+  ['نيو (ماتريكس)', 'male movie matrix hero powers black glasses young'],
+  ['جون ويك', 'male movie johnwick hero gun black soldier'],
+  ['شرلوك هولمز', 'male movie sherlock detective hero hat old'],
+  ['باتمان', 'male movie dc superhero hero mask cape black batmanfilm detective'],
+  ['سوبرمان', 'male movie dc superhero hero powers cape blue red alien'],
+  ['الجوكر', 'male movie dc villain green greenhair'],
+  ['سبايدرمان', 'male movie marvel superhero hero powers mask red blue'],
+  ['آيرون مان', 'male movie marvel superhero hero red avengers'],
+  ['ثانوس', 'male movie marvel villain powers alien avengers'],
+  ['كابتن أمريكا', 'male movie marvel superhero hero soldier blue avengers'],
+  ['ثور', 'male movie marvel superhero hero powers blond cape avengers'],
+  ['هالك', 'male movie marvel superhero hero powers green avengers'],
+  ['جون سنو', 'male series got hero sword black cape'],
+  ['دينيريس تارجارين', 'series got prince powers whitehair'],
+  ['إليفن (Stranger Things)', 'series stranger hero powers kid young'],
+  ['برلين (لا كاسا دي بابيل)', 'male series moneyheist villain mask'],
+  ['والتر وايت', 'male series breakingbad villain hat glasses']
+)
+
+// ==================================================
+// الشخصيات المتعلمة
+// ==================================================
+
+function loadLearned() {
+  try {
+    if (!fs.existsSync(LEARN_FILE)) return []
+    const data = JSON.parse(fs.readFileSync(LEARN_FILE, 'utf8'))
+    return Array.isArray(data) ? data : []
+  } catch {
+    return []
+  }
+}
+
+function saveLearned(list) {
+  fs.mkdirSync(path.dirname(LEARN_FILE), { recursive: true })
+  fs.writeFileSync(LEARN_FILE, JSON.stringify(list, null, 2))
+}
+
+function buildCharacters() {
+  const map = new Map()
+  for (const [name, traits] of CHARACTERS) {
+    map.set(name, new Set(traits.split(/\s+/).filter(Boolean)))
+  }
+  for (const item of loadLearned()) {
+    if (!item?.name || !Array.isArray(item.traits)) continue
+    const set = map.get(item.name) || new Set()
+    for (const t of item.traits) set.add(t)
+    map.set(item.name, set)
+  }
+  return [...map.entries()].map(([name, traits]) => ({ name, traits }))
+}
+
+// ==================================================
+// الجلسات والمحرك
+// ==================================================
+
+const ANSWERS = { yes: 1, probably: 0.75, idk: null, probnot: 0.25, no: 0 }
+
+const BUTTONS = [
+  ['✅ نعم', 'yes'],
+  ['🤔 غالباً نعم', 'probably'],
+  ['❓ مش عارف', 'idk'],
+  ['🤨 غالباً لا', 'probnot'],
+  ['❌ لا', 'no'],
+  ['↩️ رجوع', 'back']
+]
+
+const TYPED = [
+  [/^(نعم|اه|آه|ايوه|أيوه|ايوا|أيوا|yes|y)$/i, 'yes'],
+  [/^(لا|لأ|no|n)$/i, 'no'],
+  [/^(مش عارف|معرفش|مش عارفه|لا اعرف|لا أعرف|idk)$/i, 'idk'],
+  [/^(غالبا نعم|غالباً نعم|ممكن|يمكن|احتمال)$/i, 'probably'],
+  [/^(غالبا لا|غالباً لا|مش اوي|مش أوي)$/i, 'probnot'],
+  [/^(رجوع|ارجع|back)$/i, 'back'],
+  [/^(صح|صحيح|right)$/i, 'right'],
+  [/^(غلط|خطأ|خطا|wrong)$/i, 'wrong']
+]
+
+const NUMBER_ASK = { 1: 'yes', 2: 'probably', 3: 'idk', 4: 'probnot', 5: 'no', 6: 'back' }
+const NUMBER_GUESS = { 1: 'right', 2: 'wrong' }
+
+const sessions = new Map()
+
+function endSession(chat) {
+  const s = sessions.get(chat)
+  if (s) clearTimeout(s.timer)
+  sessions.delete(chat)
+}
+
+function touch(session) {
+  clearTimeout(session.timer)
+  session.timer = setTimeout(() => sessions.delete(session.chat), SESSION_TTL)
+}
+
+function newSession(chat, owner) {
+  const session = {
+    chat,
+    owner,
+    answers: new Map(), // key -> 1 | 0.75 | 0.25 | 0
+    asked: new Set(),
+    history: [],        // [{ key, value }] (value ممكن تكون null لـ "مش عارف")
+    excluded: new Set(),
+    wrong: 0,
+    qCount: 0,
+    current: null,
+    state: 'ask',       // ask | guess | learn
+    guess: null,
+    chars: buildCharacters(),
+    timer: null
+  }
+  touch(session)
+  return session
+}
+
+// احتمالية كل شخصية بناءً على الإجابات
+function computeProbs(session) {
+  const logs = session.chars.map(c => {
+    if (session.excluded.has(c.name)) return -Infinity
+    let lp = 0
+    for (const [key, a] of session.answers) {
+      const has = c.traits.has(key)
+      const L = has ? a * LIKE_MATCH + (1 - a) * LIKE_MISS : (1 - a) * LIKE_MATCH + a * LIKE_MISS
+      lp += Math.log(L)
+    }
+    return lp
+  })
+  const finite = logs.filter(Number.isFinite)
+  if (!finite.length) return logs.map(() => 0)
+  const max = Math.max(...finite)
+  const ex = logs.map(v => (Number.isFinite(v) ? Math.exp(v - max) : 0))
+  const sum = ex.reduce((x, y) => x + y, 0)
+  return ex.map(v => v / sum)
+}
+
+function pickNextQuestion(session, probs) {
+  // كتلة الاحتمال لكل صفة
+  const mass = {}
+  session.chars.forEach((c, i) => {
+    const p = probs[i]
+    if (p < 1e-9) return
+    for (const t of c.traits) mass[t] = (mass[t] || 0) + p
+  })
+
+  const allowed = key => {
+    const parent = Q[key].parent
+    if (!parent) return true
+    if (parent.startsWith('!')) return 1 - (mass[parent.slice(1)] || 0) >= 0.2
+    return (mass[parent] || 0) >= 0.2
+  }
+
+  const candidates = []
+  for (const key of Object.keys(Q)) {
+    if (session.asked.has(key)) continue
+    const m = mass[key] || 0
+    if (m <= 0.03 || m >= 0.97) continue
+    if (!allowed(key)) continue
+    candidates.push({ key, score: Math.abs(m - 0.5) })
+  }
+  if (!candidates.length) return null
+  candidates.sort((a, b) => a.score - b.score)
+  const top = candidates.slice(0, 3)
+  return top[Math.floor(Math.random() * top.length)].key
+}
+
+// ==================================================
+// الإرسال
+// ==================================================
+
+let imageBuffer
+function getImage() {
+  if (imageBuffer !== undefined) return imageBuffer
+  try {
+    imageBuffer = fs.existsSync(IMAGE) ? fs.readFileSync(IMAGE) : null
+  } catch {
+    imageBuffer = null
+  }
+  return imageBuffer
+}
+
+async function sendButtons(conn, chat, body, options) {
+  const text = String(body)
+  try {
+    let header = { hasMediaAttachment: false, title: TITLE }
+    const img = getImage()
+    if (img) {
+      const media = await prepareWAMessageMedia({ image: img }, { upload: conn.waUploadToServer })
+      header = { hasMediaAttachment: true, title: TITLE, imageMessage: media.imageMessage }
+    }
+
+    const interactiveMessage = proto.Message.InteractiveMessage.fromObject({
+      body: { text },
+      footer: { text: FOOTER },
+      header,
+      nativeFlowMessage: {
+        buttons: options.map(([label, id]) => ({
+          name: 'quick_reply',
+          buttonParamsJson: JSON.stringify({ display_text: label, id: PREFIX + id })
+        }))
+      }
+    })
+
+    const msg = generateWAMessageFromContent(chat, {
+      viewOnceMessage: {
+        message: {
+          messageContextInfo: { deviceListMetadata: {}, deviceListMetadataVersion: 2 },
+          interactiveMessage
+        }
+      }
+    }, { userJid: conn.user?.id || conn.user?.jid })
+
+    const relayOpts = { messageId: msg.key.id }
+    if (!String(chat).endsWith('@g.us')) {
+      relayOpts.additionalNodes = [
+        { tag: 'biz', attrs: {}, content: [{ tag: 'interactive', attrs: { type: 'native_flow', v: '1' }, content: [{ tag: 'native_flow', attrs: { v: '9', name: 'mixed' } }] }] },
+        { tag: 'bot', attrs: { biz_bot: '1' } }
+      ]
+    }
+    await conn.relayMessage(chat, msg.message, relayOpts)
+    return
+  } catch (e) {
+    console.error('[مارد] الأزرار فشلت، نص عادي:', e?.message)
+  }
+
+  // نص عادي: الإجابة برقم أو كلمة
+  const lines = options.map(([label], i) => `${i + 1}. ${label}`)
+  await conn.sendMessage(chat, { text: `${text}\n\n${lines.join('\n')}\n\n✍️ اكتب رقم الإجابة أو الكلمة\n\n${FOOTER}` })
+}
+
+const say = (conn, chat, text) => conn.sendMessage(chat, { text })
+
+// ==================================================
+// سير اللعبة
+// ==================================================
+
+async function askQuestion(conn, session, key) {
+  session.current = key
+  session.asked.add(key)
+  session.qCount++
+  session.state = 'ask'
+  touch(session)
+  await sendButtons(
+    conn,
+    session.chat,
+    `${TITLE}\n\n❓ السؤال ${session.qCount}/${MAX_QUESTIONS}\n\n${Q[key].text}`,
+    BUTTONS
+  )
+}
+
+async function makeGuess(conn, session, probs) {
+  let best = -1
+  probs.forEach((p, i) => {
+    if (p > 0 && (best === -1 || p > probs[best])) best = i
+  })
+  if (best === -1 || probs[best] < 0.005) return giveUp(conn, session)
+
+  session.state = 'guess'
+  session.guess = session.chars[best].name
+  touch(session)
+  await sendButtons(
+    conn,
+    session.chat,
+    `${TITLE}\n\n🔮 أنا شايف إن شخصيتك هي:\n\n✨ *${session.guess}*\n\nصح؟`,
+    [['✅ صح', 'right'], ['❌ غلط', 'wrong']]
+  )
+}
+
+async function giveUp(conn, session) {
+  session.state = 'learn'
+  touch(session)
+  await say(conn, session.chat,
+    `${TITLE}\n\n😔 غلبتني المرة دي!\n\nعلّمني شخصيتك عشان أعرفها بعد كده:\n*.مارد هو <اسم الشخصية>*\n\n${FOOTER}`
+  )
+}
+
+async function decide(conn, session) {
+  const probs = computeProbs(session)
+  const top = Math.max(0, ...probs)
+
+  if (session.qCount >= MAX_QUESTIONS) return makeGuess(conn, session, probs)
+  if (session.qCount >= MIN_QUESTIONS && top >= GUESS_CONFIDENCE) return makeGuess(conn, session, probs)
+
+  const key = pickNextQuestion(session, probs)
+  if (!key) return makeGuess(conn, session, probs)
+  return askQuestion(conn, session, key)
+}
+
+async function onAnswer(conn, session, ans) {
+  touch(session)
+
+  /* ---- مرحلة التخمين ---- */
+  if (session.state === 'guess') {
+    if (ans === 'right') {
+      const n = session.qCount
+      const name = session.guess
+      endSession(session.chat)
+      return say(conn, session.chat,
+        `${TITLE}\n\n🎉 عرفتها! كانت *${name}*\nبعد ${n} سؤال 🧞\n\nاكتب *.مارد* للعب تاني.\n\n${FOOTER}`
+      )
+    }
+    if (ans === 'wrong') {
+      session.excluded.add(session.guess)
+      session.wrong++
+      const left = session.chars.filter(c => !session.excluded.has(c.name)).length
+      if (session.wrong >= MAX_WRONG || left === 0) return giveUp(conn, session)
+      await say(conn, session.chat, '🤔 غلطت.. هكمل أسأل شوية.')
+      return decide(conn, session)
+    }
+    return
+  }
+
+  if (session.state !== 'ask') return
+
+  /* ---- رجوع ---- */
+  if (ans === 'back') {
+    const last = session.history.pop()
+    if (!last) return say(conn, session.chat, '↩️ مفيش سؤال قبل ده.')
+    session.answers.delete(last.key)
+    session.asked.delete(last.key)
+    session.qCount = Math.max(0, session.qCount - 1)
+    // السؤال الحالي (اللي لسه ما اتجاوبش) يرجع كمان
+    if (session.current) session.asked.delete(session.current)
+    session.qCount = Math.max(0, session.qCount - 1)
+    return askQuestion(conn, session, last.key)
+  }
+
+  if (!(ans in ANSWERS)) return
+
+  const value = ANSWERS[ans]
+  const key = session.current
+  if (!key) return
+  if (value !== null) session.answers.set(key, value)
+  session.history.push({ key, value })
+  session.current = null
+  return decide(conn, session)
+}
+
+// ==================================================
+// استخراج الضغطة من أي نوع رد
+// ==================================================
+
+function unwrap(message) {
+  let msg = message || {}
+  msg = msg.ephemeralMessage?.message || msg
+  msg = msg.viewOnceMessage?.message || msg
+  msg = msg.viewOnceMessageV2?.message || msg
+  msg = msg.documentWithCaptionMessage?.message || msg
+  return msg
+}
+
+function extractChoice(message) {
+  const msg = unwrap(message)
+  const flow = msg.interactiveResponseMessage?.nativeFlowResponseMessage
+  if (flow?.paramsJson) {
+    try {
+      const p = JSON.parse(flow.paramsJson)
+      const id = p?.id ?? p?.selectedId ?? p?.selected_id
+      if (id != null) return String(id)
+    } catch {}
+  }
+  if (msg.buttonsResponseMessage) return msg.buttonsResponseMessage.selectedButtonId
+  if (msg.listResponseMessage) return msg.listResponseMessage.singleSelectReply?.selectedRowId
+  if (msg.templateButtonReplyMessage) return msg.templateButtonReplyMessage.selectedId
+  return null
+}
+
+// ==================================================
+// الأمر
+// ==================================================
+
+let handler = async (m, { conn, args = [] }) => {
+  const chat = m.chat
+  const sub = String(args[0] || '').trim()
+
+  /* ---- وقف ---- */
+  if (/^(وقف|stop|انهاء|إنهاء)$/i.test(sub)) {
+    if (!sessions.has(chat)) return say(conn, chat, 'مفيش لعبة شغالة 🧞')
+    endSession(chat)
+    return say(conn, chat, '🧞 تمام، وقفت اللعبة.')
+  }
+
+  /* ---- تعليم ---- */
+  if (/^(هو|هي)$/i.test(sub)) {
+    const session = sessions.get(chat)
+    const name = args.slice(1).join(' ').trim()
+    if (!session || session.state !== 'learn') {
+      return say(conn, chat, 'التعليم بيشتغل بس بعد ما أخسر. العب الأول بـ *.مارد*')
+    }
+    if (!name) return say(conn, chat, 'اكتب الاسم: *.مارد هو <اسم الشخصية>*')
+
+    const traits = [...session.answers].filter(([, a]) => a >= 0.75).map(([k]) => k)
+    const learned = loadLearned()
+    const existing = learned.find(x => x.name === name)
+    if (existing) existing.traits = [...new Set([...existing.traits, ...traits])]
+    else learned.push({ name, traits })
+    saveLearned(learned)
+    endSession(chat)
+    return say(conn, chat, `${TITLE}\n\n✅ اتعلمت *${name}*! المرة الجاية هعرفها 🧞\n\n${FOOTER}`)
+  }
+
+  /* ---- لعبة جديدة ---- */
+  if (sessions.has(chat)) {
+    return say(conn, chat, 'فيه لعبة شغالة في الشات ده 🧞\nلإنهائها اكتب: *.مارد وقف*')
+  }
+
+  const session = newSession(chat, m.sender)
+  sessions.set(chat, session)
+  await say(conn, chat,
+    `${TITLE}\n\n🧞 فكّر في شخصية (حقيقية أو خيالية) وأنا هخمّنها!\nجاوب على أسئلتي بالأزرار.\n\n${FOOTER}`
+  )
+  return decide(conn, session)
+}
+
+// استقبال الإجابات (أزرار أو كتابة) من صاحب اللعبة
+handler.before = async function (m, { conn }) {
+  try {
+    if (m.fromMe) return false
+    const session = sessions.get(m.chat)
+    if (!session || m.sender !== session.owner) return false
+
+    let ans = null
+    const id = extractChoice(m.message) || (typeof m.text === 'string' && m.text.startsWith(PREFIX) ? m.text : null)
+    if (id && String(id).startsWith(PREFIX)) {
+      ans = String(id).slice(PREFIX.length)
+    } else {
+      const text = String(m.text || '').trim()
+      if (!text || /^[./!#$]/.test(text)) return false
+      const numMap = session.state === 'guess' ? NUMBER_GUESS : NUMBER_ASK
+      if (numMap[text]) ans = numMap[text]
+      else {
+        for (const [re, a] of TYPED) {
+          if (re.test(text)) { ans = a; break }
+        }
+      }
+    }
+    if (!ans) return false
+
+    await onAnswer(conn, session, ans)
+    return true
+  } catch (e) {
+    console.error('[مارد] خطأ:', e)
+    return false
+  }
+}
+
+handler.help = ['مارد']
+handler.tags = ['game']
+handler.command = /^(مارد|المارد|akinator)$/i
+
+export default handler
