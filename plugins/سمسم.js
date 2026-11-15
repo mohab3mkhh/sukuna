@@ -1,45 +1,40 @@
-"use strict";
-
-const axios = require("axios");
+// plugins/simsimi.js
+import axios from 'axios'
 
 /* ═══════════════════════════════════════
-   𝑮𝒆𝒐 SIMSIMI
+   𝑺𝑼𝑲𝑼𝑵𝑨 SIMSIMI
 ═══════════════════════════════════════ */
 
 function panel(title, body) {
-    return `🌊 *${title}*\n\n${body}`;
+  return `🌊 *${title}*\n\n${body}`
 }
 
 /* ═══════════════════════════════════════
    REACTION
 ═══════════════════════════════════════ */
 
-async function react(geo, m, emoji) {
-    try {
-        if (typeof m.react === "function") {
-            await m.react(emoji);
-            return;
-        }
-
-        await geo.sendMessage(m.chat, {
-            react: {
-                text: emoji,
-                key: m.key
-            }
-        });
-    } catch {}
+async function react(conn, m, emoji) {
+  try {
+    if (typeof m.react === 'function') {
+      await m.react(emoji)
+      return
+    }
+    await conn.sendMessage(m.chat, {
+      react: { text: emoji, key: m.key }
+    })
+  } catch {}
 }
 
 /* ═══════════════════════════════════════
    SEND
 ═══════════════════════════════════════ */
 
-async function send(geo, m, text) {
-    return geo.sendMessage(
-        m.chat,
-        { text },
-        { quoted: m.msg || m }
-    );
+async function send(conn, m, text) {
+  return conn.sendMessage(
+    m.chat,
+    { text },
+    { quoted: m.msg || m }
+  )
 }
 
 /* ═══════════════════════════════════════
@@ -47,108 +42,91 @@ async function send(geo, m, text) {
 ═══════════════════════════════════════ */
 
 async function getSimSimiResponse(query) {
-    try {
-        const response = await axios.get("https://engez.a7a.online/api/v1/ai/ai/simsimi", {
-            params: {
-                action: "تكلم",
-                message: query
-            },
-            timeout: 15000
-        });
+  try {
+    const response = await axios.get('https://engez.a7a.online/api/v1/ai/ai/simsimi', {
+      params: {
+        action: 'تكلم',
+        message: query
+      },
+      timeout: 15000
+    })
 
-        const data = response.data;
+    const data = response.data
 
-        if (data && data.success && data.response?.reply) {
-            return String(data.response.reply);
-        }
-
-        return "مش لاقي رد مناسب للكلام ده 🤔";
-
-    } catch (error) {
-        console.error(
-            "[𝑮𝒆𝒐 SIMSIMI ERROR]",
-            error.response?.data || error.message
-        );
-
-        throw new Error("API Connection Failed");
+    if (data && data.success && data.response?.reply) {
+      return String(data.response.reply)
     }
+
+    return 'مش لاقي رد مناسب للكلام ده 🤔'
+
+  } catch (error) {
+    console.error('[𝑺𝑼𝑲𝑼𝑵𝑨 SIMSIMI ERROR]', error.response?.data || error.message)
+    throw new Error('API Connection Failed')
+  }
 }
 
 /* ═══════════════════════════════════════
-   COMMAND
+   HANDLER
 ═══════════════════════════════════════ */
 
-module.exports = {
-    name: "سمسم.ب",
+const handler = async (m, { conn, text, args }) => {
+  const query = (
+    text ||
+    (Array.isArray(args) ? args.join(' ') : '') ||
+    ''
+  ).trim()
 
-    aliases: ["سمسم", "سيمسيم", "simsimi"],
-
-    category: "ai",
-
-    description: "𝑮𝒆𝒐 𝑺𝒊𝒎𝒔𝒊𝒎𝒊 - الدردشة مع سمسمي.",
-
-    async run({ geo, m, args, text }) {
-        try {
-            const query = (
-                text ||
-                (Array.isArray(args) ? args.join(" ") : "") ||
-                ""
-            ).trim();
-
-            // رسالة المساعدة عند طلب الأمر بدون نص
-            if (!query) {
-                await react(geo, m, "🐤");
-
-                return await send(
-                    geo,
-                    m,
-                    panel(
-                        "𝑮𝒆𝒐 𝑺𝒊𝒎𝒔𝒊𝒎𝒊",
-                        `🐤 أهلاً بيك في سمسمي!
+  try {
+    if (!query) {
+      await react(conn, m, '🐤')
+      return send(
+        conn,
+        m,
+        panel(
+          '𝑺𝑼𝑲𝑼𝑵𝑨 𝑺𝒊𝒎𝒔𝒊𝒎𝒊',
+          `🐤 أهلاً بيك في سمسمي!
 
 📍 اكتب رسالتك بعد الأمر.
 
 ⟢ مثال:
 .سمسم عامل إيه؟`
-                    )
-                );
-            }
-
-            // رياكشن الانتظار
-            await react(geo, m, "🕰");
-
-            // جلب الرد من الـ API
-            const reply = await getSimSimiResponse(query);
-
-            // رياكشن النجاح
-            await react(geo, m, "☑️");
-
-            // إرسال الرد بتنسيق 𝑮𝒆𝒐 الرسمي
-            await send(
-                geo,
-                m,
-                panel(
-                    "𝑮𝒆𝒐 𝑺𝒊𝒎𝒔𝒊𝒎𝒊",
-                    `🐤 *سمسم:* ${reply}`
-                )
-            );
-
-        } catch (error) {
-            console.error(
-                "[𝑮𝒆𝒐 SIMSIMI COMMAND ERROR]",
-                error.stack || error.message || error
-            );
-
-            await react(geo, m, "🚫");
-
-            return await send(
-                geo,
-                m,
-                panel(
-                    "𝑮𝒆𝒐 𝑺𝒊𝒎𝒔𝒊𝒎𝒊",
-                    `🔶️ جيو في وقت الصيانة الآن، حاول مرة أخرى بعد قليل.`
-                )
-            );
-        }
+        )
+      )
     }
-};
+
+    await react(conn, m, '🕰')
+
+    const reply = await getSimSimiResponse(query)
+
+    await react(conn, m, '☑️')
+
+    await send(
+      conn,
+      m,
+      panel(
+        '𝑺𝑼𝑲𝑼𝑵𝑨 𝑺𝒊𝒎𝒔𝒊𝒎𝒊',
+        `🐤 *سمسم:* ${reply}`
+      )
+    )
+
+  } catch (error) {
+    console.error('[𝑺𝑼𝑲𝑼𝑵𝑨 SIMSIMI ERROR]', error.stack || error.message || error)
+
+    await react(conn, m, '🚫')
+
+    return send(
+      conn,
+      m,
+      panel(
+        '𝑺𝑼𝑲𝑼𝑵𝑨 𝑺𝒊𝒎𝒔𝒊𝒎𝒊',
+        `🔶️ البوت في وقت الصيانة الآن، حاول مرة أخرى بعد قليل.`
+      )
+    )
+  }
+}
+
+handler.command = /^(سمسم\.ب|سمسم|سيمسيم|simsimi)$/i
+handler.tags = ['ai']
+handler.help = ['سمسم.ب']
+
+export default handler
