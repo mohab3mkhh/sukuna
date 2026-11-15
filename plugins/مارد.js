@@ -109,8 +109,53 @@ const pickWin = o => {
     }
 }
 
-// بيجيب التخمين من الحزمة (submitWin) أو من خصائصها
+// بنقرا كل خصائص كائن الحزمة (حتى الـ getters) من غير الدوال
+function snapshot(aki) {
+    const out = {}
+    const names = []
+    let o = aki
+    for (let i = 0; o && o !== Object.prototype && i < 4; i++, o = Object.getPrototypeOf(o)) {
+        names.push(...Object.getOwnPropertyNames(o))
+    }
+    for (const k of new Set(names)) {
+        if (k === 'constructor') continue
+        try {
+            const v = aki[k]
+            if (typeof v !== 'function') out[k] = v
+        } catch {}
+    }
+    return out
+}
+
+const summarize = snap => {
+    const o = {}
+    for (const [k, v] of Object.entries(snap)) {
+        o[k] = v && typeof v === 'object'
+            ? (Array.isArray(v) ? `[${v.length}] ` : '{} ') + (j(v) || '').slice(0, 80)
+            : String(v).slice(0, 80)
+    }
+    return JSON.stringify(o)
+}
+
+// التخمين غالباً بيتخزن في خاصية اسمها فيها guess / win / result ...
+const GUESS_KEYS = /guess|win|result|answer|character|propos|candidate|suggest/i
+function pickFromState(snap) {
+    for (const [k, v] of Object.entries(snap)) {
+        if (!GUESS_KEYS.test(k) || !v || typeof v !== 'object') continue
+        const w = pickWin(Array.isArray(v) ? v[0] : v)
+        if (w) return w
+    }
+    return null
+}
+
+// بيجيب التخمين من خصائص الحزمة، ولو ملقاش بيجرّب submitWin
 async function clientGetWin(aki) {
+    const snap1 = snapshot(aki)
+    const state1 = summarize(snap1)
+    console.log('[مارد] state:', state1)
+    const early = pickFromState(snap1)
+    if (early) return { win: early, state: state1 }
+
     let raw, err
     try {
         raw = await aki.submitWin()
@@ -119,12 +164,13 @@ async function clientGetWin(aki) {
         err = e
         console.error('[مارد] submitWin فشل:', e?.message || e)
     }
-    const win = pickWin(raw) || pickWin(aki.guess ?? aki.winner ?? aki.result ?? aki.answers?.[0])
-    return { win, raw, err }
+    const snap2 = snapshot(aki)
+    const win = pickWin(raw) || pickFromState(snap2)
+    return { win, raw, err, state: summarize(snap2) }
 }
 
 const stuckMsg = (aki, why, g) =>
-    `${why}\nprogress: ${aki.progress}\nsubmitWin: ${g?.err ? 'خطأ: ' + (g.err.message || g.err) : j(g?.raw)}`
+    `${why}\nprogress: ${aki.progress}\nsubmitWin: ${g?.err ? 'خطأ: ' + (g.err.message || g.err) : j(g?.raw)}\nstate: ${String(g?.state || '').slice(0, 700)}`
 
 async function clientAnswer(s, n, back = false) {
     const aki = s.aki
