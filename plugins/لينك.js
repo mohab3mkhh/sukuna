@@ -1,76 +1,57 @@
-import { prepareWAMessageMedia, generateWAMessageFromContent, getDevice } from '@whiskeysockets/baileys';
+/**
+ * plugins/لينك.js
+ * إرسال لينك الجروب مع زر نسخ
+ */
 
-const handler = async (m, { conn, text, usedPrefix: prefijo }) => {
-    const device = await getDevice(m.key.id);
-    const mentionId = m.key.participant || m.key.remoteJid;
+// ✅ استخدام ملف الأزرار
+import { sendButtons, btn, getButtonId } from '../lib/buttons.js';
 
-    let group = m.chat;
-    let link = 'https://chat.whatsapp.com/' + await conn.groupInviteCode(group);
+const DEFAULT_IMAGE = 'https://telegra.ph/file/b9c7242b2ea534c9fea51.jpg';
 
-    // محاولة الحصول على صورة الروم
-    let groupMetadata = await conn.groupMetadata(group);
-    let groupImage;
-
-    try {
-        // التحقق مما إذا كانت صورة المجموعة موجودة
-        groupImage = await conn.profilePictureUrl(m.chat, 'image'); // المحاولة للحصول على صورة المجموعة مباشرة
-    } catch (e) {
-        groupImage = null; // في حالة عدم وجود صورة
+const handler = async (m, { conn }) => {
+    if (!m.isGroup) {
+        return m.reply('❌ هذا الأمر للمجموعات فقط');
     }
 
-    // إذا كانت صورة الروم غير موجودة، استخدم الصورة الافتراضية
-    let imageUrl = groupImage ? groupImage : 'https://telegra.ph/file/b9c7242b2ea534c9fea51.jpg';
+    const mentionId = m.key.participant || m.key.remoteJid;
 
-    // إعداد الصورة التي سيتم إرسالها
-    var imageMedia = await prepareWAMessageMedia({ image: { url: imageUrl } }, { upload: conn.waUploadToServer });
+    try {
+        // ✅ جلب لينك الجروب
+        const inviteCode = await conn.groupInviteCode(m.chat);
+        const link = `https://chat.whatsapp.com/${inviteCode}`;
 
-    if (device !== 'desktop' && device !== 'web') {
-        // إعداد الرسالة التفاعلية
-        const interactiveMessage = {
-            body: { text: `*⌬═━━━═⌬┋⊰🎶⊱┋⌬═━━━═⌬*`.trim() },
-            footer: { text: `⛩️SUKUNA⚡️BOT⛩️`.trim() },
-            header: {
-                title: `مـرحـبـا يـا: @${mentionId.split('@')[0]}`,
-                subtitle: `*هذه صورة مع زر النسخ*`,
-                hasMediaAttachment: true,
-                imageMessage: imageMedia.imageMessage, // إضافة الصورة هنا
-            },
-            nativeFlowMessage: {
-                buttons: [
-                    {
-                        name: 'cta_copy',
-                        buttonParamsJson: JSON.stringify({
-                            display_text: '⛩️┊انـسـخ الـرابـط┊⛩️',
-                            copy_code: link
-                        })
-                    }
-                ],
-                messageParamsJson: ''
-            }
-        };
+        // ✅ جلب صورة الجروب (أو الصورة الافتراضية)
+        let groupImage = null;
+        try {
+            groupImage = await conn.profilePictureUrl(m.chat, 'image');
+        } catch {
+            groupImage = DEFAULT_IMAGE;
+        }
 
-        // إنشاء الرسالة
-        let msg = generateWAMessageFromContent(m.chat, {
-            viewOnceMessage: {
-                message: {
-                    interactiveMessage,
-                },
-            },
-        }, { userJid: conn.user.jid, quoted: m });
+        // ✅ إرسال باستخدام sendButtons
+        await sendButtons(conn, m.chat, {
+            title: '🔗 لينك الجروب',
+            subtitle: `مرحبا يا @${mentionId.split('@')[0]}`,
+            text: `*⌬═━━━═⌬┋⊰🎶⊱┋⌬═━━━═⌬*\n\n` +
+                  `🔗 *لينك الجروب:*\n${link}\n\n` +
+                  `📌 اضغط على الزر لنسخ الرابط`,
+            footer: '⛩️ SUKUNA BOT ⛩️',
+            image: groupImage,
+            buttons: [
+                btn.copy('⛩️┊انـسـخ الـرابـط┊⛩️', link)
+            ],
+            mentions: [mentionId]
+        }, m);
 
-        // إضافة المعلومات حول المرسل
-        msg.message.viewOnceMessage.message.interactiveMessage.contextInfo = { mentionedJid: [mentionId] };
-        
-        // إرسال الرسالة
-        conn.relayMessage(m.chat, msg.message, { messageId: msg.key.id });
-
-    } else {
-        // في حال كان الجهاز سطح مكتب أو ويب، إرسال الصورة الافتراضية فقط
-        await conn.sendFile(m.chat, 'https://telegra.ph/file/b9c7242b2ea534c9fea51.jpg', 'image.jpg', 'الصورة الافتراضية', m);
+    } catch (e) {
+        console.error('[لينك]', e.message);
+        await m.reply(`❌ فشل جلب لينك الجروب: ${e.message}`);
     }
 };
 
-handler.help = ['sendImageWithCopyButton'];
-handler.tags = ['For Test'];
-handler.command = ['لينك'];
+handler.help = ['لينك'];
+handler.tags = ['group'];
+handler.command = ['لينك', 'link'];
+handler.group = true;
+
 export default handler;
