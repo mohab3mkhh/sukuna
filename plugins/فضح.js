@@ -1,3 +1,4 @@
+// plugins/viewonce.js
 import { downloadMediaMessage } from '@whiskeysockets/baileys'
 
 let handler = async (m, { conn }) => {
@@ -13,11 +14,12 @@ let handler = async (m, { conn }) => {
 
     let quotedMessage = contextInfo.quotedMessage
 
-    if (quotedMessage.viewOnceMessageV2) {
+    // استخراج الرسالة من كل أنواع viewOnce
+    if (quotedMessage.viewOnceMessageV2?.message) {
       quotedMessage = quotedMessage.viewOnceMessageV2.message
-    } else if (quotedMessage.viewOnceMessage) {
+    } else if (quotedMessage.viewOnceMessage?.message) {
       quotedMessage = quotedMessage.viewOnceMessage.message
-    } else if (quotedMessage.viewOnceMessageV2Extension) {
+    } else if (quotedMessage.viewOnceMessageV2Extension?.message) {
       quotedMessage = quotedMessage.viewOnceMessageV2Extension.message
     }
 
@@ -30,12 +32,62 @@ let handler = async (m, { conn }) => {
 
     await conn.sendMessage(m.chat, { react: { text: '👁️', key: m.key } })
 
-    const buffer = await downloadMediaMessage(
-      { message: quotedMessage },
-      'buffer',
-      {},
-      { logger: console, reuploadRequest: conn.updateMediaMessage }
-    )
+    // بناء كائن الرسالة الكامل للتحميل
+    const fakeMsg = {
+      key: {
+        remoteJid: m.chat,
+        id: contextInfo.stanzaId || m.key.id
+      },
+      message: quotedMessage
+    }
+
+    let buffer = null
+
+    // طريقة 1 — downloadMediaMessage العادي
+    try {
+      buffer = await downloadMediaMessage(
+        fakeMsg,
+        'buffer',
+        {},
+        {
+          logger: console,
+          reuploadRequest: conn.updateMediaMessage?.bind(conn)
+        }
+      )
+    } catch (e1) {
+      console.error('[عرض] طريقة 1 فشلت:', e1.message)
+    }
+
+    // طريقة 2 — بدون reuploadRequest
+    if (!buffer) {
+      try {
+        buffer = await downloadMediaMessage(
+          fakeMsg,
+          'buffer',
+          {}
+        )
+      } catch (e2) {
+        console.error('[عرض] طريقة 2 فشلت:', e2.message)
+      }
+    }
+
+    // طريقة 3 — downloadContentFromMessage يدوي
+    if (!buffer) {
+      try {
+        const { downloadContentFromMessage } = await import('@whiskeysockets/baileys')
+        const mediaMsg = quotedMessage[mediaType]
+        const stream = await downloadContentFromMessage(mediaMsg, mediaType.replace('Message', ''))
+        const chunks = []
+        for await (const chunk of stream) chunks.push(chunk)
+        buffer = Buffer.concat(chunks)
+      } catch (e3) {
+        console.error('[عرض] طريقة 3 فشلت:', e3.message)
+      }
+    }
+
+    if (!buffer) {
+      return m.reply('⚠️ فشل التحميل — الرسالة قديمة أو تم حذفها')
+    }
 
     const caption = quotedMessage[mediaType]?.caption || '👁️ *تم الكشف*'
 
