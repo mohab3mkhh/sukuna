@@ -162,32 +162,37 @@ function localImg() {
 }
 
 async function sendQuestion(conn, jid, question, imgUrl, quoted) {
-    // الترتيب: نعم ← لا ← لا ربما ← (القايمة) ربما ← مش عارف ← رجوع ← إلغاء
-    const other = {
-        name: 'single_select',
-        buttonParamsJson: JSON.stringify({
-            title: '☽✰ ¦ الـمـزيـد 🐤 ¦ ✰☾',
-            sections: [{
-                title: 'بـاقـي الـخـيـارات',
-                rows: [
-                    { header: '', title: 'ربـمـا', description: '', id: '.مارد ربما' },
-                    { header: '', title: 'مـش عـارف', description: '', id: '.مارد لا أعرف' },
-                    { header: '', title: 'رجَـوع خـطـوه', description: '', id: '.مارد رجوع' },
-                    { header: '', title: 'الـغـاء الـعـبة', description: '', id: '.مارد حذف' },
-                ],
-            }],
-        }),
-    }
+    // الترتيب: نعم ← لا ← لا ربما ← ربما ← مش عارف ← رجوع ← إلغاء اللعبة
+    const OPTIONS = [
+        { text: '☽✰ ¦ نـعـم 🐤 ¦ ✰☾', id: '.مارد نعم' },
+        { text: '☽✰ ¦ لا 🐤 ¦ ✰☾', id: '.مارد لا' },
+        { text: '☽✰ ¦ لا ربـمـا 🐤 ¦ ✰☾', id: '.مارد ربما لا' },
+        { text: '☽✰ ¦ ربـمـا 🐤 ¦ ✰☾', id: '.مارد ربما' },
+        { text: '☽✰ ¦ مـش عـارف 🐤 ¦ ✰☾', id: '.مارد لا أعرف' },
+        { text: '☽✰ ¦ رجَـوع خـطـوه 🐤 ¦ ✰☾', id: '.مارد رجوع' },
+        { text: '☽✰ ¦ الـغـاء الـعـبة 🐤 ¦ ✰☾', id: '.مارد حذف' },
+    ]
+
+    // الافتراضي: 7 أزرار منفصلة. لو واتساب مش بيعرضهم، حط في Railway متغير MARID_LIST=1
+    // وهيتحولوا لقايمة واحدة فيها الـ 7 بنفس الترتيب
+    const buttons = process.env.MARID_LIST === '1'
+        ? [{
+            name: 'single_select',
+            buttonParamsJson: JSON.stringify({
+                title: '☽✰ ¦ اخـتـار اجـابـتـك 🐤 ¦ ✰☾',
+                sections: [{
+                    title: 'الـخـيـارات',
+                    rows: OPTIONS.map(o => ({ header: '', title: o.text, description: '', id: o.id })),
+                }],
+            }),
+        }]
+        : OPTIONS
+
     const payload = {
         text: `مارد يـقـول🐤:\n${question}`,
         footer: 'جـاري الـتـخـمـين....🔥',
         title: 'لـعـبه الـمـارد😂',
-        buttons: [
-            { text: '☽✰ ¦ نـعـم 🐤 ¦ ✰☾', id: '.مارد نعم' },
-            { text: '☽✰ ¦ لا 🐤 ¦ ✰☾', id: '.مارد لا' },
-            { text: '☽✰ ¦ لا ربـمـا 🐤 ¦ ✰☾', id: '.مارد ربما لا' },
-            other,
-        ],
+        buttons,
         quoted,
     }
 
