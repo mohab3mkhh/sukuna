@@ -33,6 +33,7 @@
     "@xct007/frieren-scraper": "^0.0.2",
     "acrcloud": "^1.4.0",
     "aki-api": "latest",
+    "akinator-client": "latest",
     "api-dylux": "^1.6.2",
     "archiver": "^7.0.1",
     "awesome-phonenumber": "^3.4.0",
@@ -147,5 +148,4 @@
       "libsignal": "^2.0.1"
     }
   }
-  }
-    
+}
