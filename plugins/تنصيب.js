@@ -6,22 +6,21 @@ import {
   DisconnectReason,
   makeCacheableSignalKeyStore,
   fetchLatestWaWebVersion,
-  areJidsSameUser,
-  generateWAMessageFromContent,
-  proto,
-  prepareWAMessageMedia
+  areJidsSameUser
 } from '@whiskeysockets/baileys'
 import fs   from 'fs'
 import path from 'path'
 import pino from 'pino'
 import chalk from 'chalk'
 import { makeWASocket } from '../lib/simple.js'
+import { sendButtons } from '../lib/buttons.js'
 import { fileURLToPath } from 'url'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname  = path.dirname(__filename)
 
 const SUKUNA_IMG = 'https://i.ibb.co/M5gwTyJJ/upload-1774680667350.jpg'
+const PAIRING_CODE      = 'SUKUNAAA'   // لازم 8 حروف/أرقام بالظبط
 const JADI_FOLDER       = path.join('Sessions', 'SubBot')
 const INSTALLS_FILE     = path.join(__dirname, 'yuki_installs.json')
 const STATUS_FILE       = path.join(__dirname, 'jadibot_status.json')
@@ -138,7 +137,7 @@ function removeConnSocket(userId) {
   }
 }
 
-// ✅ الإصلاح الرئيسي — بدل الكاش المشترك، كل بوت فرعي عنده handler منفصل
+// ✅ كل بوت فرعي عنده handler منفصل
 const subHandlerCache = new Map()
 async function getSubHandler(userId) {
   try {
@@ -146,7 +145,6 @@ async function getSubHandler(userId) {
     const cached = subHandlerCache.get(userId)
     if (cached && now - cached.time < HANDLER_CACHE_TTL) return cached.mod
 
-    // dynamic import مع cache busting عشان يكون منفصل
     const mod = await import(`../handler.js?sub=${userId}&t=${Math.floor(now / HANDLER_CACHE_TTL)}`)
     subHandlerCache.set(userId, { mod, time: now })
     return mod
@@ -259,41 +257,19 @@ const TEXT = {
 ⟡ العدد: ${total} بوت`
 }
 
+// ✅ رسالة الكود بزرار نسخ (عن طريق lib/buttons.js)
 async function sendCodeMessage(conn, m, code) {
   const fmt = code.match(/.{1,4}/g)?.join('-') || code
   try {
-    let imageMessage = null
-    try {
-      const prepared = await prepareWAMessageMedia(
-        { image: { url: SUKUNA_IMG } },
-        { upload: conn.waUploadToServer }
-      )
-      imageMessage = prepared.imageMessage
-    } catch {}
-
-    const built = generateWAMessageFromContent(
-      m.chat,
-      proto.Message.fromObject({
-        interactiveMessage: {
-          ...(imageMessage ? { header: { hasMediaAttachment: true, imageMessage } } : {}),
-          body:   { text: TEXT.codeBody },
-          footer: { text: '꧁༒【⛩️𝗦𝗨𝗞𝗨𝗡𝗔⚡𝗕𝗢𝗧⛩️】༒꧂' },
-          nativeFlowMessage: {
-            buttons: [{
-              name: 'cta_copy',
-              buttonParamsJson: JSON.stringify({
-                display_text: `📋  انسخ الكود  •  ${fmt}`,
-                copy_code:    fmt
-              })
-            }],
-            messageParamsJson: ''
-          }
-        }
-      }),
-      { userJid: conn.user?.jid, quoted: m }
-    )
-    await conn.relayMessage(m.chat, built.message, { messageId: built.key.id })
-  } catch {
+    await sendButtons(conn, m.chat, {
+      text: TEXT.codeBody,
+      footer: '꧁༒【⛩️𝗦𝗨𝗞𝗨𝗡𝗔⚡𝗕𝗢𝗧⛩️】༒꧂',
+      image: { url: SUKUNA_IMG },
+      buttons: [{ copy: code, text: `📋  انسخ الكود  •  ${fmt}` }],
+      quoted: m,
+    })
+  } catch (e) {
+    console.log('[JADIBOT] buttons failed, fallback:', e.message)
     await conn.sendMessage(m.chat, {
       image:   { url: SUKUNA_IMG },
       caption: `${TEXT.codeBody}\n\n📋 *الكود:* ${fmt}`
@@ -533,7 +509,6 @@ export async function yukiJadiBot({ sessionPath, m, conn, userId, mode = 'code' 
         sock.ev.off('groups.update',             sock._groupsHandler)
       }
 
-      // ✅ الإصلاح الرئيسي — كل بوت فرعي بيجيب handler منفصل بـ userId
       sock._msgHandler = async ({ messages, type }) => {
         if (type !== 'notify') return
         try {
@@ -543,9 +518,7 @@ export async function yukiJadiBot({ sessionPath, m, conn, userId, mode = 'code' 
           for (const msg of messages) {
             const ts = msg.messageTimestamp?.low || msg.messageTimestamp || 0
             if (ts > 0 && (now - ts) > 120) continue
-            // ✅ تجاهل status broadcast عشان ميأثرش على الأساسي
             if (msg.key?.remoteJid === 'status@broadcast') continue
-            // ✅ تأكد إن الرسالة للساب بوت ده مش للأساسي
             const sockJid = sock?.user?.jid?.split('@')[0]?.split(':')[0]
             const msgTo   = msg.key?.remoteJid
             if (sockJid && msgTo && msgTo === global.conn?.user?.jid) return
@@ -612,7 +585,8 @@ export async function yukiJadiBot({ sessionPath, m, conn, userId, mode = 'code' 
       if (qr && mode === 'code' && m && !st.codeSent) {
         st.codeSent = true
         try {
-          const code = await sock.requestPairingCode(userId)
+          // ✅ كود ربط مخصص
+          const code = await sock.requestPairingCode(userId, PAIRING_CODE)
           if (typeof code === 'string' && code.length > 0) {
             await sendCodeMessage(conn, m, code)
           } else {
@@ -656,7 +630,8 @@ export async function yukiJadiBot({ sessionPath, m, conn, userId, mode = 'code' 
       }
 
       if (connection === 'close') {
-        if ([DisconnectReason.loggedOut, 401, 403, 405].includes(reason)) {
+        // ✅ شلت 405 من الحذف النهائي (بيحصل أحياناً بسبب نسخة واتساب مش بسبب الجلسة)
+        if ([DisconnectReason.loggedOut, 401, 403].includes(reason)) {
           console.warn(chalk.red(`[JADIBOT] 🚫 جلسة (+${userId}) أُغلقت نهائياً — كود: ${reason}`))
           try {
             await conn.sendMessage(`${userId}@s.whatsapp.net`,
