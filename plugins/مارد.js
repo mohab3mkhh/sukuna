@@ -77,27 +77,54 @@ async function clientStart() {
 
 const j = v => { try { return JSON.stringify(v)?.slice(0, 300) } catch { return String(v) } }
 
-// بيحوّل أي شكل رد لتخمين: { name, desc, photo }
-const pickWin = o => {
-    const name = o?.name ?? o?.name_proposition ?? o?.guess?.name ?? o?.character?.name
-    if (!name) return null
-    return {
-        name,
-        desc: o.description ?? o.description_proposition ?? o.guess?.description,
-        photo: o.photo ?? o.absolute_picture_path ?? o.picture ?? o.image ?? o.guess?.photo,
+const IMG_RE = /^https?:\/\/\S+\.(?:jpe?g|png|webp)(?:\?\S*)?$/i
+
+function deepFind(o, keys, depth = 0) {
+    if (!o || typeof o !== 'object' || depth > 3) return undefined
+    for (const k of keys) if (typeof o[k] === 'string' && o[k]) return o[k]
+    for (const v of Object.values(o)) {
+        const r = deepFind(v, keys, depth + 1)
+        if (r) return r
     }
 }
 
-async function clientGetWin(aki) {
-    try {
-        const w = await aki.submitWin()
-        console.log('[مارد] submitWin ->', j(w))
-        return pickWin(w)
-    } catch (e) {
-        console.error('[مارد] submitWin فشل:', e?.message || e)
-        return null
+function deepImg(o, depth = 0) {
+    if (typeof o === 'string') return IMG_RE.test(o) ? o : undefined
+    if (!o || typeof o !== 'object' || depth > 3) return undefined
+    for (const v of Object.values(o)) {
+        const r = deepImg(v, depth + 1)
+        if (r) return r
     }
 }
+
+// بيحوّل أي شكل رد لتخمين: { name, desc, photo }
+const pickWin = o => {
+    if (typeof o === 'string' && o.trim()) return { name: o.trim() }
+    const name = deepFind(o, ['name', 'name_proposition', 'nameProposition', 'character'])
+    if (!name) return null
+    return {
+        name,
+        desc: deepFind(o, ['description', 'description_proposition', 'descriptionProposition', 'desc']),
+        photo: deepImg(o),
+    }
+}
+
+// بيجيب التخمين من الحزمة (submitWin) أو من خصائصها
+async function clientGetWin(aki) {
+    let raw, err
+    try {
+        raw = await aki.submitWin()
+        console.log('[مارد] submitWin ->', j(raw))
+    } catch (e) {
+        err = e
+        console.error('[مارد] submitWin فشل:', e?.message || e)
+    }
+    const win = pickWin(raw) || pickWin(aki.guess ?? aki.winner ?? aki.result ?? aki.answers?.[0])
+    return { win, raw, err }
+}
+
+const stuckMsg = (aki, why, g) =>
+    `${why}\nprogress: ${aki.progress}\nsubmitWin: ${g?.err ? 'خطأ: ' + (g.err.message || g.err) : j(g?.raw)}`
 
 async function clientAnswer(s, n, back = false) {
     const aki = s.aki
@@ -107,10 +134,9 @@ async function clientAnswer(s, n, back = false) {
     } catch (e) {
         // الحزمة كانت عملت تخمين قبل كده: نجيبه بدل ما نكمل أسئلة
         if (/guess was already made/i.test(String(e?.message))) {
-            const w = await clientGetWin(aki)
-            if (w) return { win: w }
-            try { await aki.continue() } catch {}
-            return { question: aki.question, img: clientImg(aki) }
+            const g = await clientGetWin(aki)
+            if (g.win) return { win: g.win }
+            return { stuck: stuckMsg(aki, 'المارد وصل لتخمين بس مقدرتش أجيبه.', g) }
         }
         throw e
     }
@@ -121,10 +147,20 @@ async function clientAnswer(s, n, back = false) {
 
     const flag = aki.guessed ?? aki.isWin ?? aki.hasGuess ?? aki.guessReady ?? aki.isGuess
     if (flag || Number(aki.progress) >= 80) {
-        const w = await clientGetWin(aki)
-        if (w) return { win: w }
+        const g = await clientGetWin(aki)
+        if (g.win) return { win: g.win }
     }
-    return { question: aki.question, img: clientImg(aki) }
+
+    // لو السؤال اتكرر بعد الإجابة يبقى المارد واقف عند تخمين، نجيبه بدل ما نلف في نفس السؤال
+    const q = aki.question
+    if (!back && s.lastQ && q === s.lastQ) {
+        console.log('[مارد] السؤال اتكرر، بجرّب التخمين')
+        const g = await clientGetWin(aki)
+        if (g.win) return { win: g.win }
+        return { stuck: stuckMsg(aki, 'السؤال اتكرر والتخمين ماجاش.', g) }
+    }
+    s.lastQ = q
+    return { question: q, img: clientImg(aki) }
 }
 
 // ───────── المزوّد 2: API القديم ─────────
@@ -259,6 +295,7 @@ let handler = async function (m, { text, conn }) {
             try {
                 const s = await p.start()
                 conn.aki[key] = s
+                s.lastQ = s.first?.question
                 console.log(`[مارد] ✅ ${p.name}`)
                 return sendQuestion(conn, m.chat, s.first.question, s.first.img, m)
             } catch (e) {
@@ -282,6 +319,7 @@ let handler = async function (m, { text, conn }) {
             const fn = session.provider === 'client' ? clientAnswer : obitoAnswer
             const r = await fn(session, ANSWERS[text], isBack)
             if (r.win) { delete conn.aki[key]; return sendWin(conn, m, r.win) }
+            if (r.stuck) { delete conn.aki[key]; return m.reply('⚠️ ' + r.stuck + '\n\nابدأ لعبة جديدة بـ .مارد ابدا') }
             return sendQuestion(conn, m.chat, r.question, r.img, m)
         } catch (e) {
             console.error('[مارد]', e?.message || e)
