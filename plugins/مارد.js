@@ -75,18 +75,54 @@ async function clientStart() {
     throw lastErr || new Error('akinator-client: مفيش إعداد شغّال')
 }
 
+const j = v => { try { return JSON.stringify(v)?.slice(0, 300) } catch { return String(v) } }
+
+// بيحوّل أي شكل رد لتخمين: { name, desc, photo }
+const pickWin = o => {
+    const name = o?.name ?? o?.name_proposition ?? o?.guess?.name ?? o?.character?.name
+    if (!name) return null
+    return {
+        name,
+        desc: o.description ?? o.description_proposition ?? o.guess?.description,
+        photo: o.photo ?? o.absolute_picture_path ?? o.picture ?? o.image ?? o.guess?.photo,
+    }
+}
+
+async function clientGetWin(aki) {
+    try {
+        const w = await aki.submitWin()
+        console.log('[مارد] submitWin ->', j(w))
+        return pickWin(w)
+    } catch (e) {
+        console.error('[مارد] submitWin فشل:', e?.message || e)
+        return null
+    }
+}
+
 async function clientAnswer(s, n, back = false) {
     const aki = s.aki
-    if (back) await aki.back()
-    else await aki.answer(s.Answers?.[ANSWER_NAMES[n]] ?? n)
-
-    if (Number(aki.progress) >= 80) {
-        try {
-            const w = await aki.submitWin()
-            if (w?.name) return { win: { name: w.name, desc: w.description, photo: w.photo } }
-        } catch (e) {
-            console.error('[مارد] submitWin:', e?.message || e)
+    let ret
+    try {
+        ret = back ? await aki.back() : await aki.answer(s.Answers?.[ANSWER_NAMES[n]] ?? n)
+    } catch (e) {
+        // الحزمة كانت عملت تخمين قبل كده: نجيبه بدل ما نكمل أسئلة
+        if (/guess was already made/i.test(String(e?.message))) {
+            const w = await clientGetWin(aki)
+            if (w) return { win: w }
+            try { await aki.continue() } catch {}
+            return { question: aki.question, img: clientImg(aki) }
         }
+        throw e
+    }
+    console.log('[مارد] progress:', aki.progress, '| answer ->', j(ret))
+
+    const direct = pickWin(ret)
+    if (direct) return { win: direct }
+
+    const flag = aki.guessed ?? aki.isWin ?? aki.hasGuess ?? aki.guessReady ?? aki.isGuess
+    if (flag || Number(aki.progress) >= 80) {
+        const w = await clientGetWin(aki)
+        if (w) return { win: w }
     }
     return { question: aki.question, img: clientImg(aki) }
 }
@@ -126,16 +162,16 @@ function localImg() {
 }
 
 async function sendQuestion(conn, jid, question, imgUrl, quoted) {
-    // باقي الخيارات في قايمة عشان الأزرار تفضل قليلة وتظهر على واتساب
+    // الترتيب: نعم ← لا ← لا ربما ← (القايمة) ربما ← مش عارف ← رجوع ← إلغاء
     const other = {
         name: 'single_select',
         buttonParamsJson: JSON.stringify({
-            title: '☽✰ ¦ خـيـارات أخـرى 🐤 ¦ ✰☾',
+            title: '☽✰ ¦ الـمـزيـد 🐤 ¦ ✰☾',
             sections: [{
-                title: 'خـيـارات',
+                title: 'بـاقـي الـخـيـارات',
                 rows: [
                     { header: '', title: 'ربـمـا', description: '', id: '.مارد ربما' },
-                    { header: '', title: 'لا ربـمـا', description: '', id: '.مارد ربما لا' },
+                    { header: '', title: 'مـش عـارف', description: '', id: '.مارد لا أعرف' },
                     { header: '', title: 'رجَـوع خـطـوه', description: '', id: '.مارد رجوع' },
                     { header: '', title: 'الـغـاء الـعـبة', description: '', id: '.مارد حذف' },
                 ],
@@ -149,7 +185,7 @@ async function sendQuestion(conn, jid, question, imgUrl, quoted) {
         buttons: [
             { text: '☽✰ ¦ نـعـم 🐤 ¦ ✰☾', id: '.مارد نعم' },
             { text: '☽✰ ¦ لا 🐤 ¦ ✰☾', id: '.مارد لا' },
-            { text: '☽✰ ¦ مـش عـارف 🐤 ¦ ✰☾', id: '.مارد لا أعرف' },
+            { text: '☽✰ ¦ لا ربـمـا 🐤 ¦ ✰☾', id: '.مارد ربما لا' },
             other,
         ],
         quoted,
