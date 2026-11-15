@@ -25,14 +25,39 @@ async function clientStart() {
     const { AkinatorClient, Languages, Themes, Answers } = lib
     if (!AkinatorClient) throw new Error('akinator-client: شكل الحزمة مختلف عن المتوقع')
 
-    const aki = new AkinatorClient({
-        language: Languages?.AR ?? 'ar',
-        theme: Themes?.CHARACTERS ?? 'characters',
-        ...(PROXY ? { proxy: PROXY } : {}),
-        retries: 2,
-    })
-    await aki.start()
-    return { provider: 'client', aki, Answers, first: { question: aki.question, img: null } }
+    // نطبع اللي موجود في الحزمة عشان نعرف أسماء الثيمات الحقيقية لو فشل
+    console.log('[مارد] exports:', Object.keys(lib).join(','))
+    console.log('[مارد] Languages:', JSON.stringify(Languages))
+    console.log('[مارد] Themes:', JSON.stringify(Themes))
+
+    const langs = [...new Set([Languages?.AR, Languages?.ar, 'ar'].filter(v => v !== undefined))]
+    const themeVals = Themes && typeof Themes === 'object' ? Object.values(Themes) : []
+    // نجرّب كل ثيم متاح، وآخر محاولة من غير ثيم أصلاً
+    const themes = [...new Set([Themes?.CHARACTERS, Themes?.Characters, ...themeVals, 'characters'].filter(v => v !== undefined))]
+    themes.push(undefined)
+
+    let lastErr
+    for (const language of langs) {
+        for (const theme of themes) {
+            try {
+                const aki = new AkinatorClient({
+                    language,
+                    ...(theme !== undefined ? { theme, themeName: theme } : {}),
+                    ...(PROXY ? { proxy: PROXY } : {}),
+                    retries: 2,
+                })
+                await aki.start()
+                console.log(`[مارد] akinator-client اشتغل: language=${language} theme=${theme}`)
+                return { provider: 'client', aki, Answers, first: { question: aki.question, img: null } }
+            } catch (e) {
+                lastErr = e
+                console.error(`[مارد] language=${language} theme=${theme}:`, e?.message || e)
+                // لو الخطأ مش خطأ إعدادات (مثلاً 403 أو شبكة) مفيش فايدة نكمل نجرّب
+                if (!/not available|invalid|unsupported/i.test(String(e?.message))) throw e
+            }
+        }
+    }
+    throw lastErr || new Error('akinator-client: مفيش إعداد شغّال')
 }
 
 async function clientAnswer(s, n, back = false) {
