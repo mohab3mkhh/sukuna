@@ -1,470 +1,158 @@
-// plugins/مارد.js
-// 🧞 المارد الأزرق (Akinator) — لعبة تخمين بالأزرار
+// plugins/مارد.js  — لعبة المارد (Akinator)
+// بيجرّب مزوّد الـ API الأصلي، ولو وقع بيجرّب حزمة aki-api (لو متثبتة). ولو الاتنين وقعوا بيقولك السبب في الشات.
+// لتثبيت الحزمة: ضيف  "aki-api": "latest"  في dependencies بتاع package.json
 
-import fs from 'fs'
-import path from 'path'
+import axios from "axios";
+import * as baileys from '@whiskeysockets/baileys'
+const { generateWAMessageFromContent, proto, prepareWAMessageMedia } = baileys
 
-// ✅ استخدام ملف الأزرار
-import { sendButtons as sendBtn, btn, getButtonId } from '../lib/buttons.js'
+const api_obito = "https://mr-obito-api.vercel.app/api";
+const ANSWERS = { "نعم": 0, "لا": 1, "لا أعرف": 2, "ربما": 3, "ربما لا": 4 };
 
-// ==================================================
-// CONFIG
-// ==================================================
+const shortErr = e => e?.response?.status
+    ? `HTTP ${e.response.status}${e.response.data?.message ? ' - ' + String(e.response.data.message).slice(0, 60) : ''}`
+    : String(e?.code || e?.message || e).slice(0, 100)
 
-const IMAGE = '/home/container/photos/مارد.jpg' // اختياري
-const LEARN_FILE = path.join(process.cwd(), 'database', 'mared_learned.json')
-
-const TITLE = '🧞 المارد الأزرق'
-const FOOTER = '⛩️ SUKUNA BOT ⛩️'
-
-const MAX_QUESTIONS = 30
-const MIN_QUESTIONS = 7
-const GUESS_CONFIDENCE = 0.8
-const MAX_WRONG = 3
-const SESSION_TTL = 15 * 60 * 1000
-
-const LIKE_MATCH = 0.97
-const LIKE_MISS = 0.03
-const PREFIX = 'mared:'
-
-// ==================================================
-// الأسئلة
-// ==================================================
-
-const Q = {}
-
-function defQ(list) {
-  for (const [key, text, parent] of list) Q[key] = { text, parent: parent || null }
+// ───────── المزوّد 1: API الأصلي ─────────
+async function obitoStart() {
+    const { data } = await axios.post(`${api_obito}/akinator_start`, {}, { timeout: 20000 })
+    if (!data?.session || !data?.signature) throw new Error('رد ناقص من الـ API')
+    return { provider: 'obito', session: data.session, signature: data.signature, step: 0, progression: 0, first: { question: data.question, img: data.akitude_url || null } }
 }
 
-function defFranchises(parent, map) {
-  for (const [key, name] of Object.entries(map)) {
-    Q[key] = { text: `من ${name}؟`, parent }
-  }
+async function obitoAnswer(s, answer, back = false) {
+    const { data } = await axios.post(`${api_obito}/${back ? 'akinator_back' : 'akinator_answer'}`, {
+        session: s.session, signature: s.signature, step: s.step, progression: s.progression,
+        ...(back ? {} : { answer, sid: "NaN", question_filter: "string" }), cm: "false",
+    }, { timeout: 20000 })
+    if (data.name_proposition) return { win: { name: data.name_proposition, desc: data.description_proposition, photo: data.photo } }
+    s.step = data.step; s.progression = data.progression
+    return { question: data.question, img: data.akitude_url || null }
 }
 
-defQ([
-  ['real', 'شخصيتك حقيقية (موجودة في الواقع)؟'],
-  ['male', 'شخصيتك ذكر؟'],
-  ['alive', 'لسه عايش/ة النهارده؟', 'real'],
-  ['old', 'اتولد/ظهر قبل سنة 1950؟'],
-  ['young', 'اتولد/ظهر بعد سنة 1990؟'],
-  ['kid', 'طفل أو مراهق؟'],
-  ['arab', 'عربي/ة؟', 'real'],
-  ['egyptian', 'مصري/ة؟', 'arab'],
-  ['nonhuman', 'مش إنسان (حيوان / روبوت / كائن غريب)؟'],
-  ['animal', 'حيوان؟', 'nonhuman'],
-  ['robot', 'روبوت أو آلة؟', 'nonhuman'],
-  ['monster', 'وحش أو كائن خيالي؟', 'nonhuman'],
+// ───────── المزوّد 2: حزمة aki-api ─────────
+async function akiStart() {
+    let mod
+    try { mod = await import('aki-api') } catch { throw new Error('aki-api مش متثبتة') }
+    const Aki = mod.Aki || mod.default?.Aki || mod.default
+    const aki = new Aki({ region: 'ar', childMode: false })
+    await aki.start()
+    return { provider: 'aki', aki, first: { question: aki.question, img: null } }
+}
 
-  ['footballer', 'لاعب كورة؟', 'real'],
-  ['athlete', 'رياضي؟', 'real'],
-  ['actor', 'ممثل/ة؟', 'real'],
-  ['comedian', 'بيضحّك الناس (كوميديان)؟', 'actor'],
-  ['singer', 'مطرب/ة؟', 'real'],
-  ['rapper', 'بيغني راب أو مهرجانات؟', 'singer'],
-  ['politician', 'رئيس أو حاكم أو سياسي؟', 'real'],
-  ['tech', 'عالم أو مخترع أو رجل أعمال تقني؟', 'real'],
-  ['youtuber', 'صانع محتوى على الإنترنت؟', 'real'],
-  ['writer', 'كاتب أو أديب؟', 'real'],
-  ['artist', 'رسام أو موسيقار كلاسيكي؟', 'real'],
-  ['hollywood', 'اشتغل في هوليوود؟', 'actor'],
-  ['asian', 'آسيوي؟', 'real'],
-  ['latin', 'من أمريكا اللاتينية؟', 'real'],
+async function akiAnswer(s, answer, back = false) {
+    const aki = s.aki
+    if (back) await aki.back(); else await aki.step(answer)
+    if (aki.progress >= 80 || aki.currentStep >= 78) {
+        await aki.win()
+        const g = aki.answers?.[0]
+        if (g) return { win: { name: g.name, desc: g.description, photo: g.absolute_picture_path } }
+    }
+    return { question: aki.question, img: null }
+}
 
-  ['forward', 'بيلعب في الهجوم؟', 'footballer'],
-  ['midfielder', 'بيلعب في الوسط؟', 'footballer'],
-  ['defender', 'بيلعب في الدفاع؟', 'footballer'],
-  ['goalkeeper', 'حارس مرمى؟', 'footballer'],
-  ['retired', 'اعتزل اللعب؟', 'athlete'],
-  ['worldcup', 'كسب كأس العالم؟', 'footballer'],
-  ['liverpool', 'لعب في ليفربول؟', 'footballer'],
-  ['madrid', 'لعب في ريال مدريد؟', 'footballer'],
-  ['barca', 'لعب في برشلونة؟', 'footballer'],
-  ['psg', 'لعب في باريس سان جيرمان؟', 'footballer'],
-  ['ahly', 'لعب للنادي الأهلي؟', 'footballer'],
-  ['zamalek', 'لعب للزمالك؟', 'footballer'],
-  ['mancity', 'لعب في مانشستر سيتي؟', 'footballer'],
-  ['manutd', 'لعب في مانشستر يونايتد؟', 'footballer'],
-  ['chelsea', 'لعب في تشيلسي؟', 'footballer'],
-  ['arsenal', 'لعب في أرسنال؟', 'footballer'],
-  ['juventus', 'لعب في يوفنتوس؟', 'footballer'],
-  ['bayern', 'لعب في بايرن ميونخ؟', 'footballer'],
-  ['milan', 'لعب في ميلان؟', 'footballer'],
-  ['inter', 'لعب في إنتر ميلان؟', 'footballer'],
-  ['argentina', 'أرجنتيني؟', 'footballer'],
-  ['portugal', 'برتغالي؟', 'footballer'],
-  ['brazil', 'برازيلي؟', 'footballer'],
-  ['france', 'فرنسي؟', 'footballer'],
-  ['spain', 'إسباني؟', 'footballer'],
-  ['england', 'إنجليزي؟', 'footballer'],
-  ['italy', 'إيطالي؟', 'footballer'],
-  ['belgium', 'بلجيكي؟', 'footballer'],
+const PROVIDERS = [{ name: 'obito-api', start: obitoStart }, { name: 'aki-api', start: akiStart }]
 
-  ['boxing', 'ملاكم؟', 'athlete'],
-  ['basketball', 'لاعب كرة سلة؟', 'athlete'],
-  ['tennis', 'لاعب/ة تنس؟', 'athlete'],
-  ['racing', 'سائق سباقات؟', 'athlete'],
-  ['sprinter', 'عدّاء؟', 'athlete'],
-  ['swimmer', 'سبّاح؟', 'athlete'],
-  ['mma', 'مقاتل MMA؟', 'athlete'],
-  ['squash', 'لاعب/ة اسكواش؟', 'athlete'],
-  ['wrestler', 'مصارع؟', 'athlete'],
-  ['claymaster', 'ملك الملاعب الترابية؟', 'tennis'],
+// ───────── إرسال السؤال ─────────
+async function sendQuestion(conn, jid, question, imgUrl, quoted) {
+    const quick = (text, id) => ({ name: "quick_reply", buttonParamsJson: JSON.stringify({ display_text: text, id }) })
+    try {
+        const buttons = [
+            quick("☽✰ ¦ نـعـم 🐤 ¦ ✰☾", ".مارد نعم"),
+            quick("☽✰ ¦ لا 🐤 ¦ ✰☾", ".مارد لا"),
+            quick("☽✰ ¦ مـش عـارف 🐤 ¦ ✰☾", ".مارد لا أعرف"),
+            quick("☽✰ ¦ ربـمـا 🐤 ¦ ✰☾", ".مارد ربما"),
+            quick("☽✰ ¦ لا ربـمـا 🐤 ¦ ✰☾", ".مارد ربما لا"),
+            quick("☽✰ ¦ رجَـوع خـطـوه 🐤 ¦ ✰☾", ".مارد رجوع"),
+            quick("☽✰ ¦ الـغـاء الـعـبة 🐤 ¦ ✰☾", ".مارد حذف"),
+        ]
+        const media = imgUrl ? await prepareWAMessageMedia({ image: { url: imgUrl } }, { upload: conn.waUploadToServer }) : null
+        const msg = generateWAMessageFromContent(jid, {
+            viewOnceMessage: { message: { interactiveMessage: proto.Message.InteractiveMessage.create({
+                body: proto.Message.InteractiveMessage.Body.create({ text: `ايَـتـاتـَشْـٌي يـقـول🐤:\n${question}` }),
+                footer: proto.Message.InteractiveMessage.Footer.create({ text: "جـاري الـتـخـمـين....🔥" }),
+                header: proto.Message.InteractiveMessage.Header.create({
+                    ...(media ? { hasMediaAttachment: true, ...media } : { hasMediaAttachment: false }),
+                    title: "لـعـبه الـمـارد ايَـتـاتـَشْـٌي😂",
+                }),
+                nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.create({ buttons }),
+            }) } },
+        }, {})
+        return await conn.relayMessage(jid, msg.message, { messageId: msg.key.id })
+    } catch (e) {
+        console.error('[مارد] الأزرار فشلت:', e.message)
+        // احتياطي: السؤال نص + طريقة الإجابة
+        return conn.sendMessage(jid, { text: `ايَـتـاتـَشْـٌي يـقـول🐤:\n${question}\n\n✍️ جاوب بـ:\n.مارد نعم | .مارد لا | .مارد لا أعرف | .مارد ربما | .مارد ربما لا\n.مارد رجوع | .مارد حذف` }, { quoted })
+    }
+}
 
-  ['shaabi', 'بيغني شعبي؟', 'singer'],
-  ['nubian', 'من النوبة؟', 'singer'],
-  ['hadaba', 'لقبه «الهضبة»؟', 'singer'],
-  ['lebanese', 'لبناني/ة؟', 'arab'],
-  ['iraqi', 'عراقي؟', 'arab'],
-  ['umbrella', 'اشتهرت بأغنية Umbrella؟', 'singer'],
-  ['singleladies', 'اشتهرت بأغنية Single Ladies؟', 'singer'],
-  ['swifties', 'جمهورها اسمه Swifties؟', 'singer'],
-  ['lamby', 'اشتهر بشخصية «اللمبي»؟', 'actor'],
-  ['saidi', 'اشتهر بفيلم «صعيدي في الجامعة الأمريكية»؟', 'actor'],
-  ['asal', 'اشتهر بفيلم «عسل أسود»؟', 'actor'],
-  ['bluefilm', 'اشتهر بفيلم «الفيل الأزرق»؟', 'actor'],
-  ['abyad', 'اشتهر بفيلم «إبراهيم الأبيض»؟', 'actor'],
-  ['cindarella', 'لقبها «سندريلا الشاشة العربية»؟', 'actor'],
-  ['fightclub', 'اشتهر بفيلم Fight Club؟', 'actor'],
-  ['titanic', 'اشتهر بفيلم Titanic؟', 'actor'],
-  ['sparrowactor', 'لعب دور جاك سبارو؟', 'actor'],
-  ['mission', 'اشتهر بسلسلة Mission Impossible؟', 'actor'],
-  ['menblack', 'اشتهر بفيلم Men in Black؟', 'actor'],
-  ['terminator', 'اشتهر بفيلم Terminator؟', 'actor'],
-  ['martial', 'ممثل أو بطل فنون قتالية؟', 'actor'],
-  ['tombactor', 'لعبت دور لارا كروفت؟', 'actor'],
-  ['hermione', 'لعبت دور هيرميوني؟', 'actor'],
-  ['blackwidow', 'لعبت دور الأرملة السوداء؟', 'actor'],
-  ['ironactor', 'لعب دور آيرون مان؟', 'actor'],
-  ['beanactor', 'لعب دور مستر بين؟', 'actor'],
-  ['revolution', 'قاد ثورة يوليو 1952؟', 'politician'],
-  ['peace', 'وقّع اتفاقية سلام مع إسرائيل؟', 'politician'],
-  ['mubarak', 'حكم مصر 30 سنة؟', 'politician'],
-  ['ww2uk', 'قاد بريطانيا في الحرب العالمية الثانية؟', 'politician'],
-  ['india', 'هندي؟', 'politician'],
-  ['southafrica', 'من جنوب أفريقيا؟', 'politician'],
-  ['usapres', 'كان رئيس أمريكا؟', 'politician'],
-  ['relativity', 'صاحب النظرية النسبية؟', 'tech'],
-  ['ac', 'ارتبط اسمه بالتيار المتردد (AC)؟', 'tech'],
-  ['gravity', 'اكتشف الجاذبية؟', 'tech'],
-  ['lightbulb', 'اخترع المصباح الكهربائي؟', 'tech'],
-  ['wheelchair', 'كان على كرسي متحرك؟', 'tech'],
-  ['radium', 'اكتشفت الراديوم؟', 'tech'],
-  ['tesla_cars', 'صاحب شركة تسلا؟', 'tech'],
-  ['microsoft', 'مؤسس مايكروسوفت؟', 'tech'],
-  ['facebook', 'مؤسس فيسبوك؟', 'tech'],
-  ['apple', 'مؤسس شركة أبل؟', 'tech'],
-  ['amazon', 'مؤسس أمازون؟', 'tech'],
-  ['nobel', 'حاصل على جائزة نوبل؟', 'real'],
-  ['blind', 'كان كفيف؟', 'writer'],
-  ['monalisa', 'رسم الموناليزا؟', 'artist'],
-  ['ear', 'قطع أذنه؟', 'artist'],
-  ['deaf', 'فقد سمعه وهو موسيقار؟', 'artist'],
-  ['educational', 'بيقدم محتوى ثقافي وعلمي؟', 'youtuber'],
-  ['siuu', 'بيقول «SIUUU»؟', 'youtuber'],
-  ['hpauthor', 'كاتبة هاري بوتر؟', 'writer'],
-  ['shakespeare', 'كاتب مسرحيات إنجليزي؟', 'writer'],
-  ['barcacoach', 'اشتغل مدرب لبرشلونة؟', 'footballer'],
-  ['ahlypres', 'رئيس النادي الأهلي؟', 'footballer'],
+const sendWin = (conn, m, w) => conn.sendMessage(m.chat, {
+    ...(w.photo ? { image: { url: w.photo } } : {}),
+    [w.photo ? 'caption' : 'text']: `🧞 على ما أظن أنك تفكر بـ:\n${w.name}\n${w.desc || "بدون وصف"}`,
+}, { quoted: m })
 
-  ['cartoon', 'من الكرتون (غير الأنمي)؟', '!real'],
-  ['anime', 'من الأنمي؟', '!real'],
-  ['game', 'من لعبة فيديو؟', '!real'],
-  ['mobilegame', 'من لعبة موبايل؟', 'game'],
-  ['movie', 'من فيلم؟', '!real'],
-  ['series', 'من مسلسل؟', '!real'],
-  ['hero', 'من الأبطال الطيبين؟', '!real'],
-  ['villain', 'شرير؟', '!real'],
-  ['powers', 'عنده قوى خارقة أو سحر؟', '!real'],
-  ['superhero', 'بطل خارق؟', '!real'],
-  ['sword', 'بيستخدم سيف؟', '!real'],
-  ['gun', 'بيستخدم سلاح ناري؟', '!real'],
-  ['axe', 'بيستخدم فأس؟', '!real'],
-  ['mask', 'بيلبس قناع؟', '!real'],
-  ['hat', 'بيلبس قبعة؟', '!real'],
-  ['cape', 'بيلبس عباءة/كاب؟', '!real'],
-  ['hood', 'بيلبس غطاء راس (هودي)؟', '!real'],
-  ['glasses', 'بيلبس نضارة؟', '!real'],
-  ['fat', 'بدين أو كرشه كبير؟', '!real'],
-  ['princess', 'أميرة؟', '!real'],
-  ['prince', 'أمير أو ملك؟', '!real'],
-  ['detective', 'محقق؟', '!real'],
-  ['pirate', 'قرصان؟', '!real'],
-  ['ninja', 'من النينجا؟', '!real'],
-  ['soldier', 'جندي أو مقاتل؟', '!real'],
-  ['alien', 'جاي من كوكب تاني؟', '!real'],
-  ['mouse', 'فأر؟', 'animal'],
-  ['cat', 'قطة؟', 'animal'],
-  ['dog', 'كلب؟', 'animal'],
-  ['bird', 'طائر؟', 'animal'],
-  ['sea', 'عايش تحت الماء؟', '!real'],
-  ['red', 'لونه الأساسي أحمر؟', '!real'],
-  ['blue', 'لونه الأساسي أزرق؟', '!real'],
-  ['green', 'لونه الأساسي أخضر؟', '!real'],
-  ['yellow', 'لونه الأساسي أصفر؟', '!real'],
-  ['black', 'لونه الأساسي أسود؟', '!real'],
-  ['white', 'لونه الأساسي أبيض؟', '!real'],
-  ['pink', 'لونه الأساسي وردي؟', '!real'],
-  ['orange', 'لونه الأساسي برتقالي؟', '!real'],
-  ['brown', 'لونه الأساسي بني؟', '!real'],
-  ['blond', 'شعره أصفر (أشقر)؟', '!real'],
-  ['whitehair', 'شعره أبيض أو فضي؟', '!real'],
-  ['redhair', 'شعره أحمر؟', '!real'],
-  ['bluehair', 'شعره أزرق؟', '!real'],
-  ['greenhair', 'شعره أخضر؟', '!real'],
-  ['pinkhair', 'شعره وردي؟', '!real'],
-  ['dc', 'من عالم DC؟', 'superhero'],
-  ['marvel', 'من عالم مارفل؟', 'superhero'],
-  ['disney', 'من ديزني أو بيكسار؟', 'cartoon'],
-  ['dreamworks', 'من دريم ووركس؟', 'cartoon'],
-  ['arabtoon', 'كرتون عربي؟', 'cartoon']
-])
+// ───────── الأمر ─────────
+let handler = async function (m, { text, conn }) {
+    if (!conn.aki) conn.aki = {}
+    const key = `${m.chat}-${m.sender}`
+    const session = conn.aki[key]
+    text = (text || '').trim()
 
-defFranchises('game', {
-  gow: 'God of War', mario: 'سوبر ماريو', zelda: 'زيلدا', sonic: 'سونيك', pokemon: 'بوكيمون',
-  gta: 'GTA', cod: 'Call of Duty', freefire: 'فري فاير', fortnite: 'فورتنايت',
-  minecraft: 'ماين كرافت', amongus: 'Among Us', subway: 'Subway Surfers', angrybirds: 'Angry Birds',
-  templerun: 'Temple Run', pvz: 'Plants vs Zombies', assassins: "Assassin's Creed", tombraider: 'Tomb Raider',
-  resident: 'Resident Evil', halo: 'Halo', uncharted: 'Uncharted', lastofus: 'The Last of Us',
-  streetfighter: 'Street Fighter', mortalkombat: 'Mortal Kombat', pacman: 'Pac-Man', crash: 'Crash Bandicoot',
-  kirby: 'Kirby', donkeykong: 'Donkey Kong', witcher: 'The Witcher', pou: 'Pou', talkingtom: 'My Talking Tom',
-  fnaf: "Five Nights at Freddy's", metalgear: 'Metal Gear', doom: 'Doom', clash: 'Clash of Clans',
-  brawl: 'Brawl Stars', roblox: 'Roblox', genshin: 'Genshin Impact', overwatch: 'Overwatch',
-  fallout: 'Fallout'
-})
+    if (!text) {
+        const quick = (t, id) => ({ name: "quick_reply", buttonParamsJson: JSON.stringify({ display_text: t, id }) })
+        try {
+            const msg = generateWAMessageFromContent(m.chat, { viewOnceMessage: { message: { interactiveMessage: proto.Message.InteractiveMessage.create({
+                body: proto.Message.InteractiveMessage.Body.create({ text: "🧞‍هل تريد بدء لعبة مارد؟" }),
+                footer: proto.Message.InteractiveMessage.Footer.create({ text: "اختر احد الخيارات التالية :" }),
+                header: proto.Message.InteractiveMessage.Header.create({ hasMediaAttachment: false, title: "لعبة المارد الازرق..🧞" }),
+                nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.create({ buttons: [quick("📘 المساعدة", ".مارد المساعدة"), quick("🎮 بدء اللـعبة", ".مارد ابدا")] }),
+            }) } } }, {})
+            return await conn.relayMessage(m.chat, msg.message, { messageId: msg.key.id })
+        } catch (e) {
+            return m.reply("🧞 لعبة المارد\n\n.مارد ابدا → بدء اللعبة\n.مارد المساعدة → الشرح")
+        }
+    }
 
-defFranchises('anime', {
-  naruto: 'ناروتو', onepiece: 'ون بيس', dragonball: 'دراغون بول', bleach: 'بليتش', aot: 'Attack on Titan',
-  deathnote: 'Death Note', mha: 'My Hero Academia', demonslayer: 'Demon Slayer', hxh: 'Hunter x Hunter',
-  opm: 'One Punch Man', fma: 'Fullmetal Alchemist', conan: 'المحقق كونان', doraemon: 'دورايمون',
-  shinchan: 'شين شان', tsubasa: 'الكابتن ماجد', ghibli: 'ستوديو جيبلي', sailormoon: 'سيلور مون',
-  jujutsu: 'Jujutsu Kaisen', pokeanime: 'أنمي بوكيمون'
-})
+    if (text === "المساعدة") {
+        return m.reply(`📘 شرح أوامر لعبة مارد :\n\n-.مارد ابدا → بدء اللعبة\n-.مارد نعم / لا / لا أعرف / ربما / ربما لا → إرسال إجابة\n-.مارد رجوع → الرجوع للسؤال السابق\n-.مارد حذف → حذف الجلسة الحالية`)
+    }
 
-defFranchises('cartoon', {
-  tomjerry: 'توم وجيري', spongebob: 'سبونج بوب', mickey: 'عالم ميكي ماوس', simpsons: 'عائلة سيمبسون',
-  familyguy: 'Family Guy', looney: 'لوني تيونز', scooby: 'سكوبي دو', rickmorty: 'ريك ومورتي',
-  minions: 'المينيونز', frozen: 'فروزن', lionking: 'الأسد الملك', toystory: 'توي ستوري', shrek: 'شريك',
-  kungfupanda: 'كونغ فو باندا', madagascar: 'مدغشقر', peppapig: 'بيبا بيج', ben10: 'بن 10',
-  smurfs: 'السنافر', winnie: 'ويني الدبدوب', popeye: 'باباي', pinkpanther: 'النمر الوردي',
-  avatar: 'أفاتار: آخر سيد للهواء', aladdin: 'علاء الدين', princessdisney: 'أميرات ديزني',
-  monsters: 'شركة المرعبين', cars: 'سيارات (Cars)', httyd: 'How to Train Your Dragon'
-})
+    if (text === "ابدا") {
+        const errors = []
+        for (const p of PROVIDERS) {
+            try {
+                const s = await p.start()
+                conn.aki[key] = s
+                console.log(`[مارد] ✅ ${p.name}`)
+                return sendQuestion(conn, m.chat, s.first.question, s.first.img, m)
+            } catch (e) {
+                errors.push(`${p.name}: ${shortErr(e)}`)
+                console.error(`[مارد] ❌ ${p.name}:`, e?.message || e)
+            }
+        }
+        return m.reply(`❌ مقدرتش أبدأ اللعبة.\n\n🔧 السبب:\n${errors.map(e => `• ${e}`).join('\n')}`)
+    }
 
-defFranchises('movie', {
-  starwars: 'حرب النجوم (Star Wars)', hogwarts: 'عالم هاري بوتر', lotr: 'سيد الخواتم', bond: 'جيمس بوند',
-  potc: 'قراصنة الكاريبي', matrix: 'The Matrix', transformers: 'Transformers',
-  johnwick: 'John Wick', sherlock: 'شرلوك هولمز', batmanfilm: 'أفلام باتمان', avengers: 'الأفلام الانتقامية (Avengers)'
-})
+    if (text === "حذف") {
+        if (!session) return m.reply("لا توجد جلسة نشطة")
+        delete conn.aki[key]
+        return m.reply("تم حذف الجلسة بنجاح")
+    }
 
-defFranchises('series', {
-  got: 'Game of Thrones', stranger: 'Stranger Things', squid: 'Squid Game', moneyheist: 'La Casa de Papel',
-  breakingbad: 'Breaking Bad', egyseries: 'مسلسل مصري', peakyblinders: 'Peaky Blinders', thewalking: 'The Walking Dead',
-  mrbean: 'مستر بين'
-})
+    const isBack = text === "رجوع"
+    if (isBack || Object.prototype.hasOwnProperty.call(ANSWERS, text)) {
+        if (!session) return m.reply(isBack ? "لا توجد جلسة نشطة" : "لا توجد جلسه نشطه حاليا،ابدأ جلسه عبر .مارد ابدا")
+        try {
+            const fn = session.provider === 'aki' ? akiAnswer : obitoAnswer
+            const r = await fn(session, ANSWERS[text], isBack)
+            if (r.win) { delete conn.aki[key]; return sendWin(conn, m, r.win) }
+            return sendQuestion(conn, m.chat, r.question, r.img, m)
+        } catch (e) {
+            console.error('[مارد]', e?.message || e)
+            return m.reply(`⚠️ ${isBack ? 'لا يمكن الرجوع حالياً' : 'حدث خطأ أثناء الإجابة'}\n🔧 ${shortErr(e)}`)
+        }
+    }
+}
 
-// ==================================================
-// الشخصيات
-// ==================================================
-
-const CHARACTERS = []
-
-CHARACTERS.push(
-  ['محمد صلاح', 'real male alive young arab egyptian footballer athlete forward liverpool chelsea'],
-  ['ليونيل ميسي', 'real male alive footballer athlete forward barca psg argentina worldcup'],
-  ['كريستيانو رونالدو', 'real male alive footballer athlete forward madrid manutd juventus portugal'],
-  ['نيمار', 'real male alive young footballer athlete forward barca psg brazil'],
-  ['كيليان مبابي', 'real male alive young footballer athlete forward psg madrid france worldcup'],
-  ['زين الدين زيدان', 'real male alive footballer athlete midfielder retired madrid juventus france worldcup'],
-  ['محمد أبو تريكة', 'real male alive arab egyptian footballer athlete midfielder retired ahly'],
-  ['محمود الخطيب', 'real male alive arab egyptian footballer athlete forward retired ahly ahlypres'],
-  ['دييجو مارادونا', 'real male footballer athlete forward retired barca argentina worldcup'],
-  ['بيليه', 'real male old footballer athlete forward retired brazil worldcup'],
-  ['إيرلينج هالاند', 'real male alive young footballer athlete forward mancity'],
-  ['كريم بنزيما', 'real male alive footballer athlete forward madrid france'],
-  ['لوكا مودريتش', 'real male alive footballer athlete midfielder madrid'],
-  ['رونالدينيو', 'real male alive footballer athlete forward retired barca psg milan brazil worldcup'],
-  ['ديفيد بيكهام', 'real male alive footballer athlete midfielder retired manutd madrid psg milan england'],
-  ['سيرجيو راموس', 'real male alive footballer athlete defender madrid psg spain worldcup'],
-  ['أندريس إنييستا', 'real male alive footballer athlete midfielder retired barca spain worldcup'],
-  ['تشافي هيرنانديز', 'real male alive footballer athlete midfielder retired barca spain worldcup barcacoach'],
-  ['كيفين دي بروين', 'real male alive footballer athlete midfielder mancity chelsea belgium'],
-  ['روبرت ليفاندوفسكي', 'real male alive footballer athlete forward bayern barca'],
-  ['هاري كين', 'real male alive footballer athlete forward bayern england'],
-  ['فينيسيوس جونيور', 'real male alive young footballer athlete forward madrid brazil'],
-  ['جود بيلينجهام', 'real male alive young footballer athlete midfielder madrid england'],
-  ['لامين يامال', 'real male alive young footballer athlete forward barca spain'],
-  ['زلاتان إبراهيموفيتش', 'real male alive footballer athlete forward retired barca psg milan inter juventus manutd'],
-  ['جيانلويجي بوفون', 'real male alive footballer athlete goalkeeper retired juventus psg italy worldcup'],
-  ['باولو مالديني', 'real male alive footballer athlete defender retired milan italy'],
-  ['إيدين هازارد', 'real male alive footballer athlete forward retired chelsea madrid belgium'],
-  ['لويس سواريز', 'real male alive footballer athlete forward barca liverpool'],
-  ['محمد النني', 'real male alive young arab egyptian footballer athlete midfielder arsenal'],
-  ['مصطفى محمد', 'real male alive young arab egyptian footballer athlete forward zamalek'],
-  ['محمود تريزيجيه', 'real male alive young arab egyptian footballer athlete forward ahly'],
-
-  ['عمرو دياب', 'real male alive arab egyptian singer hadaba'],
-  ['تامر حسني', 'real male alive arab egyptian singer actor'],
-  ['محمد منير', 'real male alive arab egyptian singer nubian'],
-  ['حكيم', 'real male alive arab egyptian singer shaabi'],
-  ['عبد الحليم حافظ', 'real male old arab egyptian singer actor'],
-  ['أم كلثوم', 'real old arab egyptian singer'],
-  ['فيروز', 'real old alive arab lebanese singer'],
-  ['نانسي عجرم', 'real alive arab lebanese singer'],
-  ['كاظم الساهر', 'real male alive arab iraqi singer'],
-  ['شيرين عبد الوهاب', 'real alive arab egyptian singer'],
-  ['ويجز', 'real male alive young arab egyptian singer rapper'],
-  ['مايكل جاكسون', 'real male singer'],
-  ['تايلور سويفت', 'real alive singer swifties'],
-  ['ريهانا', 'real alive singer umbrella'],
-  ['بيونسيه', 'real alive singer singleladies'],
-  ['شاكيرا', 'real alive singer latin'],
-  ['بيلي أيليش', 'real alive young singer'],
-  ['إيمينيم', 'real male alive singer rapper'],
-  ['إلفيس بريسلي', 'real male old singer'],
-  ['إد شيران', 'real male alive singer'],
-
-  ['محمد رمضان', 'real male alive arab egyptian actor singer rapper'],
-  ['أحمد مكي', 'real male alive arab egyptian actor singer comedian rapper'],
-  ['عادل إمام', 'real male old alive arab egyptian actor comedian'],
-  ['محمد هنيدي', 'real male alive arab egyptian actor comedian saidi'],
-  ['أحمد حلمي', 'real male alive arab egyptian actor comedian asal'],
-  ['محمد سعد', 'real male alive arab egyptian actor comedian lamby'],
-  ['ياسمين عبد العزيز', 'real alive arab egyptian actor comedian'],
-  ['أحمد زكي', 'real male old arab egyptian actor'],
-  ['كريم عبد العزيز', 'real male alive arab egyptian actor bluefilm'],
-  ['أحمد السقا', 'real male alive arab egyptian actor abyad'],
-  ['عمر الشريف', 'real male old arab egyptian actor hollywood'],
-  ['سعاد حسني', 'real old arab egyptian actor singer cindarella'],
-  ['فاتن حمامة', 'real old arab egyptian actor'],
-  ['براد بيت', 'real male alive actor hollywood fightclub'],
-  ['ليوناردو دي كابريو', 'real male alive actor hollywood titanic'],
-  ['جوني ديب', 'real male alive actor hollywood sparrowactor'],
-  ['توم كروز', 'real male alive actor hollywood mission'],
-  ['ويل سميث', 'real male alive actor hollywood singer rapper menblack'],
-  ['أرنولد شوارزنيجر', 'real male alive actor hollywood politician terminator'],
-  ['بروس لي', 'real male old asian actor martial'],
-  ['جاكي شان', 'real male alive asian actor martial'],
-  ['أنجلينا جولي', 'real alive actor hollywood tombactor'],
-  ['إيما واتسون', 'real alive actor hollywood hermione'],
-  ['سكارليت جوهانسون', 'real alive actor hollywood blackwidow'],
-  ['روبرت داوني جونيور', 'real male alive actor hollywood ironactor'],
-  ['روان أتكينسون', 'real male alive actor comedian beanactor'],
-  ['دوين جونسون', 'real male alive actor athlete wrestler hollywood'],
-
-  ['محمد علي كلاي', 'real male athlete boxing retired'],
-  ['مايك تايسون', 'real male alive athlete boxing retired'],
-  ['مايكل جوردان', 'real male alive athlete basketball retired'],
-  ['ليبرون جيمس', 'real male alive athlete basketball'],
-  ['يوسين بولت', 'real male alive athlete sprinter retired'],
-  ['مايكل فيلبس', 'real male alive athlete swimmer retired'],
-  ['رافائيل نادال', 'real male alive athlete tennis retired claymaster'],
-  ['روجر فيدرر', 'real male alive athlete tennis retired'],
-  ['سيرينا ويليامز', 'real alive athlete tennis retired'],
-  ['خبيب نورماغوميدوف', 'real male alive athlete mma retired'],
-  ['لويس هاميلتون', 'real male alive athlete racing'],
-  ['مايكل شوماخر', 'real male alive athlete racing retired'],
-  ['جون سينا', 'real male alive actor athlete wrestler hollywood'],
-  ['نور الشربيني', 'real alive arab egyptian athlete squash'],
-  ['علي فرج', 'real male alive arab egyptian athlete squash'],
-
-  ['جمال عبد الناصر', 'real male old arab egyptian politician revolution'],
-  ['أنور السادات', 'real male old arab egyptian politician peace'],
-  ['حسني مبارك', 'real male old arab egyptian politician mubarak'],
-  ['نابليون بونابرت', 'real male old politician'],
-  ['دونالد ترامب', 'real male alive politician usapres'],
-  ['باراك أوباما', 'real male alive politician usapres nobel'],
-  ['أبراهام لينكولن', 'real male old politician usapres'],
-  ['ونستون تشرشل', 'real male old politician ww2uk nobel writer'],
-  ['المهاتما غاندي', 'real male old asian politician india'],
-  ['نيلسون مانديلا', 'real male old politician southafrica nobel'],
-  ['صلاح الدين الأيوبي', 'real male old arab politician'],
-  ['الإسكندر الأكبر', 'real male old politician'],
-
-  ['ألبرت أينشتاين', 'real male old tech relativity nobel'],
-  ['نيكولا تسلا', 'real male old tech ac'],
-  ['إسحاق نيوتن', 'real male old tech gravity'],
-  ['توماس إديسون', 'real male old tech lightbulb'],
-  ['ستيفن هوكينج', 'real male tech wheelchair'],
-  ['ماري كوري', 'real old tech radium nobel'],
-  ['إيلون ماسك', 'real male alive tech tesla_cars'],
-  ['بيل جيتس', 'real male alive tech microsoft'],
-  ['مارك زوكربيرج', 'real male alive tech facebook'],
-  ['ستيف جوبز', 'real male tech apple'],
-  ['جيف بيزوس', 'real male alive tech amazon'],
-
-  ['طه حسين', 'real male old arab egyptian writer blind'],
-  ['نجيب محفوظ', 'real male old arab egyptian writer nobel'],
-  ['وليم شكسبير', 'real male old writer shakespeare'],
-  ['جي كي رولينج', 'real alive writer hpauthor'],
-  ['ليوناردو دا فينشي', 'real male old artist monalisa'],
-  ['فينسنت فان جوخ', 'real male old artist ear'],
-  ['لودفيج فان بيتهوفن', 'real male old artist deaf'],
-  ['مستر بيست', 'real male alive young youtuber'],
-  ['سبيد (IShowSpeed)', 'real male alive young youtuber siuu'],
-  ['الدحيح (أحمد الغندور)', 'real male alive young arab egyptian youtuber educational'],
-
-  ['ناروتو أوزوماكي', 'male anime naruto hero powers ninja blond orange kid young'],
-  ['ساسكي أوتشيها', 'male anime naruto powers ninja black kid young sword'],
-  ['كاكاشي هاتاكي', 'male anime naruto hero powers ninja mask whitehair young'],
-  ['مونكي دي لوفي', 'male anime onepiece hero pirate hat powers red young'],
-  ['رورونوا زورو', 'male anime onepiece hero pirate sword greenhair young'],
-  ['غوكو', 'male anime dragonball hero powers alien orange black'],
-  ['فيجيتا', 'male anime dragonball powers alien blue black'],
-  ['إيرين ييغر', 'male anime aot powers soldier kid young'],
-  ['ليفاي أكرمان', 'male anime aot hero soldier black cape'],
-  ['لايت ياغامي', 'male anime deathnote villain young'],
-  ['إل (L)', 'male anime deathnote detective young white black'],
-  ['إيزوكو ميدوريا', 'male anime mha hero superhero powers kid green greenhair young'],
-  ['تانجيرو كامادو', 'male anime demonslayer hero sword kid young powers green black'],
-  ['غون فريكس', 'male anime hxh hero kid young green'],
-  ['سايتاما', 'male anime opm hero superhero powers cape white'],
-  ['إدوارد إلريك', 'male anime fma hero kid blond powers red'],
-  ['كونان إيدوغاوا', 'male anime conan detective hero kid glasses blue'],
-  ['دورايمون', 'male anime doraemon hero robot nonhuman blue white'],
-  ['شين شان', 'male anime shinchan kid red yellow'],
-  ['ساتورو غوجو', 'male anime jujutsu hero powers whitehair mask blue'],
-  ['سوكونا', 'male anime jujutsu villain powers monster nonhuman pink pinkhair'],
-  ['إيتادوري يوجي', 'male anime jujutsu hero kid pinkhair young powers'],
-
-  ['كريتوس', 'male game gow hero powers axe soldier red'],
-  ['ماريو', 'male game mario hero red hat'],
-  ['لويجي', 'male game mario hero green hat'],
-  ['لينك', 'male game zelda hero sword hat green blond'],
-  ['سونيك', 'male game sonic hero animal blue nonhuman'],
-  ['بيكاتشو', 'game pokemon hero animal nonhuman yellow mouse'],
-  ['لارا كروفت', 'game tombraider hero gun'],
-  ['ماستر شيف', 'male game halo hero soldier green gun mask'],
-  ['كراش باندیكوت', 'male game crash animal nonhuman orange'],
-  ['جيرالت أوف ريفيا', 'male game witcher hero sword whitehair powers'],
-  ['سكوربيون (مورتال كومبات)', 'male game mortalkombat powers mask yellow ninja'],
-  ['صب زيرو', 'male game mortalkombat powers mask blue ninja'],
-  ['ريو (ستريت فايتر)', 'male game streetfighter hero white'],
-  ['فريدي فازبير', 'male game fnaf villain animal nonhuman brown hat'],
-  ['دونكي كونغ', 'male game donkeykong animal nonhuman brown'],
-  ['كيربي', 'game kirby hero pink'],
-  ['الأميرة زيلدا', 'game zelda princess hero blond'],
-  ['إيزيو أوديتوري', 'male game assassins hero hood sword'],
-  ['سوليد سنيك', 'male game metalgear hero soldier gun'],
-  ['دوم غاي', 'male game doom hero soldier gun green'],
-
-  ['توم (القط)', 'male cartoon tomjerry animal nonhuman cat'],
-  ['جيري (الفأر)', 'male cartoon tomjerry animal nonhuman mouse brown'],
-  ['سبونج بوب', 'male cartoon spongebob hero sea yellow'],
-  ['باتريك ستار', 'male cartoon spongebob sea pink fat'],
-  ['ميكي ماوس', 'male cartoon mickey disney animal nonhuman mouse black old'],
-  ['البطة دونالد', 'male cartoon mickey disney animal nonhuman bird white blue old hat'],
-  ['بارت سيمبسون', 'male cartoon simpsons kid yellow'],
-  ['هومر سيمبسون', 'male cartoon simpsons fat yellow'],
-  ['باغز باني', 'male cartoon looney animal nonhuman old white'],
-  ['سكوبي دو', 'male cartoon scooby animal nonhuman dog brown detective'],
-  ['ريك سانشيز', 'male cartoon rickmorty powers bluehair'],
-  ['المينيون', 'male cartoon minions yellow glasses'],
-  ['إلسا', 'cartoon frozen disney princess powers blond white'],
-  ['سيمبا', 'male cartoon lionking disney animal nonhuman prince brown'],
-  ['وودي (توي ستوري)', 'male cartoon toystory disney hero hat brown'],
-  ['باز لايتيير', 'male cartoon toystory disney hero robot nonhuman green white'],
-  ['شريك', 'male cartoon shrek dreamworks monster nonhuman green fat'],
-  ['بو (كونغ فو باندا)', 'male cartoon kungfupanda dreamworks animal nonhuman fat black white hero'],
-  ['بيبا
+handler.command = /^مارد$/i
+export default handler
