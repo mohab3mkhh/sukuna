@@ -4,13 +4,13 @@
 
 import { downloadContentFromMessage } from '@whiskeysockets/baileys'
 
-const VER = 6
+const VER = 7
 const MAX_CACHE = 300
 const WRAPPERS = ['viewOnceMessage', 'viewOnceMessageV2', 'viewOnceMessageV2Extension', 'ephemeralMessage', 'documentWithCaptionMessage', 'editedMessage']
 const MEDIA = { imageMessage: 'image', videoMessage: 'video', audioMessage: 'audio' }
 
 if (!global._voCache) global._voCache = new Map()
-if (global.__voSeenVer !== 6) { global._voSeen = []; global.__voSeenVer = 6 }
+if (global.__voSeenVer !== 7) { global._voSeen = []; global.__voSeenVer = 7 }
 if (!global._voSeen) global._voSeen = []
 global._voCount = global._voCount || 0
 
@@ -48,6 +48,12 @@ export function findViewOnce(message) {
 function store(raw) {
     try {
         const id = raw?.key?.id
+        if (id && !raw.message) {
+            // رسالة وصلت من غير محتوى (فشل فك تشفير غالبًا) — بنسجّلها عشان نشوفها
+            global._voSeen.push(`بدون محتوى: stub=${raw.messageStubType ?? '-'} params=${JSON.stringify(raw.messageStubParameters || []).slice(0, 80)} type=${raw.messageStubType === 2 ? 'CIPHERTEXT' : ''}`)
+            if (global._voSeen.length > 6) global._voSeen.shift()
+            return
+        }
         if (!id || !raw.message) return
         global._voCount++
         // بنشيل مفتاح التشفير من الفحص عشان بياخد مساحة كبيرة ويخفي الباقي
