@@ -20,7 +20,7 @@ const __filename = fileURLToPath(import.meta.url)
 const __dirname  = path.dirname(__filename)
 
 const SUKUNA_IMG = 'https://i.ibb.co/M5gwTyJJ/upload-1774680667350.jpg'
-const PAIRING_CODE      = 'SUKUNAAA'   // لازم 8 حروف/أرقام بالظبط — اكتب null للكود العشوائي
+const PAIRING_CODE      = 'SUKUNAAA'   // لازم 8 حروف/أرقام بالظبط — اكتب null لو الربط فشل (هيستخدم كود عشوائي)
 const JADI_FOLDER       = path.join('Sessions', 'SubBot')
 const INSTALLS_FILE     = path.join(__dirname, 'yuki_installs.json')
 const STATUS_FILE       = path.join(__dirname, 'jadibot_status.json')
@@ -28,7 +28,7 @@ const LIMIT_FILE        = path.join(__dirname, 'max_installs.json')
 const BANNED_CHATS_FILE = path.join(__dirname, 'banned_chats.json')
 
 const DEFAULT_MAX_INSTALLS = 6
-const SESSION_TIMEOUT_MS   = 180_000
+const SESSION_TIMEOUT_MS   = 120_000
 const MAX_RECONNECT        = 5
 const RECONNECT_BASE_DELAY = 3_000
 const HANDLER_CACHE_TTL    = 60_000
@@ -40,7 +40,6 @@ const RECONNECT_ATTEMPTS = new Map()
 const SESSION_TIMERS     = new Map()
 const SOCKET_STATES      = new Map()
 const WATCHDOG_TIMERS    = new Map()
-const PENDING            = new Map()   // سوكتات لسه بتستنى الربط
 
 if (!Array.isArray(global.conns)) global.conns = []
 
@@ -105,15 +104,6 @@ function isBotConnected(userId) {
   } catch { return false }
 }
 
-// الجلسة بتتحسب مربوطة بس لو creds.registered = true
-function isRegistered(sessionPath) {
-  try {
-    const fp = path.join(sessionPath, 'creds.json')
-    if (!fs.existsSync(fp)) return false
-    return JSON.parse(fs.readFileSync(fp, 'utf8'))?.registered === true
-  } catch { return false }
-}
-
 function cancelSessionTimer(userId) {
   const t = SESSION_TIMERS.get(userId)
   if (t) { clearTimeout(t); SESSION_TIMERS.delete(userId) }
@@ -123,12 +113,6 @@ function cleanupSession(userId, deleteDisk = false) {
   cancelSessionTimer(userId)
   const wt = WATCHDOG_TIMERS.get(userId)
   if (wt) { clearInterval(wt); WATCHDOG_TIMERS.delete(userId) }
-  const ps = PENDING.get(userId)
-  if (ps) {
-    try { ps.ev?.removeAllListeners?.() } catch {}
-    try { ps.ws?.terminate?.() } catch {}
-    PENDING.delete(userId)
-  }
   ACTIVE_SESSIONS.delete(userId)
   RECONNECT_ATTEMPTS.delete(userId)
   SOCKET_STATES.delete(userId)
@@ -274,7 +258,7 @@ const TEXT = {
 }
 
 // ✅ رسالة الكود: أزرار + رسالة نص بالكود (عشان تلاقيه حتى لو الزرار مظهرش)
-async function sendCodeMessage(conn, m, code, userId = '') {
+async function sendCodeMessage(conn, m, code) {
   const fmt = code.match(/.{1,4}/g)?.join('-') || code
   try {
     await sendButtons(conn, m.chat, {
@@ -287,7 +271,7 @@ async function sendCodeMessage(conn, m, code, userId = '') {
     console.log('[JADIBOT] buttons failed, fallback:', e.message)
     await conn.sendMessage(m.chat, { image: { url: SUKUNA_IMG }, caption: TEXT.codeBody }, { quoted: m }).catch(() => {})
   }
-  await conn.sendMessage(m.chat, { text: `🔑 *كود الربط${userId ? ` للرقم +${userId}` : ''}:*\n\n\`\`\`${fmt}\`\`\`\n⚠️ لازم تدخله على موبايل رقمه نفس الرقم ده` }, { quoted: m }).catch(() => {})
+  await conn.sendMessage(m.chat, { text: `🔑 *كود الربط:*\n\n\`\`\`${fmt}\`\`\`` }, { quoted: m }).catch(() => {})
 }
 
 async function sendConnectedMessage(conn, m) {
@@ -308,13 +292,7 @@ export async function initSubBots(conn) {
   for (const userId of [...installed]) {
     try {
       const sessionPath = path.join(process.cwd(), JADI_FOLDER, userId)
-      if (!isRegistered(sessionPath)) {
-        // جلسة ما اتربطتش أبداً: نظّفها بدل ما نحاول نشغّلها
-        removeInstall(userId)
-        cleanupSession(userId, true)
-        fail++
-        continue
-      }
+      if (!fs.existsSync(path.join(sessionPath, 'creds.json'))) { fail++; continue }
       removeConnSocket(userId)
       cleanupSession(userId, false)
       await yukiJadiBot({ sessionPath, m: null, conn, userId, mode: 'code' })
@@ -356,7 +334,7 @@ const handler = async (m, { conn, args, isOwner }) => {
         await conn.reply(m.chat, TEXT.reconnecting(idx + 1, offline.length), m)
         try {
           const sessionPath = path.join(process.cwd(), JADI_FOLDER, uid)
-          if (!isRegistered(sessionPath)) { removeInstall(uid); cleanupSession(uid, true); fail++; continue }
+          if (!fs.existsSync(path.join(sessionPath, 'creds.json'))) { fail++; continue }
           removeConnSocket(uid)
           cleanupSession(uid, false)
           await yukiJadiBot({ sessionPath, m: null, conn, userId: uid, mode: 'code' })
@@ -389,8 +367,6 @@ const handler = async (m, { conn, args, isOwner }) => {
     } else {
       const who = m.mentionedJid?.[0] || (m.fromMe ? conn.user.jid : m.sender)
       if (!who) return
-      if (String(who).endsWith('@lid'))
-        return conn.reply(m.chat, '⟡ رقمك ظاهر بصيغة مخفية (LID) فمينفعش يتربط بيه.\nاكتب: .تنصيب 20XXXXXXXXXX (برقمك الحقيقي، للمالك)', m)
       userId = who.split('@')[0]
     }
     if (!userId) return
@@ -413,26 +389,16 @@ const handler = async (m, { conn, args, isOwner }) => {
     const sessionPath = path.join(process.cwd(), JADI_FOLDER, userId)
     const mode        = /^qr$/i.test(cmd) ? 'qr' : 'code'
 
-    // محاولة شغالة دلوقتي؟ متلغيهاش (الكود اللي اتبعت لسه صالح) — بس رد عليه
-    if (ACTIVE_SESSIONS.has(userId)) {
-      return conn.reply(m.chat,
-        '⏳ فيه محاولة تنصيب شغالة على الرقم ده.\nاستنى الكود (لحد 3 دقايق) وادخل آخر كود وصلك، أو اكتب: .تنصيب الغاء', m)
-    }
     if (isBotConnected(userId)) {
       removeConnSocket(userId)
       cleanupSession(userId, false)
     }
 
-    // جلسة ما اتربطتش قبل كده؟ امسحها عشان نبدأ بـ creds جديدة (ده كان سبب الفشل من أول مرة)
-    if (!isRegistered(sessionPath)) {
-      try { fs.rmSync(sessionPath, { recursive: true, force: true }) } catch {}
-    }
-    fs.mkdirSync(sessionPath, { recursive: true })
-    // ملحوظة: التسجيل في yuki_installs.json بيحصل بس بعد ما الربط ينجح (في connection === 'open')
+    if (!isInstalled(userId)) addInstall(userId)
+    if (ACTIVE_SESSIONS.has(userId)) return
+    if (!fs.existsSync(sessionPath)) fs.mkdirSync(sessionPath, { recursive: true })
 
     setCooldown(m.sender)
-    if (mode === 'code' && !isRegistered(sessionPath))
-      await conn.reply(m.chat, `⏳ جاري تجهيز كود الربط للرقم +${userId}\nاستنى ثواني ومتكتبش الأمر تاني.`, m).catch(() => {})
     await yukiJadiBot({ sessionPath, m, conn, userId, mode })
 
   } catch (e) {
@@ -443,7 +409,7 @@ const handler = async (m, { conn, args, isOwner }) => {
 handler.command = /^(qr|تنصيب|reconnect)$/i
 export default handler
 
-export async function yukiJadiBot({ sessionPath, m, conn, userId, mode = 'code', codeSent = false }) {
+export async function yukiJadiBot({ sessionPath, m, conn, userId, mode = 'code' }) {
   if (!userId) return
   const lockKey = `${userId}_lock`
 
@@ -466,9 +432,8 @@ export async function yukiJadiBot({ sessionPath, m, conn, userId, mode = 'code',
     const { state, saveCreds } = await useMultiFileAuthState(sessionPath)
     const { version }          = await fetchLatestWaWebVersion().catch(() => ({ version: [2, 3000, 0] }))
     const msgRetryCache        = new NodeCache({ stdTTL: 0, checkperiod: 0 })
-    const registeredAtStart    = state.creds?.registered === true
 
-    const socketState = { codeSent: !!codeSent, connectedSent: false, qrMsg: null, wasOpen: false }
+    const socketState = { codeSent: false, connectedSent: false, qrMsg: null }
     SOCKET_STATES.set(userId, socketState)
 
     const connectionOptions = {
@@ -513,10 +478,8 @@ export async function yukiJadiBot({ sessionPath, m, conn, userId, mode = 'code',
     let sock    = makeWASocket(connectionOptions)
     sock.isInit = false
     let isInit  = true
-    PENDING.set(userId, sock)
 
     const watchdogTimer = setInterval(() => {
-      if (ACTIVE_SESSIONS.has(userId)) return   // لسه بتستنى الربط
       const wsState = sock?.ws?.readyState
       if (!sock?.user || wsState === 3) {
         console.warn(chalk.yellow(`[JADIBOT] 🧹 Watchdog: بوت ميت تم إزالته — ${userId}`))
@@ -543,7 +506,6 @@ export async function yukiJadiBot({ sessionPath, m, conn, userId, mode = 'code',
         sock = makeWASocket(connectionOptions, { chats: oldChats })
         sock.isInit = false
         isInit = true
-        PENDING.set(userId, sock)
       }
 
       if (!isInit) {
@@ -633,7 +595,7 @@ export async function yukiJadiBot({ sessionPath, m, conn, userId, mode = 'code',
           // ✅ كود ربط مخصص
           const code = await sock.requestPairingCode(userId, PAIRING_CODE || undefined)
           if (typeof code === 'string' && code.length > 0) {
-            await sendCodeMessage(conn, m, code, userId)
+            await sendCodeMessage(conn, m, code)
           } else {
             st.codeSent = false
           }
@@ -650,8 +612,6 @@ export async function yukiJadiBot({ sessionPath, m, conn, userId, mode = 'code',
         cancelSessionTimer(userId)
         RECONNECT_ATTEMPTS.delete(userId)
         ACTIVE_SESSIONS.delete(userId)
-        PENDING.delete(userId)
-        st.wasOpen = true
 
         sock.isInit = true
         const exists = global.conns.some(s => {
@@ -680,12 +640,10 @@ export async function yukiJadiBot({ sessionPath, m, conn, userId, mode = 'code',
         // ✅ شلت 405 من الحذف النهائي (بيحصل أحياناً بسبب نسخة واتساب مش بسبب الجلسة)
         if ([DisconnectReason.loggedOut, 401, 403].includes(reason)) {
           console.warn(chalk.red(`[JADIBOT] 🚫 جلسة (+${userId}) أُغلقت نهائياً — كود: ${reason}`))
-          if (registeredAtStart || st.wasOpen) {
-            try {
-              await conn.sendMessage(`${userId}@s.whatsapp.net`,
-                { text: '⚠️ تم قطع جلستك في البوت. أعد التنصيب للاستمرار.' })
-            } catch {}
-          }
+          try {
+            await conn.sendMessage(`${userId}@s.whatsapp.net`,
+              { text: '⚠️ تم قطع جلستك في البوت. أعد التنصيب للاستمرار.' })
+          } catch {}
           removeConnSocket(userId)
           removeInstall(userId)
           cleanupSession(userId, true)
@@ -708,13 +666,8 @@ export async function yukiJadiBot({ sessionPath, m, conn, userId, mode = 'code',
           ACTIVE_SESSIONS.delete(userId)
           const delay = RECONNECT_BASE_DELAY * attempts
           console.log(chalk.magenta(`[JADIBOT] 🔄 إعادة ربط (+${userId}) — محاولة ${attempts}/${MAX_RECONNECT} بعد ${delay}ms`))
-          // السوكت القديم المقفول يتشال من القايمة عشان الجديد يتسجّل صح
-          const oi = global.conns.indexOf(sock)
-          if (oi >= 0) global.conns.splice(oi, 1)
-          const keepM = st.connectedSent ? null : m   // ✅ نكمّل الكود/رسالة "اتصلت" لو لسه ما اتبعتوش
-          const wasCodeSent = false   // لو السوكت وقع قبل الربط، الكود القديم يبطل — نطلب كود جديد
           setTimeout(() => {
-            yukiJadiBot({ sessionPath, m: keepM, conn, userId, mode, codeSent: wasCodeSent }).catch(() => {})
+            yukiJadiBot({ sessionPath, m: null, conn, userId, mode }).catch(() => {})
           }, delay)
         } else {
           console.warn(chalk.red(`[JADIBOT] ☠️ تجاوز الحد الأقصى (+${userId}) — تم الاستسلام`))
