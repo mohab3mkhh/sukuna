@@ -4,12 +4,23 @@
 
 import { downloadContentFromMessage } from '@whiskeysockets/baileys'
 
-const VER = 2
+const VER = 3
 const MAX_CACHE = 300
 const WRAPPERS = ['viewOnceMessage', 'viewOnceMessageV2', 'viewOnceMessageV2Extension', 'ephemeralMessage', 'documentWithCaptionMessage', 'editedMessage']
 const MEDIA = { imageMessage: 'image', videoMessage: 'video', audioMessage: 'audio' }
 
 if (!global._voCache) global._voCache = new Map()
+if (!global._voSeen) global._voSeen = []
+global._voCount = global._voCount || 0
+
+// شكل مختصر للرسالة (المفاتيح بس) لأغراض الفحص
+export function shape(o, d = 0) {
+    if (!o || typeof o !== 'object') return typeof o === 'boolean' ? o : '·'
+    if (d > 3) return '…'
+    const out = {}
+    for (const k of Object.keys(o).filter(k => !/key$|sha|enc|url|path|thumbnail|signature|hash/i.test(k)).slice(0, 14)) out[k] = shape(o[k], d + 1)
+    return out
+}
 
 // يفك الأغلفة ويرجّع { inner, wrapped } — wrapped = true لو فيه غلاف viewOnce
 export function unwrap(message) {
@@ -37,6 +48,12 @@ function store(raw) {
     try {
         const id = raw?.key?.id
         if (!id || !raw.message) return
+        global._voCount++
+        const sh = JSON.stringify(shape(raw.message))
+        if (/image|video|audio|iewOnce/i.test(sh)) {
+            global._voSeen.push(sh.slice(0, 220))
+            if (global._voSeen.length > 4) global._voSeen.shift()
+        }
         if (!findViewOnce(raw.message)) return
         global._voCache.set(id, raw)
         if (global._voCache.size > MAX_CACHE) global._voCache.delete(global._voCache.keys().next().value)
@@ -77,7 +94,7 @@ const handler = async (m, { conn }) => {
         const cached = global._voCache.get(ctx.stanzaId)
         const found = (cached && findViewOnce(cached.message)) || findViewOnce(ctx.quotedMessage)
         if (!found || !found.media?.mediaKey) {
-            return m.reply(`❌ مقدرتش ألاقي الرسالة دي.\nلازم تكون وصلت للبوت وهو شغال (البوت بيفقد اللي سجّله لما يعمل Restart).\n\n🔧 المسجّل دلوقتي: ${global._voCache.size} رسالة`)
+            return m.reply(`❌ مقدرتش ألاقي الرسالة دي.\nلازم تكون وصلت للبوت وهو شغال (البوت بيفقد اللي سجّله لما يعمل Restart).\n\n🔧 فحص:\n• المسجّل: ${global._voCache.size}\n• المستمع: ${conn.__voAttached === VER ? 'شغال' : 'مش شغال'}\n• رسائل شافها المستمع: ${global._voCount}\n• شكل الرسالة اللي رديت عليها:\n${JSON.stringify(shape(ctx.quotedMessage)).slice(0, 400)}\n• آخر ميديا شافها:\n${global._voSeen.join('\n') || '(ولا واحدة)'}`)
         }
 
         await conn.sendMessage(m.chat, { react: { text: '👁️', key: m.key } }).catch(() => {})
