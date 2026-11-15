@@ -20,10 +20,11 @@ const PROXY = process.env.AKI_PROXY || process.env.YT_PROXY || undefined
 const DEFAULT_IMG = process.env.MARID_IMG || 'https://en.akinator.com/assets/img/akitudes_523x850/defi.png'
 
 function clientImg(aki) {
-    const v = aki.akitude ?? aki.akitudeUrl ?? aki.akitude_url ?? aki.image ?? aki.imageUrl ?? aki.img
+    const v = aki.akitude ?? aki._akitude ?? aki.akitudeUrl ?? aki.image ?? aki.imageUrl ?? aki.img
     if (typeof v === 'string' && v) {
         if (/^https?:/i.test(v)) return v
-        return `https://en.akinator.com/assets/img/akitudes_523x850/${v.replace(/\.png$/i, '')}.png`
+        const base = String(aki._url || 'https://en.akinator.com').replace(/\/$/, '')
+        return `${base}/assets/img/akitudes_523x850/${v.replace(/\.png$/i, '')}.png`
     }
     return DEFAULT_IMG
 }
@@ -137,15 +138,19 @@ const summarize = snap => {
     return JSON.stringify(o)
 }
 
-// التخمين غالباً بيتخزن في خاصية اسمها فيها guess / win / result ...
-const GUESS_KEYS = /guess|win|result|answer|character|propos|candidate|suggest/i
+// الحزمة بتحط won=true لما المارد يخمّن، والتخمين نفسه في _nameProposition و winResult
+const isTrue = v => v === true || String(v) === 'true'
+
 function pickFromState(snap) {
-    for (const [k, v] of Object.entries(snap)) {
-        if (!GUESS_KEYS.test(k) || !v || typeof v !== 'object') continue
-        const w = pickWin(Array.isArray(v) ? v[0] : v)
-        if (w) return w
+    if (!isTrue(snap.won ?? snap._won)) return null
+    const fromResult = pickWin(snap.winResult)
+    const name = snap._nameProposition ?? fromResult?.name
+    if (!name) return null
+    return {
+        name,
+        desc: snap._descriptionProposition ?? fromResult?.desc,
+        photo: snap._photo ?? fromResult?.photo,
     }
-    return null
 }
 
 // بيجيب التخمين من خصائص الحزمة، ولو ملقاش بيجرّب submitWin
@@ -191,8 +196,7 @@ async function clientAnswer(s, n, back = false) {
     const direct = pickWin(ret)
     if (direct) return { win: direct }
 
-    const flag = aki.guessed ?? aki.isWin ?? aki.hasGuess ?? aki.guessReady ?? aki.isGuess
-    if (flag || Number(aki.progress) >= 80) {
+    if (isTrue(aki.won)) {
         const g = await clientGetWin(aki)
         if (g.win) return { win: g.win }
     }
