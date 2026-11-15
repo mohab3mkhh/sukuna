@@ -20,7 +20,7 @@ const __filename = fileURLToPath(import.meta.url)
 const __dirname  = path.dirname(__filename)
 
 const SUKUNA_IMG = 'https://i.ibb.co/M5gwTyJJ/upload-1774680667350.jpg'
-const PAIRING_CODE      = 'SUKUNAAA'   // لازم 8 حروف/أرقام بالظبط — اكتب null لو الربط فشل (هيستخدم كود عشوائي)
+const PAIRING_CODE      = 'SUKUNAAA'   // لازم 8 حروف/أرقام بالظبط — اكتب null للكود العشوائي
 const JADI_FOLDER       = path.join('Sessions', 'SubBot')
 const INSTALLS_FILE     = path.join(__dirname, 'yuki_installs.json')
 const STATUS_FILE       = path.join(__dirname, 'jadibot_status.json')
@@ -274,7 +274,7 @@ const TEXT = {
 }
 
 // ✅ رسالة الكود: أزرار + رسالة نص بالكود (عشان تلاقيه حتى لو الزرار مظهرش)
-async function sendCodeMessage(conn, m, code) {
+async function sendCodeMessage(conn, m, code, userId = '') {
   const fmt = code.match(/.{1,4}/g)?.join('-') || code
   try {
     await sendButtons(conn, m.chat, {
@@ -287,7 +287,7 @@ async function sendCodeMessage(conn, m, code) {
     console.log('[JADIBOT] buttons failed, fallback:', e.message)
     await conn.sendMessage(m.chat, { image: { url: SUKUNA_IMG }, caption: TEXT.codeBody }, { quoted: m }).catch(() => {})
   }
-  await conn.sendMessage(m.chat, { text: `🔑 *كود الربط:*\n\n\`\`\`${fmt}\`\`\`` }, { quoted: m }).catch(() => {})
+  await conn.sendMessage(m.chat, { text: `🔑 *كود الربط${userId ? ` للرقم +${userId}` : ''}:*\n\n\`\`\`${fmt}\`\`\`\n⚠️ لازم تدخله على موبايل رقمه نفس الرقم ده` }, { quoted: m }).catch(() => {})
 }
 
 async function sendConnectedMessage(conn, m) {
@@ -389,6 +389,8 @@ const handler = async (m, { conn, args, isOwner }) => {
     } else {
       const who = m.mentionedJid?.[0] || (m.fromMe ? conn.user.jid : m.sender)
       if (!who) return
+      if (String(who).endsWith('@lid'))
+        return conn.reply(m.chat, '⟡ رقمك ظاهر بصيغة مخفية (LID) فمينفعش يتربط بيه.\nاكتب: .تنصيب 20XXXXXXXXXX (برقمك الحقيقي، للمالك)', m)
       userId = who.split('@')[0]
     }
     if (!userId) return
@@ -411,8 +413,12 @@ const handler = async (m, { conn, args, isOwner }) => {
     const sessionPath = path.join(process.cwd(), JADI_FOLDER, userId)
     const mode        = /^qr$/i.test(cmd) ? 'qr' : 'code'
 
-    // لو فيه محاولة معلّقة أو جلسة متصلة: نقفلها ونبدأ من جديد (بدل ما الأمر يتجاهل)
-    if (isBotConnected(userId) || ACTIVE_SESSIONS.has(userId)) {
+    // محاولة شغالة دلوقتي؟ متلغيهاش (الكود اللي اتبعت لسه صالح) — بس رد عليه
+    if (ACTIVE_SESSIONS.has(userId)) {
+      return conn.reply(m.chat,
+        '⏳ فيه محاولة تنصيب شغالة على الرقم ده.\nاستنى الكود (لحد 3 دقايق) وادخل آخر كود وصلك، أو اكتب: .تنصيب الغاء', m)
+    }
+    if (isBotConnected(userId)) {
       removeConnSocket(userId)
       cleanupSession(userId, false)
     }
@@ -425,6 +431,8 @@ const handler = async (m, { conn, args, isOwner }) => {
     // ملحوظة: التسجيل في yuki_installs.json بيحصل بس بعد ما الربط ينجح (في connection === 'open')
 
     setCooldown(m.sender)
+    if (mode === 'code' && !isRegistered(sessionPath))
+      await conn.reply(m.chat, `⏳ جاري تجهيز كود الربط للرقم +${userId}\nاستنى ثواني ومتكتبش الأمر تاني.`, m).catch(() => {})
     await yukiJadiBot({ sessionPath, m, conn, userId, mode })
 
   } catch (e) {
@@ -625,7 +633,7 @@ export async function yukiJadiBot({ sessionPath, m, conn, userId, mode = 'code',
           // ✅ كود ربط مخصص
           const code = await sock.requestPairingCode(userId, PAIRING_CODE || undefined)
           if (typeof code === 'string' && code.length > 0) {
-            await sendCodeMessage(conn, m, code)
+            await sendCodeMessage(conn, m, code, userId)
           } else {
             st.codeSent = false
           }
@@ -704,7 +712,7 @@ export async function yukiJadiBot({ sessionPath, m, conn, userId, mode = 'code',
           const oi = global.conns.indexOf(sock)
           if (oi >= 0) global.conns.splice(oi, 1)
           const keepM = st.connectedSent ? null : m   // ✅ نكمّل الكود/رسالة "اتصلت" لو لسه ما اتبعتوش
-          const wasCodeSent = st.codeSent
+          const wasCodeSent = false   // لو السوكت وقع قبل الربط، الكود القديم يبطل — نطلب كود جديد
           setTimeout(() => {
             yukiJadiBot({ sessionPath, m: keepM, conn, userId, mode, codeSent: wasCodeSent }).catch(() => {})
           }, delay)
