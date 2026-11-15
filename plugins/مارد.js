@@ -13,6 +13,19 @@ const ANSWERS = { 'نعم': 0, 'لا': 1, 'لا أعرف': 2, 'ربما': 3, 'ر
 const ANSWER_NAMES = ['YES', 'NO', 'DONT_KNOW', 'PROBABLY', 'PROBABLY_NOT']
 const PROXY = process.env.AKI_PROXY || process.env.YT_PROXY || undefined
 
+// صورة المارد: بنحاول ناخدها من الحزمة، ولو مفيش بنستخدم الصورة الافتراضية دي
+// تقدر تغيّرها من Railway بمتغير MARID_IMG (رابط صورة مباشر)
+const DEFAULT_IMG = process.env.MARID_IMG || 'https://en.akinator.com/assets/img/akitudes_523x850/defi.png'
+
+function clientImg(aki) {
+    const v = aki.akitude ?? aki.akitudeUrl ?? aki.akitude_url ?? aki.image ?? aki.imageUrl ?? aki.img
+    if (typeof v === 'string' && v) {
+        if (/^https?:/i.test(v)) return v
+        return `https://en.akinator.com/assets/img/akitudes_523x850/${v.replace(/\.png$/i, '')}.png`
+    }
+    return DEFAULT_IMG
+}
+
 const shortErr = e => e?.response?.status
     ? `HTTP ${e.response.status}${e.response.data?.message ? ' - ' + String(e.response.data.message).slice(0, 60) : ''}`
     : String(e?.code || e?.message || e).slice(0, 100)
@@ -48,7 +61,7 @@ async function clientStart() {
                 })
                 await aki.start()
                 console.log(`[مارد] akinator-client اشتغل: language=${language} theme=${theme}`)
-                return { provider: 'client', aki, Answers, first: { question: aki.question, img: null } }
+                return { provider: 'client', aki, Answers, first: { question: aki.question, img: clientImg(aki) } }
             } catch (e) {
                 lastErr = e
                 console.error(`[مارد] language=${language} theme=${theme}:`, e?.message || e)
@@ -73,14 +86,14 @@ async function clientAnswer(s, n, back = false) {
             console.error('[مارد] submitWin:', e?.message || e)
         }
     }
-    return { question: aki.question, img: null }
+    return { question: aki.question, img: clientImg(aki) }
 }
 
 // ───────── المزوّد 2: API القديم ─────────
 async function obitoStart() {
     const { data } = await axios.post(`${api_obito}/akinator_start`, {}, { timeout: 20000 })
     if (!data?.session || !data?.signature) throw new Error('رد ناقص من الـ API')
-    return { provider: 'obito', session: data.session, signature: data.signature, step: 0, progression: 0, first: { question: data.question, img: data.akitude_url || null } }
+    return { provider: 'obito', session: data.session, signature: data.signature, step: 0, progression: 0, first: { question: data.question, img: data.akitude_url || DEFAULT_IMG } }
 }
 
 async function obitoAnswer(s, answer, back = false) {
@@ -90,7 +103,7 @@ async function obitoAnswer(s, answer, back = false) {
     }, { timeout: 20000 })
     if (data.name_proposition) return { win: { name: data.name_proposition, desc: data.description_proposition, photo: data.photo } }
     s.step = data.step; s.progression = data.progression
-    return { question: data.question, img: data.akitude_url || null }
+    return { question: data.question, img: data.akitude_url || DEFAULT_IMG }
 }
 
 const PROVIDERS = [
@@ -101,9 +114,9 @@ const PROVIDERS = [
 // ───────── إرسال السؤال ─────────
 async function sendQuestion(conn, jid, question, imgUrl, quoted) {
     const payload = {
-        text: `ايَـتـاتـَشْـٌي يـقـول🐤:\n${question}`,
+        text: `مارد يـقـول🐤:\n${question}`,
         footer: 'جـاري الـتـخـمـين....🔥',
-        title: 'لـعـبه الـمـارد ايَـتـاتـَشْـٌي😂',
+        title: 'لـعـبه الـمـارد مارد😂',
         buttons: [
             { text: '☽✰ ¦ نـعـم 🐤 ¦ ✰☾', id: '.مارد نعم' },
             { text: '☽✰ ¦ لا 🐤 ¦ ✰☾', id: '.مارد لا' },
@@ -117,7 +130,9 @@ async function sendQuestion(conn, jid, question, imgUrl, quoted) {
     }
     try {
         try {
-            return await sendButtons(conn, jid, { ...payload, ...(imgUrl ? { image: { url: imgUrl } } : {}) })
+            const r = await sendButtons(conn, jid, { ...payload, ...(imgUrl ? { image: { url: imgUrl } } : {}) })
+            console.log(`[مارد] الأزرار اتبعتت ${imgUrl ? 'مع صورة: ' + imgUrl : 'من غير صورة'}`)
+            return r
         } catch (e) {
             if (!imgUrl) throw e
             console.error('[مارد] الصورة فشلت، بنبعت من غير صورة:', e.message)
@@ -125,7 +140,7 @@ async function sendQuestion(conn, jid, question, imgUrl, quoted) {
         }
     } catch (e) {
         console.error('[مارد] الأزرار فشلت:', e.message)
-        return conn.sendMessage(jid, { text: `ايَـتـاتـَشْـٌي يـقـول🐤:\n${question}\n\n✍️ جاوب بـ:\n.مارد نعم | .مارد لا | .مارد لا أعرف | .مارد ربما | .مارد ربما لا\n.مارد رجوع | .مارد حذف` }, { quoted })
+        return conn.sendMessage(jid, { text: `مارد يـقـول🐤:\n${question}\n\n✍️ جاوب بـ:\n.مارد نعم | .مارد لا | .مارد لا أعرف | .مارد ربما | .مارد ربما لا\n.مارد رجوع | .مارد حذف` }, { quoted })
     }
 }
 
