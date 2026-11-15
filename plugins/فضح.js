@@ -1,5 +1,5 @@
 // plugins/viewonce.js
-import { downloadMediaMessage } from '@whiskeysockets/baileys'
+import { downloadContentFromMessage } from '@whiskeysockets/baileys'
 
 let handler = async (m, { conn }) => {
   try {
@@ -12,14 +12,42 @@ let handler = async (m, { conn }) => {
       return m.reply('⚠️ رد على رسالة عرض لمرة واحدة بكتابة .ع')
     }
 
-    let quotedMessage = contextInfo.quotedMessage
+    // ===== محاولة جلب الرسالة الكاملة من الـ store =====
+    const stanzaId   = contextInfo.stanzaId
+    const participant = contextInfo.participant || contextInfo.remoteJid || m.chat
 
-    // استخراج الرسالة من كل أنواع viewOnce
-    if (quotedMessage.viewOnceMessageV2?.message) {
+    let fullMsg = null
+
+    // طريقة 1 — من store البوت
+    try {
+      const stored = await conn.store?.loadMessage?.(m.chat, stanzaId)
+        || conn.loadMessage?.(m.chat, stanzaId)
+        || conn.getMessage?.(m.chat, stanzaId)
+      if (stored?.message) fullMsg = stored
+    } catch {}
+
+    // طريقة 2 — من messages cache
+    if (!fullMsg) {
+      try {
+        const msgs = conn.chats?.[m.chat]?.messages || conn.messages?.get?.(m.chat)
+        if (msgs) {
+          const found = [...(msgs.values?.() || Object.values(msgs))].find(
+            msg => msg.key?.id === stanzaId
+          )
+          if (found?.message) fullMsg = found
+        }
+      } catch {}
+    }
+
+    // استخراج الرسالة — إما من store أو من contextInfo مباشرة
+    let quotedMessage = fullMsg?.message || contextInfo.quotedMessage
+
+    // unwrap viewOnce
+    if (quotedMessage?.viewOnceMessageV2?.message) {
       quotedMessage = quotedMessage.viewOnceMessageV2.message
-    } else if (quotedMessage.viewOnceMessage?.message) {
+    } else if (quotedMessage?.viewOnceMessage?.message) {
       quotedMessage = quotedMessage.viewOnceMessage.message
-    } else if (quotedMessage.viewOnceMessageV2Extension?.message) {
+    } else if (quotedMessage?.viewOnceMessageV2Extension?.message) {
       quotedMessage = quotedMessage.viewOnceMessageV2Extension.message
     }
 
@@ -30,66 +58,28 @@ let handler = async (m, { conn }) => {
       return m.reply('❌ الرسالة لا تحتوي على ميديا مدعومة')
     }
 
+    const mediaMsg = quotedMessage[mediaType]
+
+    // تحقق إن فيه directPath أو url
+    if (!mediaMsg?.directPath && !mediaMsg?.url && !mediaMsg?.mediaKey) {
+      return m.reply('❌ البوت لم يخزن الرسالة — يجب أن يكون البوت في الجروب وقت الإرسال')
+    }
+
     await conn.sendMessage(m.chat, { react: { text: '👁️', key: m.key } })
 
-    // بناء كائن الرسالة الكامل للتحميل
-    const fakeMsg = {
-      key: {
-        remoteJid: m.chat,
-        id: contextInfo.stanzaId || m.key.id
-      },
-      message: quotedMessage
+    // تحميل الميديا
+    const typeMap = {
+      imageMessage: 'image',
+      videoMessage: 'video',
+      audioMessage: 'audio'
     }
 
-    let buffer = null
+    const stream = await downloadContentFromMessage(mediaMsg, typeMap[mediaType])
+    const chunks = []
+    for await (const chunk of stream) chunks.push(chunk)
+    const buffer = Buffer.concat(chunks)
 
-    // طريقة 1 — downloadMediaMessage العادي
-    try {
-      buffer = await downloadMediaMessage(
-        fakeMsg,
-        'buffer',
-        {},
-        {
-          logger: console,
-          reuploadRequest: conn.updateMediaMessage?.bind(conn)
-        }
-      )
-    } catch (e1) {
-      console.error('[عرض] طريقة 1 فشلت:', e1.message)
-    }
-
-    // طريقة 2 — بدون reuploadRequest
-    if (!buffer) {
-      try {
-        buffer = await downloadMediaMessage(
-          fakeMsg,
-          'buffer',
-          {}
-        )
-      } catch (e2) {
-        console.error('[عرض] طريقة 2 فشلت:', e2.message)
-      }
-    }
-
-    // طريقة 3 — downloadContentFromMessage يدوي
-    if (!buffer) {
-      try {
-        const { downloadContentFromMessage } = await import('@whiskeysockets/baileys')
-        const mediaMsg = quotedMessage[mediaType]
-        const stream = await downloadContentFromMessage(mediaMsg, mediaType.replace('Message', ''))
-        const chunks = []
-        for await (const chunk of stream) chunks.push(chunk)
-        buffer = Buffer.concat(chunks)
-      } catch (e3) {
-        console.error('[عرض] طريقة 3 فشلت:', e3.message)
-      }
-    }
-
-    if (!buffer) {
-      return m.reply('⚠️ فشل التحميل — الرسالة قديمة أو تم حذفها')
-    }
-
-    const caption = quotedMessage[mediaType]?.caption || '👁️ *تم الكشف*'
+    const caption = mediaMsg?.caption || '👁️ *تم الكشف*'
 
     if (mediaType === 'imageMessage') {
       await conn.sendMessage(m.chat, { image: buffer, caption }, { quoted: m })
@@ -99,13 +89,13 @@ let handler = async (m, { conn }) => {
       await conn.sendMessage(m.chat, {
         audio: buffer,
         mimetype: 'audio/mp4',
-        ptt: quotedMessage[mediaType]?.ptt || false
+        ptt: mediaMsg?.ptt || false
       }, { quoted: m })
     }
 
   } catch (err) {
     console.error('[عرض]', err.message)
-    m.reply('⚠️ فشل التحميل — الرسالة قديمة أو تم حذفها')
+    m.reply('⚠️ فشل التحميل — ' + err.message)
   }
 }
 
