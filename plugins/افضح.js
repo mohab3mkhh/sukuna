@@ -4,7 +4,7 @@
 
 import { downloadContentFromMessage } from '@whiskeysockets/baileys'
 
-const VER = 3
+const VER = 5
 const MAX_CACHE = 300
 const WRAPPERS = ['viewOnceMessage', 'viewOnceMessageV2', 'viewOnceMessageV2Extension', 'ephemeralMessage', 'documentWithCaptionMessage', 'editedMessage']
 const MEDIA = { imageMessage: 'image', videoMessage: 'video', audioMessage: 'audio' }
@@ -50,9 +50,11 @@ function store(raw) {
         if (!id || !raw.message) return
         global._voCount++
         const sh = JSON.stringify(shape(raw.message))
-        if (/image|video|audio|iewOnce/i.test(sh)) {
-            global._voSeen.push(sh.slice(0, 220))
-            if (global._voSeen.length > 4) global._voSeen.shift()
+        // بنسجّل شكل أي رسالة مش نص عادي (عشان نشوف وصلت إزاي رسالة العرض لمرة واحدة بالظبط)
+        const plain = Object.keys(raw.message).every(k => ['conversation', 'extendedTextMessage', 'messageContextInfo', 'reactionMessage', 'senderKeyDistributionMessage'].includes(k))
+        if (!plain) {
+            global._voSeen.push(sh.slice(0, 200) + (raw.messageStubType ? ' stub=' + raw.messageStubType : ''))
+            if (global._voSeen.length > 6) global._voSeen.shift()
         }
         if (!findViewOnce(raw.message)) return
         global._voCache.set(id, raw)
@@ -94,7 +96,7 @@ const handler = async (m, { conn }) => {
         const cached = global._voCache.get(ctx.stanzaId)
         const found = (cached && findViewOnce(cached.message)) || findViewOnce(ctx.quotedMessage)
         if (!found || !found.media?.mediaKey) {
-            return m.reply(`❌ مقدرتش ألاقي الرسالة دي.\nلازم تكون وصلت للبوت وهو شغال (البوت بيفقد اللي سجّله لما يعمل Restart).\n\n🔧 فحص:\n• المسجّل: ${global._voCache.size}\n• المستمع: ${conn.__voAttached === VER ? 'شغال' : 'مش شغال'}\n• رسائل شافها المستمع: ${global._voCount}\n• شكل الرسالة اللي رديت عليها:\n${JSON.stringify(shape(ctx.quotedMessage)).slice(0, 400)}\n• آخر ميديا شافها:\n${global._voSeen.join('\n') || '(ولا واحدة)'}`)
+            return m.reply(`❌ مقدرتش ألاقي الرسالة دي.\nلازم تكون وصلت للبوت وهو شغال (البوت بيفقد اللي سجّله لما يعمل Restart).\n\n🔧 فحص:\n• المسجّل: ${global._voCache.size}\n• المستمع: ${conn.__voAttached === VER ? 'شغال' : 'مش شغال'}\n• رسائل شافها المستمع: ${global._voCount}\n• الرسالة المقتبسة فيها مفتاح ميديا: ${(Object.values(unwrap(ctx.quotedMessage).inner || {})[0] || {}).mediaKey ? 'أيوه' : 'لأ'}\n• شكل الرسالة اللي رديت عليها:\n${JSON.stringify(shape(ctx.quotedMessage)).slice(0, 400)}\n• آخر رسائل مش نص وصلت:\n${global._voSeen.join('\n') || '(ولا واحدة)'}`)
         }
 
         await conn.sendMessage(m.chat, { react: { text: '👁️', key: m.key } }).catch(() => {})
