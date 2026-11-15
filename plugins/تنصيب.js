@@ -13,7 +13,7 @@ import path from 'path'
 import pino from 'pino'
 import chalk from 'chalk'
 import { makeWASocket } from '../lib/simple.js'
-import { sendButtons, btn } from '../lib/buttons.js'
+import { sendButtons } from '../lib/buttons.js'
 import { fileURLToPath } from 'url'
 
 const __filename = fileURLToPath(import.meta.url)
@@ -264,9 +264,10 @@ async function sendCodeMessage(conn, m, code) {
     await sendButtons(conn, m.chat, {
       text: TEXT.codeBody,
       footer: '꧁༒【⛩️𝗦𝗨𝗞𝗨𝗡𝗔⚡𝗕𝗢𝗧⛩️】༒꧂',
-      image: SUKUNA_IMG,
-      buttons: [btn.copy(`📋  انسخ الكود  •  ${fmt}`, code)],
-    }, m)
+      image: { url: SUKUNA_IMG },
+      buttons: [{ copy: code, text: `📋  انسخ الكود  •  ${fmt}` }],
+      quoted: m,
+    })
   } catch (e) {
     console.log('[JADIBOT] buttons failed, fallback:', e.message)
     await conn.sendMessage(m.chat, { image: { url: SUKUNA_IMG }, caption: TEXT.codeBody }, { quoted: m }).catch(() => {})
