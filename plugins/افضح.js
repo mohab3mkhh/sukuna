@@ -4,12 +4,13 @@
 
 import { downloadContentFromMessage } from '@whiskeysockets/baileys'
 
-const VER = 5
+const VER = 6
 const MAX_CACHE = 300
 const WRAPPERS = ['viewOnceMessage', 'viewOnceMessageV2', 'viewOnceMessageV2Extension', 'ephemeralMessage', 'documentWithCaptionMessage', 'editedMessage']
 const MEDIA = { imageMessage: 'image', videoMessage: 'video', audioMessage: 'audio' }
 
 if (!global._voCache) global._voCache = new Map()
+if (global.__voSeenVer !== 6) { global._voSeen = []; global.__voSeenVer = 6 }
 if (!global._voSeen) global._voSeen = []
 global._voCount = global._voCount || 0
 
@@ -49,9 +50,11 @@ function store(raw) {
         const id = raw?.key?.id
         if (!id || !raw.message) return
         global._voCount++
-        const sh = JSON.stringify(shape(raw.message))
+        // بنشيل مفتاح التشفير من الفحص عشان بياخد مساحة كبيرة ويخفي الباقي
+        const { senderKeyDistributionMessage, ...rest } = raw.message
+        const sh = JSON.stringify(shape(rest))
         // بنسجّل شكل أي رسالة مش نص عادي (عشان نشوف وصلت إزاي رسالة العرض لمرة واحدة بالظبط)
-        const plain = Object.keys(raw.message).every(k => ['conversation', 'extendedTextMessage', 'messageContextInfo', 'reactionMessage', 'senderKeyDistributionMessage'].includes(k))
+        const plain = Object.keys(rest).every(k => ['conversation', 'extendedTextMessage', 'messageContextInfo', 'reactionMessage', 'senderKeyDistributionMessage'].includes(k))
         if (!plain) {
             global._voSeen.push(sh.slice(0, 200) + (raw.messageStubType ? ' stub=' + raw.messageStubType : ''))
             if (global._voSeen.length > 6) global._voSeen.shift()
