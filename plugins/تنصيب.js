@@ -28,7 +28,7 @@ const LIMIT_FILE        = path.join(__dirname, 'max_installs.json')
 const BANNED_CHATS_FILE = path.join(__dirname, 'banned_chats.json')
 
 const DEFAULT_MAX_INSTALLS = 6
-const SESSION_TIMEOUT_MS   = 120_000
+const SESSION_TIMEOUT_MS   = 180_000
 const MAX_RECONNECT        = 5
 const RECONNECT_BASE_DELAY = 3_000
 const HANDLER_CACHE_TTL    = 60_000
@@ -40,6 +40,7 @@ const RECONNECT_ATTEMPTS = new Map()
 const SESSION_TIMERS     = new Map()
 const SOCKET_STATES      = new Map()
 const WATCHDOG_TIMERS    = new Map()
+const PENDING            = new Map()   // سوكتات لسه بتستنى الربط
 
 if (!Array.isArray(global.conns)) global.conns = []
 
@@ -104,6 +105,15 @@ function isBotConnected(userId) {
   } catch { return false }
 }
 
+// الجلسة بتتحسب مربوطة بس لو creds.registered = true
+function isRegistered(sessionPath) {
+  try {
+    const fp = path.join(sessionPath, 'creds.json')
+    if (!fs.existsSync(fp)) return false
+    return JSON.parse(fs.readFileSync(fp, 'utf8'))?.registered === true
+  } catch { return false }
+}
+
 function cancelSessionTimer(userId) {
   const t = SESSION_TIMERS.get(userId)
   if (t) { clearTimeout(t); SESSION_TIMERS.delete(userId) }
@@ -113,6 +123,12 @@ function cleanupSession(userId, deleteDisk = false) {
   cancelSessionTimer(userId)
   const wt = WATCHDOG_TIMERS.get(userId)
   if (wt) { clearInterval(wt); WATCHDOG_TIMERS.delete(userId) }
+  const ps = PENDING.get(userId)
+  if (ps) {
+    try { ps.ev?.removeAllListeners?.() } catch {}
+    try { ps.ws?.terminate?.() } catch {}
+    PENDING.delete(userId)
+  }
   ACTIVE_SESSIONS.delete(userId)
   RECONNECT_ATTEMPTS.delete(userId)
   SOCKET_STATES.delete(userId)
@@ -292,7 +308,13 @@ export async function initSubBots(conn) {
   for (const userId of [...installed]) {
     try {
       const sessionPath = path.join(process.cwd(), JADI_FOLDER, userId)
-      if (!fs.existsSync(path.join(sessionPath, 'creds.json'))) { fail++; continue }
+      if (!isRegistered(sessionPath)) {
+        // جلسة ما اتربطتش أبداً: نظّفها بدل ما نحاول نشغّلها
+        removeInstall(userId)
+        cleanupSession(userId, true)
+        fail++
+        continue
+      }
       removeConnSocket(userId)
       cleanupSession(userId, false)
       await yukiJadiBot({ sessionPath, m: null, conn, userId, mode: 'code' })
@@ -334,7 +356,7 @@ const handler = async (m, { conn, args, isOwner }) => {
         await conn.reply(m.chat, TEXT.reconnecting(idx + 1, offline.length), m)
         try {
           const sessionPath = path.join(process.cwd(), JADI_FOLDER, uid)
-          if (!fs.existsSync(path.join(sessionPath, 'creds.json'))) { fail++; continue }
+          if (!isRegistered(sessionPath)) { removeInstall(uid); cleanupSession(uid, true); fail++; continue }
           removeConnSocket(uid)
           cleanupSession(uid, false)
           await yukiJadiBot({ sessionPath, m: null, conn, userId: uid, mode: 'code' })
@@ -389,14 +411,18 @@ const handler = async (m, { conn, args, isOwner }) => {
     const sessionPath = path.join(process.cwd(), JADI_FOLDER, userId)
     const mode        = /^qr$/i.test(cmd) ? 'qr' : 'code'
 
-    if (isBotConnected(userId)) {
+    // لو فيه محاولة معلّقة أو جلسة متصلة: نقفلها ونبدأ من جديد (بدل ما الأمر يتجاهل)
+    if (isBotConnected(userId) || ACTIVE_SESSIONS.has(userId)) {
       removeConnSocket(userId)
       cleanupSession(userId, false)
     }
 
-    if (!isInstalled(userId)) addInstall(userId)
-    if (ACTIVE_SESSIONS.has(userId)) return
-    if (!fs.existsSync(sessionPath)) fs.mkdirSync(sessionPath, { recursive: true })
+    // جلسة ما اتربطتش قبل كده؟ امسحها عشان نبدأ بـ creds جديدة (ده كان سبب الفشل من أول مرة)
+    if (!isRegistered(sessionPath)) {
+      try { fs.rmSync(sessionPath, { recursive: true, force: true }) } catch {}
+    }
+    fs.mkdirSync(sessionPath, { recursive: true })
+    // ملحوظة: التسجيل في yuki_installs.json بيحصل بس بعد ما الربط ينجح (في connection === 'open')
 
     setCooldown(m.sender)
     await yukiJadiBot({ sessionPath, m, conn, userId, mode })
@@ -409,7 +435,7 @@ const handler = async (m, { conn, args, isOwner }) => {
 handler.command = /^(qr|تنصيب|reconnect)$/i
 export default handler
 
-export async function yukiJadiBot({ sessionPath, m, conn, userId, mode = 'code' }) {
+export async function yukiJadiBot({ sessionPath, m, conn, userId, mode = 'code', codeSent = false }) {
   if (!userId) return
   const lockKey = `${userId}_lock`
 
@@ -432,8 +458,9 @@ export async function yukiJadiBot({ sessionPath, m, conn, userId, mode = 'code' 
     const { state, saveCreds } = await useMultiFileAuthState(sessionPath)
     const { version }          = await fetchLatestWaWebVersion().catch(() => ({ version: [2, 3000, 0] }))
     const msgRetryCache        = new NodeCache({ stdTTL: 0, checkperiod: 0 })
+    const registeredAtStart    = state.creds?.registered === true
 
-    const socketState = { codeSent: false, connectedSent: false, qrMsg: null }
+    const socketState = { codeSent: !!codeSent, connectedSent: false, qrMsg: null, wasOpen: false }
     SOCKET_STATES.set(userId, socketState)
 
     const connectionOptions = {
@@ -478,8 +505,10 @@ export async function yukiJadiBot({ sessionPath, m, conn, userId, mode = 'code' 
     let sock    = makeWASocket(connectionOptions)
     sock.isInit = false
     let isInit  = true
+    PENDING.set(userId, sock)
 
     const watchdogTimer = setInterval(() => {
+      if (ACTIVE_SESSIONS.has(userId)) return   // لسه بتستنى الربط
       const wsState = sock?.ws?.readyState
       if (!sock?.user || wsState === 3) {
         console.warn(chalk.yellow(`[JADIBOT] 🧹 Watchdog: بوت ميت تم إزالته — ${userId}`))
@@ -506,6 +535,7 @@ export async function yukiJadiBot({ sessionPath, m, conn, userId, mode = 'code' 
         sock = makeWASocket(connectionOptions, { chats: oldChats })
         sock.isInit = false
         isInit = true
+        PENDING.set(userId, sock)
       }
 
       if (!isInit) {
@@ -612,6 +642,8 @@ export async function yukiJadiBot({ sessionPath, m, conn, userId, mode = 'code' 
         cancelSessionTimer(userId)
         RECONNECT_ATTEMPTS.delete(userId)
         ACTIVE_SESSIONS.delete(userId)
+        PENDING.delete(userId)
+        st.wasOpen = true
 
         sock.isInit = true
         const exists = global.conns.some(s => {
@@ -640,10 +672,12 @@ export async function yukiJadiBot({ sessionPath, m, conn, userId, mode = 'code' 
         // ✅ شلت 405 من الحذف النهائي (بيحصل أحياناً بسبب نسخة واتساب مش بسبب الجلسة)
         if ([DisconnectReason.loggedOut, 401, 403].includes(reason)) {
           console.warn(chalk.red(`[JADIBOT] 🚫 جلسة (+${userId}) أُغلقت نهائياً — كود: ${reason}`))
-          try {
-            await conn.sendMessage(`${userId}@s.whatsapp.net`,
-              { text: '⚠️ تم قطع جلستك في البوت. أعد التنصيب للاستمرار.' })
-          } catch {}
+          if (registeredAtStart || st.wasOpen) {
+            try {
+              await conn.sendMessage(`${userId}@s.whatsapp.net`,
+                { text: '⚠️ تم قطع جلستك في البوت. أعد التنصيب للاستمرار.' })
+            } catch {}
+          }
           removeConnSocket(userId)
           removeInstall(userId)
           cleanupSession(userId, true)
@@ -666,8 +700,13 @@ export async function yukiJadiBot({ sessionPath, m, conn, userId, mode = 'code' 
           ACTIVE_SESSIONS.delete(userId)
           const delay = RECONNECT_BASE_DELAY * attempts
           console.log(chalk.magenta(`[JADIBOT] 🔄 إعادة ربط (+${userId}) — محاولة ${attempts}/${MAX_RECONNECT} بعد ${delay}ms`))
+          // السوكت القديم المقفول يتشال من القايمة عشان الجديد يتسجّل صح
+          const oi = global.conns.indexOf(sock)
+          if (oi >= 0) global.conns.splice(oi, 1)
+          const keepM = st.connectedSent ? null : m   // ✅ نكمّل الكود/رسالة "اتصلت" لو لسه ما اتبعتوش
+          const wasCodeSent = st.codeSent
           setTimeout(() => {
-            yukiJadiBot({ sessionPath, m: null, conn, userId, mode }).catch(() => {})
+            yukiJadiBot({ sessionPath, m: keepM, conn, userId, mode, codeSent: wasCodeSent }).catch(() => {})
           }, delay)
         } else {
           console.warn(chalk.red(`[JADIBOT] ☠️ تجاوز الحد الأقصى (+${userId}) — تم الاستسلام`))
