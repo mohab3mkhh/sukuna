@@ -1,19 +1,57 @@
-// plugins/مارد.js  — لعبة المارد (Akinator)
-// بيجرّب مزوّد الـ API الأصلي، ولو وقع بيجرّب حزمة aki-api (لو متثبتة). ولو الاتنين وقعوا بيقولك السبب في الشات.
-// لتثبيت الحزمة: ضيف  "aki-api": "latest"  في dependencies بتاع package.json
+// plugins/marid.js — لعبة المارد (Akinator)
+// المزوّد 1: حزمة akinator-client (بتستخدم got-scraping عشان تعدّي حظر Cloudflare)
+// المزوّد 2: الـ API القديم (obito) احتياطي
+// لتثبيت الحزمة: ضيف  "akinator-client": "latest"  في dependencies بتاع package.json
+// لو لسه 403: ضيف متغير AKI_PROXY في Railway  (مثال: http://user:pass@host:port)
+// الأزرار بتتبعت عن طريق lib/buttons.js
 
-import axios from "axios";
-import * as baileys from '@whiskeysockets/baileys'
-const { generateWAMessageFromContent, proto, prepareWAMessageMedia } = baileys
+import axios from 'axios'
+import { sendButtons } from '../lib/buttons.js'
 
-const api_obito = "https://mr-obito-api.vercel.app/api";
-const ANSWERS = { "نعم": 0, "لا": 1, "لا أعرف": 2, "ربما": 3, "ربما لا": 4 };
+const api_obito = 'https://mr-obito-api.vercel.app/api'
+const ANSWERS = { 'نعم': 0, 'لا': 1, 'لا أعرف': 2, 'ربما': 3, 'ربما لا': 4 }
+const ANSWER_NAMES = ['YES', 'NO', 'DONT_KNOW', 'PROBABLY', 'PROBABLY_NOT']
+const PROXY = process.env.AKI_PROXY || process.env.YT_PROXY || undefined
 
 const shortErr = e => e?.response?.status
     ? `HTTP ${e.response.status}${e.response.data?.message ? ' - ' + String(e.response.data.message).slice(0, 60) : ''}`
     : String(e?.code || e?.message || e).slice(0, 100)
 
-// ───────── المزوّد 1: API الأصلي ─────────
+// ───────── المزوّد 1: akinator-client ─────────
+async function clientStart() {
+    let mod
+    try { mod = await import('akinator-client') } catch { throw new Error('akinator-client مش متثبتة') }
+    const lib = mod.AkinatorClient ? mod : (mod.default?.AkinatorClient ? mod.default : mod)
+    const { AkinatorClient, Languages, Themes, Answers } = lib
+    if (!AkinatorClient) throw new Error('akinator-client: شكل الحزمة مختلف عن المتوقع')
+
+    const aki = new AkinatorClient({
+        language: Languages?.AR ?? 'ar',
+        theme: Themes?.CHARACTERS ?? 'characters',
+        ...(PROXY ? { proxy: PROXY } : {}),
+        retries: 2,
+    })
+    await aki.start()
+    return { provider: 'client', aki, Answers, first: { question: aki.question, img: null } }
+}
+
+async function clientAnswer(s, n, back = false) {
+    const aki = s.aki
+    if (back) await aki.back()
+    else await aki.answer(s.Answers?.[ANSWER_NAMES[n]] ?? n)
+
+    if (Number(aki.progress) >= 80) {
+        try {
+            const w = await aki.submitWin()
+            if (w?.name) return { win: { name: w.name, desc: w.description, photo: w.photo } }
+        } catch (e) {
+            console.error('[مارد] submitWin:', e?.message || e)
+        }
+    }
+    return { question: aki.question, img: null }
+}
+
+// ───────── المزوّد 2: API القديم ─────────
 async function obitoStart() {
     const { data } = await axios.post(`${api_obito}/akinator_start`, {}, { timeout: 20000 })
     if (!data?.session || !data?.signature) throw new Error('رد ناقص من الـ API')
@@ -23,72 +61,52 @@ async function obitoStart() {
 async function obitoAnswer(s, answer, back = false) {
     const { data } = await axios.post(`${api_obito}/${back ? 'akinator_back' : 'akinator_answer'}`, {
         session: s.session, signature: s.signature, step: s.step, progression: s.progression,
-        ...(back ? {} : { answer, sid: "NaN", question_filter: "string" }), cm: "false",
+        ...(back ? {} : { answer, sid: 'NaN', question_filter: 'string' }), cm: 'false',
     }, { timeout: 20000 })
     if (data.name_proposition) return { win: { name: data.name_proposition, desc: data.description_proposition, photo: data.photo } }
     s.step = data.step; s.progression = data.progression
     return { question: data.question, img: data.akitude_url || null }
 }
 
-// ───────── المزوّد 2: حزمة aki-api ─────────
-async function akiStart() {
-    let mod
-    try { mod = await import('aki-api') } catch { throw new Error('aki-api مش متثبتة') }
-    const Aki = mod.Aki || mod.default?.Aki || mod.default
-    const aki = new Aki({ region: 'ar', childMode: false })
-    await aki.start()
-    return { provider: 'aki', aki, first: { question: aki.question, img: null } }
-}
-
-async function akiAnswer(s, answer, back = false) {
-    const aki = s.aki
-    if (back) await aki.back(); else await aki.step(answer)
-    if (aki.progress >= 80 || aki.currentStep >= 78) {
-        await aki.win()
-        const g = aki.answers?.[0]
-        if (g) return { win: { name: g.name, desc: g.description, photo: g.absolute_picture_path } }
-    }
-    return { question: aki.question, img: null }
-}
-
-const PROVIDERS = [{ name: 'obito-api', start: obitoStart }, { name: 'aki-api', start: akiStart }]
+const PROVIDERS = [
+    { name: 'akinator-client', start: clientStart },
+    { name: 'obito-api', start: obitoStart },
+]
 
 // ───────── إرسال السؤال ─────────
 async function sendQuestion(conn, jid, question, imgUrl, quoted) {
-    const quick = (text, id) => ({ name: "quick_reply", buttonParamsJson: JSON.stringify({ display_text: text, id }) })
+    const payload = {
+        text: `ايَـتـاتـَشْـٌي يـقـول🐤:\n${question}`,
+        footer: 'جـاري الـتـخـمـين....🔥',
+        title: 'لـعـبه الـمـارد ايَـتـاتـَشْـٌي😂',
+        buttons: [
+            { text: '☽✰ ¦ نـعـم 🐤 ¦ ✰☾', id: '.مارد نعم' },
+            { text: '☽✰ ¦ لا 🐤 ¦ ✰☾', id: '.مارد لا' },
+            { text: '☽✰ ¦ مـش عـارف 🐤 ¦ ✰☾', id: '.مارد لا أعرف' },
+            { text: '☽✰ ¦ ربـمـا 🐤 ¦ ✰☾', id: '.مارد ربما' },
+            { text: '☽✰ ¦ لا ربـمـا 🐤 ¦ ✰☾', id: '.مارد ربما لا' },
+            { text: '☽✰ ¦ رجَـوع خـطـوه 🐤 ¦ ✰☾', id: '.مارد رجوع' },
+            { text: '☽✰ ¦ الـغـاء الـعـبة 🐤 ¦ ✰☾', id: '.مارد حذف' },
+        ],
+        quoted,
+    }
     try {
-        const buttons = [
-            quick("☽✰ ¦ نـعـم 🐤 ¦ ✰☾", ".مارد نعم"),
-            quick("☽✰ ¦ لا 🐤 ¦ ✰☾", ".مارد لا"),
-            quick("☽✰ ¦ مـش عـارف 🐤 ¦ ✰☾", ".مارد لا أعرف"),
-            quick("☽✰ ¦ ربـمـا 🐤 ¦ ✰☾", ".مارد ربما"),
-            quick("☽✰ ¦ لا ربـمـا 🐤 ¦ ✰☾", ".مارد ربما لا"),
-            quick("☽✰ ¦ رجَـوع خـطـوه 🐤 ¦ ✰☾", ".مارد رجوع"),
-            quick("☽✰ ¦ الـغـاء الـعـبة 🐤 ¦ ✰☾", ".مارد حذف"),
-        ]
-        const media = imgUrl ? await prepareWAMessageMedia({ image: { url: imgUrl } }, { upload: conn.waUploadToServer }) : null
-        const msg = generateWAMessageFromContent(jid, {
-            viewOnceMessage: { message: { interactiveMessage: proto.Message.InteractiveMessage.create({
-                body: proto.Message.InteractiveMessage.Body.create({ text: `ايَـتـاتـَشْـٌي يـقـول🐤:\n${question}` }),
-                footer: proto.Message.InteractiveMessage.Footer.create({ text: "جـاري الـتـخـمـين....🔥" }),
-                header: proto.Message.InteractiveMessage.Header.create({
-                    ...(media ? { hasMediaAttachment: true, ...media } : { hasMediaAttachment: false }),
-                    title: "لـعـبه الـمـارد ايَـتـاتـَشْـٌي😂",
-                }),
-                nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.create({ buttons }),
-            }) } },
-        }, {})
-        return await conn.relayMessage(jid, msg.message, { messageId: msg.key.id })
+        try {
+            return await sendButtons(conn, jid, { ...payload, ...(imgUrl ? { image: { url: imgUrl } } : {}) })
+        } catch (e) {
+            if (!imgUrl) throw e
+            console.error('[مارد] الصورة فشلت، بنبعت من غير صورة:', e.message)
+            return await sendButtons(conn, jid, payload)
+        }
     } catch (e) {
         console.error('[مارد] الأزرار فشلت:', e.message)
-        // احتياطي: السؤال نص + طريقة الإجابة
         return conn.sendMessage(jid, { text: `ايَـتـاتـَشْـٌي يـقـول🐤:\n${question}\n\n✍️ جاوب بـ:\n.مارد نعم | .مارد لا | .مارد لا أعرف | .مارد ربما | .مارد ربما لا\n.مارد رجوع | .مارد حذف` }, { quoted })
     }
 }
 
 const sendWin = (conn, m, w) => conn.sendMessage(m.chat, {
     ...(w.photo ? { image: { url: w.photo } } : {}),
-    [w.photo ? 'caption' : 'text']: `🧞 على ما أظن أنك تفكر بـ:\n${w.name}\n${w.desc || "بدون وصف"}`,
+    [w.photo ? 'caption' : 'text']: `🧞 على ما أظن أنك تفكر بـ:\n${w.name}\n${w.desc || 'بدون وصف'}`,
 }, { quoted: m })
 
 // ───────── الأمر ─────────
@@ -99,25 +117,28 @@ let handler = async function (m, { text, conn }) {
     text = (text || '').trim()
 
     if (!text) {
-        const quick = (t, id) => ({ name: "quick_reply", buttonParamsJson: JSON.stringify({ display_text: t, id }) })
         try {
-            const msg = generateWAMessageFromContent(m.chat, { viewOnceMessage: { message: { interactiveMessage: proto.Message.InteractiveMessage.create({
-                body: proto.Message.InteractiveMessage.Body.create({ text: "🧞‍هل تريد بدء لعبة مارد؟" }),
-                footer: proto.Message.InteractiveMessage.Footer.create({ text: "اختر احد الخيارات التالية :" }),
-                header: proto.Message.InteractiveMessage.Header.create({ hasMediaAttachment: false, title: "لعبة المارد الازرق..🧞" }),
-                nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.create({ buttons: [quick("📘 المساعدة", ".مارد المساعدة"), quick("🎮 بدء اللـعبة", ".مارد ابدا")] }),
-            }) } } }, {})
-            return await conn.relayMessage(m.chat, msg.message, { messageId: msg.key.id })
+            return await sendButtons(conn, m.chat, {
+                text: '🧞‍هل تريد بدء لعبة مارد؟',
+                footer: 'اختر احد الخيارات التالية :',
+                title: 'لعبة المارد الازرق..🧞',
+                buttons: [
+                    { text: '📘 المساعدة', id: '.مارد المساعدة' },
+                    { text: '🎮 بدء اللـعبة', id: '.مارد ابدا' },
+                ],
+                quoted: m,
+            })
         } catch (e) {
-            return m.reply("🧞 لعبة المارد\n\n.مارد ابدا → بدء اللعبة\n.مارد المساعدة → الشرح")
+            console.error('[مارد] القائمة فشلت:', e.message)
+            return m.reply('🧞 لعبة المارد\n\n.مارد ابدا → بدء اللعبة\n.مارد المساعدة → الشرح')
         }
     }
 
-    if (text === "المساعدة") {
+    if (text === 'المساعدة') {
         return m.reply(`📘 شرح أوامر لعبة مارد :\n\n-.مارد ابدا → بدء اللعبة\n-.مارد نعم / لا / لا أعرف / ربما / ربما لا → إرسال إجابة\n-.مارد رجوع → الرجوع للسؤال السابق\n-.مارد حذف → حذف الجلسة الحالية`)
     }
 
-    if (text === "ابدا") {
+    if (text === 'ابدا') {
         const errors = []
         for (const p of PROVIDERS) {
             try {
@@ -133,17 +154,17 @@ let handler = async function (m, { text, conn }) {
         return m.reply(`❌ مقدرتش أبدأ اللعبة.\n\n🔧 السبب:\n${errors.map(e => `• ${e}`).join('\n')}`)
     }
 
-    if (text === "حذف") {
-        if (!session) return m.reply("لا توجد جلسة نشطة")
+    if (text === 'حذف') {
+        if (!session) return m.reply('لا توجد جلسة نشطة')
         delete conn.aki[key]
-        return m.reply("تم حذف الجلسة بنجاح")
+        return m.reply('تم حذف الجلسة بنجاح')
     }
 
-    const isBack = text === "رجوع"
+    const isBack = text === 'رجوع'
     if (isBack || Object.prototype.hasOwnProperty.call(ANSWERS, text)) {
-        if (!session) return m.reply(isBack ? "لا توجد جلسة نشطة" : "لا توجد جلسه نشطه حاليا،ابدأ جلسه عبر .مارد ابدا")
+        if (!session) return m.reply(isBack ? 'لا توجد جلسة نشطة' : 'لا توجد جلسه نشطه حاليا،ابدأ جلسه عبر .مارد ابدا')
         try {
-            const fn = session.provider === 'aki' ? akiAnswer : obitoAnswer
+            const fn = session.provider === 'client' ? clientAnswer : obitoAnswer
             const r = await fn(session, ANSWERS[text], isBack)
             if (r.win) { delete conn.aki[key]; return sendWin(conn, m, r.win) }
             return sendQuestion(conn, m.chat, r.question, r.img, m)
