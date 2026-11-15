@@ -1,24 +1,11 @@
 // plugins/مارد.js
 // 🧞 المارد الأزرق (Akinator) — لعبة تخمين بالأزرار
-//
-//   .مارد              -> لعبة جديدة
-//   .مارد وقف          -> إنهاء اللعبة
-//   .مارد هو <الاسم>   -> بعد ما يخسر: علّمه الشخصية وهو يحفظها
-//
-// - كل سؤال بيتختار من إجاباتك اللي فاتت (بيقسم الشخصيات المتبقية لنصين تقريبًا)،
-//   وبيسأل أسئلة مرتبطة (لو قلت "أنمي" هيسأل عن الأنمي..).
-// - بيتحمل غلطة منك، وفي زرار/كلمة "رجوع" للسؤال اللي قبله.
-// - الشخصيات اللي بيتعلمها بتتحفظ في database/mared_learned.json
-//
-// لإضافة شخصية يدويًا: زوّد سطر في CHARACTERS: ["الاسم", "صفة1 صفة2 ..."]
-// (الصفات هي مفاتيح الأسئلة في Q)
 
 import fs from 'fs'
 import path from 'path'
-import * as _baileys from '@whiskeysockets/baileys'
 
-const B = _baileys.generateWAMessageFromContent ? _baileys : (_baileys.default || _baileys)
-const { generateWAMessageFromContent, prepareWAMessageMedia, proto } = B
+// ✅ استخدام ملف الأزرار
+import { sendButtons as sendBtn, btn, getButtonId } from '../lib/buttons.js'
 
 // ==================================================
 // CONFIG
@@ -30,10 +17,10 @@ const LEARN_FILE = path.join(process.cwd(), 'database', 'mared_learned.json')
 const TITLE = '🧞 المارد الأزرق'
 const FOOTER = '⛩️ SUKUNA BOT ⛩️'
 
-const MAX_QUESTIONS = 30      // بعد كده يخمّن غصب
-const MIN_QUESTIONS = 7       // أقل عدد أسئلة قبل أول تخمين
-const GUESS_CONFIDENCE = 0.8  // نسبة الثقة اللي يخمّن عندها
-const MAX_WRONG = 3           // عدد التخمينات الغلط قبل ما يستسلم
+const MAX_QUESTIONS = 30
+const MIN_QUESTIONS = 7
+const GUESS_CONFIDENCE = 0.8
+const MAX_WRONG = 3
 const SESSION_TTL = 15 * 60 * 1000
 
 const LIKE_MATCH = 0.97
@@ -41,8 +28,7 @@ const LIKE_MISS = 0.03
 const PREFIX = 'mared:'
 
 // ==================================================
-// الأسئلة: Q[key] = { text, parent }
-// parent: السؤال بيتسأل بس لو الصفة دي محتملة ("!real" = لو "غير حقيقي" محتمل)
+// الأسئلة
 // ==================================================
 
 const Q = {}
@@ -58,7 +44,6 @@ function defFranchises(parent, map) {
 }
 
 defQ([
-  // ---- عام ----
   ['real', 'شخصيتك حقيقية (موجودة في الواقع)؟'],
   ['male', 'شخصيتك ذكر؟'],
   ['alive', 'لسه عايش/ة النهارده؟', 'real'],
@@ -72,7 +57,6 @@ defQ([
   ['robot', 'روبوت أو آلة؟', 'nonhuman'],
   ['monster', 'وحش أو كائن خيالي؟', 'nonhuman'],
 
-  // ---- مجالات الأشخاص الحقيقيين ----
   ['footballer', 'لاعب كورة؟', 'real'],
   ['athlete', 'رياضي؟', 'real'],
   ['actor', 'ممثل/ة؟', 'real'],
@@ -88,7 +72,6 @@ defQ([
   ['asian', 'آسيوي؟', 'real'],
   ['latin', 'من أمريكا اللاتينية؟', 'real'],
 
-  // ---- كورة ----
   ['forward', 'بيلعب في الهجوم؟', 'footballer'],
   ['midfielder', 'بيلعب في الوسط؟', 'footballer'],
   ['defender', 'بيلعب في الدفاع؟', 'footballer'],
@@ -118,7 +101,6 @@ defQ([
   ['italy', 'إيطالي؟', 'footballer'],
   ['belgium', 'بلجيكي؟', 'footballer'],
 
-  // ---- رياضات تانية ----
   ['boxing', 'ملاكم؟', 'athlete'],
   ['basketball', 'لاعب كرة سلة؟', 'athlete'],
   ['tennis', 'لاعب/ة تنس؟', 'athlete'],
@@ -130,7 +112,6 @@ defQ([
   ['wrestler', 'مصارع؟', 'athlete'],
   ['claymaster', 'ملك الملاعب الترابية؟', 'tennis'],
 
-  // ---- أسئلة مميزة للأشخاص الحقيقيين ----
   ['shaabi', 'بيغني شعبي؟', 'singer'],
   ['nubian', 'من النوبة؟', 'singer'],
   ['hadaba', 'لقبه «الهضبة»؟', 'singer'],
@@ -185,11 +166,8 @@ defQ([
   ['hpauthor', 'كاتبة هاري بوتر؟', 'writer'],
   ['shakespeare', 'كاتب مسرحيات إنجليزي؟', 'writer'],
   ['barcacoach', 'اشتغل مدرب لبرشلونة؟', 'footballer'],
-  ['ahlypres', 'رئيس النادي الأهلي؟', 'footballer']
-])
+  ['ahlypres', 'رئيس النادي الأهلي؟', 'footballer'],
 
-// ---- خيالي: نوع المصدر ----
-defQ([
   ['cartoon', 'من الكرتون (غير الأنمي)؟', '!real'],
   ['anime', 'من الأنمي؟', '!real'],
   ['game', 'من لعبة فيديو؟', '!real'],
@@ -243,7 +221,6 @@ defQ([
   ['arabtoon', 'كرتون عربي؟', 'cartoon']
 ])
 
-// ---- ألعاب ----
 defFranchises('game', {
   gow: 'God of War', mario: 'سوبر ماريو', zelda: 'زيلدا', sonic: 'سونيك', pokemon: 'بوكيمون',
   gta: 'GTA', cod: 'Call of Duty', freefire: 'فري فاير', fortnite: 'فورتنايت',
@@ -257,7 +234,6 @@ defFranchises('game', {
   fallout: 'Fallout'
 })
 
-// ---- أنمي ----
 defFranchises('anime', {
   naruto: 'ناروتو', onepiece: 'ون بيس', dragonball: 'دراغون بول', bleach: 'بليتش', aot: 'Attack on Titan',
   deathnote: 'Death Note', mha: 'My Hero Academia', demonslayer: 'Demon Slayer', hxh: 'Hunter x Hunter',
@@ -266,7 +242,6 @@ defFranchises('anime', {
   jujutsu: 'Jujutsu Kaisen', pokeanime: 'أنمي بوكيمون'
 })
 
-// ---- كرتون ----
 defFranchises('cartoon', {
   tomjerry: 'توم وجيري', spongebob: 'سبونج بوب', mickey: 'عالم ميكي ماوس', simpsons: 'عائلة سيمبسون',
   familyguy: 'Family Guy', looney: 'لوني تيونز', scooby: 'سكوبي دو', rickmorty: 'ريك ومورتي',
@@ -277,7 +252,6 @@ defFranchises('cartoon', {
   monsters: 'شركة المرعبين', cars: 'سيارات (Cars)', httyd: 'How to Train Your Dragon'
 })
 
-// ---- أفلام ومسلسلات ----
 defFranchises('movie', {
   starwars: 'حرب النجوم (Star Wars)', hogwarts: 'عالم هاري بوتر', lotr: 'سيد الخواتم', bond: 'جيمس بوند',
   potc: 'قراصنة الكاريبي', matrix: 'The Matrix', transformers: 'Transformers',
@@ -291,12 +265,11 @@ defFranchises('series', {
 })
 
 // ==================================================
-// الشخصيات (الاسم، الصفات)
+// الشخصيات
 // ==================================================
 
 const CHARACTERS = []
 
-// ---------- لاعبين كورة ----------
 CHARACTERS.push(
   ['محمد صلاح', 'real male alive young arab egyptian footballer athlete forward liverpool chelsea'],
   ['ليونيل ميسي', 'real male alive footballer athlete forward barca psg argentina worldcup'],
@@ -329,11 +302,8 @@ CHARACTERS.push(
   ['لويس سواريز', 'real male alive footballer athlete forward barca liverpool'],
   ['محمد النني', 'real male alive young arab egyptian footballer athlete midfielder arsenal'],
   ['مصطفى محمد', 'real male alive young arab egyptian footballer athlete forward zamalek'],
-  ['محمود تريزيجيه', 'real male alive young arab egyptian footballer athlete forward ahly']
-)
+  ['محمود تريزيجيه', 'real male alive young arab egyptian footballer athlete forward ahly'],
 
-// ---------- مطربين ----------
-CHARACTERS.push(
   ['عمرو دياب', 'real male alive arab egyptian singer hadaba'],
   ['تامر حسني', 'real male alive arab egyptian singer actor'],
   ['محمد منير', 'real male alive arab egyptian singer nubian'],
@@ -353,11 +323,8 @@ CHARACTERS.push(
   ['بيلي أيليش', 'real alive young singer'],
   ['إيمينيم', 'real male alive singer rapper'],
   ['إلفيس بريسلي', 'real male old singer'],
-  ['إد شيران', 'real male alive singer']
-)
+  ['إد شيران', 'real male alive singer'],
 
-// ---------- ممثلين ----------
-CHARACTERS.push(
   ['محمد رمضان', 'real male alive arab egyptian actor singer rapper'],
   ['أحمد مكي', 'real male alive arab egyptian actor singer comedian rapper'],
   ['عادل إمام', 'real male old alive arab egyptian actor comedian'],
@@ -384,11 +351,8 @@ CHARACTERS.push(
   ['سكارليت جوهانسون', 'real alive actor hollywood blackwidow'],
   ['روبرت داوني جونيور', 'real male alive actor hollywood ironactor'],
   ['روان أتكينسون', 'real male alive actor comedian beanactor'],
-  ['دوين جونسون', 'real male alive actor athlete wrestler hollywood']
-)
+  ['دوين جونسون', 'real male alive actor athlete wrestler hollywood'],
 
-// ---------- رياضيين تانيين ----------
-CHARACTERS.push(
   ['محمد علي كلاي', 'real male athlete boxing retired'],
   ['مايك تايسون', 'real male alive athlete boxing retired'],
   ['مايكل جوردان', 'real male alive athlete basketball retired'],
@@ -403,11 +367,8 @@ CHARACTERS.push(
   ['مايكل شوماخر', 'real male alive athlete racing retired'],
   ['جون سينا', 'real male alive actor athlete wrestler hollywood'],
   ['نور الشربيني', 'real alive arab egyptian athlete squash'],
-  ['علي فرج', 'real male alive arab egyptian athlete squash']
-)
+  ['علي فرج', 'real male alive arab egyptian athlete squash'],
 
-// ---------- سياسة وتاريخ ----------
-CHARACTERS.push(
   ['جمال عبد الناصر', 'real male old arab egyptian politician revolution'],
   ['أنور السادات', 'real male old arab egyptian politician peace'],
   ['حسني مبارك', 'real male old arab egyptian politician mubarak'],
@@ -419,11 +380,8 @@ CHARACTERS.push(
   ['المهاتما غاندي', 'real male old asian politician india'],
   ['نيلسون مانديلا', 'real male old politician southafrica nobel'],
   ['صلاح الدين الأيوبي', 'real male old arab politician'],
-  ['الإسكندر الأكبر', 'real male old politician']
-)
+  ['الإسكندر الأكبر', 'real male old politician'],
 
-// ---------- علماء وتقنية ----------
-CHARACTERS.push(
   ['ألبرت أينشتاين', 'real male old tech relativity nobel'],
   ['نيكولا تسلا', 'real male old tech ac'],
   ['إسحاق نيوتن', 'real male old tech gravity'],
@@ -434,11 +392,8 @@ CHARACTERS.push(
   ['بيل جيتس', 'real male alive tech microsoft'],
   ['مارك زوكربيرج', 'real male alive tech facebook'],
   ['ستيف جوبز', 'real male tech apple'],
-  ['جيف بيزوس', 'real male alive tech amazon']
-)
+  ['جيف بيزوس', 'real male alive tech amazon'],
 
-// ---------- كتّاب وفنانين وصناع محتوى ----------
-CHARACTERS.push(
   ['طه حسين', 'real male old arab egyptian writer blind'],
   ['نجيب محفوظ', 'real male old arab egyptian writer nobel'],
   ['وليم شكسبير', 'real male old writer shakespeare'],
@@ -448,11 +403,8 @@ CHARACTERS.push(
   ['لودفيج فان بيتهوفن', 'real male old artist deaf'],
   ['مستر بيست', 'real male alive young youtuber'],
   ['سبيد (IShowSpeed)', 'real male alive young youtuber siuu'],
-  ['الدحيح (أحمد الغندور)', 'real male alive young arab egyptian youtuber educational']
-)
+  ['الدحيح (أحمد الغندور)', 'real male alive young arab egyptian youtuber educational'],
 
-// ---------- أنمي ----------
-CHARACTERS.push(
   ['ناروتو أوزوماكي', 'male anime naruto hero powers ninja blond orange kid young'],
   ['ساسكي أوتشيها', 'male anime naruto powers ninja black kid young sword'],
   ['كاكاشي هاتاكي', 'male anime naruto hero powers ninja mask whitehair young'],
@@ -474,11 +426,8 @@ CHARACTERS.push(
   ['شين شان', 'male anime shinchan kid red yellow'],
   ['ساتورو غوجو', 'male anime jujutsu hero powers whitehair mask blue'],
   ['سوكونا', 'male anime jujutsu villain powers monster nonhuman pink pinkhair'],
-  ['إيتادوري يوجي', 'male anime jujutsu hero kid pinkhair young powers']
-)
+  ['إيتادوري يوجي', 'male anime jujutsu hero kid pinkhair young powers'],
 
-// ---------- ألعاب ----------
-CHARACTERS.push(
   ['كريتوس', 'male game gow hero powers axe soldier red'],
   ['ماريو', 'male game mario hero red hat'],
   ['لويجي', 'male game mario hero green hat'],
@@ -498,11 +447,8 @@ CHARACTERS.push(
   ['الأميرة زيلدا', 'game zelda princess hero blond'],
   ['إيزيو أوديتوري', 'male game assassins hero hood sword'],
   ['سوليد سنيك', 'male game metalgear hero soldier gun'],
-  ['دوم غاي', 'male game doom hero soldier gun green']
-)
+  ['دوم غاي', 'male game doom hero soldier gun green'],
 
-// ---------- كرتون ----------
-CHARACTERS.push(
   ['توم (القط)', 'male cartoon tomjerry animal nonhuman cat'],
   ['جيري (الفأر)', 'male cartoon tomjerry animal nonhuman mouse brown'],
   ['سبونج بوب', 'male cartoon spongebob hero sea yellow'],
@@ -521,472 +467,4 @@ CHARACTERS.push(
   ['باز لايتيير', 'male cartoon toystory disney hero robot nonhuman green white'],
   ['شريك', 'male cartoon shrek dreamworks monster nonhuman green fat'],
   ['بو (كونغ فو باندا)', 'male cartoon kungfupanda dreamworks animal nonhuman fat black white hero'],
-  ['بيبا بيج', 'cartoon peppapig animal nonhuman pink kid'],
-  ['بن تينيسون', 'male cartoon ben10 hero kid powers'],
-  ['بابا سنفور', 'male cartoon smurfs hero blue red hat'],
-  ['ويني الدبدوب', 'male cartoon winnie animal nonhuman yellow fat red'],
-  ['باباي', 'male cartoon popeye hero old hat'],
-  ['النمر الوردي', 'male cartoon pinkpanther animal nonhuman pink'],
-  ['آنج (أفاتار)', 'male cartoon avatar hero kid powers orange'],
-  ['علاء الدين', 'male cartoon aladdin disney hero']
-)
-
-// ---------- أفلام ومسلسلات ----------
-CHARACTERS.push(
-  ['دارث فيدر', 'male movie starwars villain powers mask black cape'],
-  ['يودا', 'male movie starwars hero powers alien nonhuman green'],
-  ['هاري بوتر', 'male movie hogwarts hero powers kid glasses young'],
-  ['لورد فولدمورت', 'male movie hogwarts villain powers'],
-  ['هيرميوني غرينجر', 'movie hogwarts hero powers kid young'],
-  ['غاندالف', 'male movie lotr hero powers hat whitehair'],
-  ['جيمس بوند', 'male movie bond hero gun'],
-  ['جاك سبارو', 'male movie potc pirate hat sword'],
-  ['نيو (ماتريكس)', 'male movie matrix hero powers black glasses young'],
-  ['جون ويك', 'male movie johnwick hero gun black soldier'],
-  ['شرلوك هولمز', 'male movie sherlock detective hero hat old'],
-  ['باتمان', 'male movie dc superhero hero mask cape black batmanfilm detective'],
-  ['سوبرمان', 'male movie dc superhero hero powers cape blue red alien'],
-  ['الجوكر', 'male movie dc villain green greenhair'],
-  ['سبايدرمان', 'male movie marvel superhero hero powers mask red blue'],
-  ['آيرون مان', 'male movie marvel superhero hero red avengers'],
-  ['ثانوس', 'male movie marvel villain powers alien avengers'],
-  ['كابتن أمريكا', 'male movie marvel superhero hero soldier blue avengers'],
-  ['ثور', 'male movie marvel superhero hero powers blond cape avengers'],
-  ['هالك', 'male movie marvel superhero hero powers green avengers'],
-  ['جون سنو', 'male series got hero sword black cape'],
-  ['دينيريس تارجارين', 'series got prince powers whitehair'],
-  ['إليفن (Stranger Things)', 'series stranger hero powers kid young'],
-  ['برلين (لا كاسا دي بابيل)', 'male series moneyheist villain mask'],
-  ['والتر وايت', 'male series breakingbad villain hat glasses']
-)
-
-// ==================================================
-// الشخصيات المتعلمة
-// ==================================================
-
-function loadLearned() {
-  try {
-    if (!fs.existsSync(LEARN_FILE)) return []
-    const data = JSON.parse(fs.readFileSync(LEARN_FILE, 'utf8'))
-    return Array.isArray(data) ? data : []
-  } catch {
-    return []
-  }
-}
-
-function saveLearned(list) {
-  fs.mkdirSync(path.dirname(LEARN_FILE), { recursive: true })
-  fs.writeFileSync(LEARN_FILE, JSON.stringify(list, null, 2))
-}
-
-function buildCharacters() {
-  const map = new Map()
-  for (const [name, traits] of CHARACTERS) {
-    map.set(name, new Set(traits.split(/\s+/).filter(Boolean)))
-  }
-  for (const item of loadLearned()) {
-    if (!item?.name || !Array.isArray(item.traits)) continue
-    const set = map.get(item.name) || new Set()
-    for (const t of item.traits) set.add(t)
-    map.set(item.name, set)
-  }
-  return [...map.entries()].map(([name, traits]) => ({ name, traits }))
-}
-
-// ==================================================
-// الجلسات والمحرك
-// ==================================================
-
-const ANSWERS = { yes: 1, probably: 0.75, idk: null, probnot: 0.25, no: 0 }
-
-const BUTTONS = [
-  ['✅ نعم', 'yes'],
-  ['🤔 غالباً نعم', 'probably'],
-  ['❓ مش عارف', 'idk'],
-  ['🤨 غالباً لا', 'probnot'],
-  ['❌ لا', 'no'],
-  ['↩️ رجوع', 'back']
-]
-
-const TYPED = [
-  [/^(نعم|اه|آه|ايوه|أيوه|ايوا|أيوا|yes|y)$/i, 'yes'],
-  [/^(لا|لأ|no|n)$/i, 'no'],
-  [/^(مش عارف|معرفش|مش عارفه|لا اعرف|لا أعرف|idk)$/i, 'idk'],
-  [/^(غالبا نعم|غالباً نعم|ممكن|يمكن|احتمال)$/i, 'probably'],
-  [/^(غالبا لا|غالباً لا|مش اوي|مش أوي)$/i, 'probnot'],
-  [/^(رجوع|ارجع|back)$/i, 'back'],
-  [/^(صح|صحيح|right)$/i, 'right'],
-  [/^(غلط|خطأ|خطا|wrong)$/i, 'wrong']
-]
-
-const NUMBER_ASK = { 1: 'yes', 2: 'probably', 3: 'idk', 4: 'probnot', 5: 'no', 6: 'back' }
-const NUMBER_GUESS = { 1: 'right', 2: 'wrong' }
-
-const sessions = new Map()
-
-function endSession(chat) {
-  const s = sessions.get(chat)
-  if (s) clearTimeout(s.timer)
-  sessions.delete(chat)
-}
-
-function touch(session) {
-  clearTimeout(session.timer)
-  session.timer = setTimeout(() => sessions.delete(session.chat), SESSION_TTL)
-}
-
-function newSession(chat, owner) {
-  const session = {
-    chat,
-    owner,
-    answers: new Map(), // key -> 1 | 0.75 | 0.25 | 0
-    asked: new Set(),
-    history: [],        // [{ key, value }] (value ممكن تكون null لـ "مش عارف")
-    excluded: new Set(),
-    wrong: 0,
-    qCount: 0,
-    current: null,
-    state: 'ask',       // ask | guess | learn
-    guess: null,
-    chars: buildCharacters(),
-    timer: null
-  }
-  touch(session)
-  return session
-}
-
-// احتمالية كل شخصية بناءً على الإجابات
-function computeProbs(session) {
-  const logs = session.chars.map(c => {
-    if (session.excluded.has(c.name)) return -Infinity
-    let lp = 0
-    for (const [key, a] of session.answers) {
-      const has = c.traits.has(key)
-      const L = has ? a * LIKE_MATCH + (1 - a) * LIKE_MISS : (1 - a) * LIKE_MATCH + a * LIKE_MISS
-      lp += Math.log(L)
-    }
-    return lp
-  })
-  const finite = logs.filter(Number.isFinite)
-  if (!finite.length) return logs.map(() => 0)
-  const max = Math.max(...finite)
-  const ex = logs.map(v => (Number.isFinite(v) ? Math.exp(v - max) : 0))
-  const sum = ex.reduce((x, y) => x + y, 0)
-  return ex.map(v => v / sum)
-}
-
-function pickNextQuestion(session, probs) {
-  // كتلة الاحتمال لكل صفة
-  const mass = {}
-  session.chars.forEach((c, i) => {
-    const p = probs[i]
-    if (p < 1e-9) return
-    for (const t of c.traits) mass[t] = (mass[t] || 0) + p
-  })
-
-  const allowed = key => {
-    const parent = Q[key].parent
-    if (!parent) return true
-    if (parent.startsWith('!')) return 1 - (mass[parent.slice(1)] || 0) >= 0.2
-    return (mass[parent] || 0) >= 0.2
-  }
-
-  const candidates = []
-  for (const key of Object.keys(Q)) {
-    if (session.asked.has(key)) continue
-    const m = mass[key] || 0
-    if (m <= 0.03 || m >= 0.97) continue
-    if (!allowed(key)) continue
-    candidates.push({ key, score: Math.abs(m - 0.5) })
-  }
-  if (!candidates.length) return null
-  candidates.sort((a, b) => a.score - b.score)
-  const top = candidates.slice(0, 3)
-  return top[Math.floor(Math.random() * top.length)].key
-}
-
-// ==================================================
-// الإرسال
-// ==================================================
-
-let imageBuffer
-function getImage() {
-  if (imageBuffer !== undefined) return imageBuffer
-  try {
-    imageBuffer = fs.existsSync(IMAGE) ? fs.readFileSync(IMAGE) : null
-  } catch {
-    imageBuffer = null
-  }
-  return imageBuffer
-}
-
-async function sendButtons(conn, chat, body, options) {
-  const text = String(body)
-  try {
-    let header = { hasMediaAttachment: false, title: TITLE }
-    const img = getImage()
-    if (img) {
-      const media = await prepareWAMessageMedia({ image: img }, { upload: conn.waUploadToServer })
-      header = { hasMediaAttachment: true, title: TITLE, imageMessage: media.imageMessage }
-    }
-
-    const interactiveMessage = proto.Message.InteractiveMessage.fromObject({
-      body: { text },
-      footer: { text: FOOTER },
-      header,
-      nativeFlowMessage: {
-        buttons: options.map(([label, id]) => ({
-          name: 'quick_reply',
-          buttonParamsJson: JSON.stringify({ display_text: label, id: PREFIX + id })
-        }))
-      }
-    })
-
-    const msg = generateWAMessageFromContent(chat, {
-      viewOnceMessage: {
-        message: {
-          messageContextInfo: { deviceListMetadata: {}, deviceListMetadataVersion: 2 },
-          interactiveMessage
-        }
-      }
-    }, { userJid: conn.user?.id || conn.user?.jid })
-
-    const relayOpts = { messageId: msg.key.id }
-    if (!String(chat).endsWith('@g.us')) {
-      relayOpts.additionalNodes = [
-        { tag: 'biz', attrs: {}, content: [{ tag: 'interactive', attrs: { type: 'native_flow', v: '1' }, content: [{ tag: 'native_flow', attrs: { v: '9', name: 'mixed' } }] }] },
-        { tag: 'bot', attrs: { biz_bot: '1' } }
-      ]
-    }
-    await conn.relayMessage(chat, msg.message, relayOpts)
-    return
-  } catch (e) {
-    console.error('[مارد] الأزرار فشلت، نص عادي:', e?.message)
-  }
-
-  // نص عادي: الإجابة برقم أو كلمة
-  const lines = options.map(([label], i) => `${i + 1}. ${label}`)
-  await conn.sendMessage(chat, { text: `${text}\n\n${lines.join('\n')}\n\n✍️ اكتب رقم الإجابة أو الكلمة\n\n${FOOTER}` })
-}
-
-const say = (conn, chat, text) => conn.sendMessage(chat, { text })
-
-// ==================================================
-// سير اللعبة
-// ==================================================
-
-async function askQuestion(conn, session, key) {
-  session.current = key
-  session.asked.add(key)
-  session.qCount++
-  session.state = 'ask'
-  touch(session)
-  await sendButtons(
-    conn,
-    session.chat,
-    `${TITLE}\n\n❓ السؤال ${session.qCount}/${MAX_QUESTIONS}\n\n${Q[key].text}`,
-    BUTTONS
-  )
-}
-
-async function makeGuess(conn, session, probs) {
-  let best = -1
-  probs.forEach((p, i) => {
-    if (p > 0 && (best === -1 || p > probs[best])) best = i
-  })
-  if (best === -1 || probs[best] < 0.005) return giveUp(conn, session)
-
-  session.state = 'guess'
-  session.guess = session.chars[best].name
-  touch(session)
-  await sendButtons(
-    conn,
-    session.chat,
-    `${TITLE}\n\n🔮 أنا شايف إن شخصيتك هي:\n\n✨ *${session.guess}*\n\nصح؟`,
-    [['✅ صح', 'right'], ['❌ غلط', 'wrong']]
-  )
-}
-
-async function giveUp(conn, session) {
-  session.state = 'learn'
-  touch(session)
-  await say(conn, session.chat,
-    `${TITLE}\n\n😔 غلبتني المرة دي!\n\nعلّمني شخصيتك عشان أعرفها بعد كده:\n*.مارد هو <اسم الشخصية>*\n\n${FOOTER}`
-  )
-}
-
-async function decide(conn, session) {
-  const probs = computeProbs(session)
-  const top = Math.max(0, ...probs)
-
-  if (session.qCount >= MAX_QUESTIONS) return makeGuess(conn, session, probs)
-  if (session.qCount >= MIN_QUESTIONS && top >= GUESS_CONFIDENCE) return makeGuess(conn, session, probs)
-
-  const key = pickNextQuestion(session, probs)
-  if (!key) return makeGuess(conn, session, probs)
-  return askQuestion(conn, session, key)
-}
-
-async function onAnswer(conn, session, ans) {
-  touch(session)
-
-  /* ---- مرحلة التخمين ---- */
-  if (session.state === 'guess') {
-    if (ans === 'right') {
-      const n = session.qCount
-      const name = session.guess
-      endSession(session.chat)
-      return say(conn, session.chat,
-        `${TITLE}\n\n🎉 عرفتها! كانت *${name}*\nبعد ${n} سؤال 🧞\n\nاكتب *.مارد* للعب تاني.\n\n${FOOTER}`
-      )
-    }
-    if (ans === 'wrong') {
-      session.excluded.add(session.guess)
-      session.wrong++
-      const left = session.chars.filter(c => !session.excluded.has(c.name)).length
-      if (session.wrong >= MAX_WRONG || left === 0) return giveUp(conn, session)
-      await say(conn, session.chat, '🤔 غلطت.. هكمل أسأل شوية.')
-      return decide(conn, session)
-    }
-    return
-  }
-
-  if (session.state !== 'ask') return
-
-  /* ---- رجوع ---- */
-  if (ans === 'back') {
-    const last = session.history.pop()
-    if (!last) return say(conn, session.chat, '↩️ مفيش سؤال قبل ده.')
-    session.answers.delete(last.key)
-    session.asked.delete(last.key)
-    session.qCount = Math.max(0, session.qCount - 1)
-    // السؤال الحالي (اللي لسه ما اتجاوبش) يرجع كمان
-    if (session.current) session.asked.delete(session.current)
-    session.qCount = Math.max(0, session.qCount - 1)
-    return askQuestion(conn, session, last.key)
-  }
-
-  if (!(ans in ANSWERS)) return
-
-  const value = ANSWERS[ans]
-  const key = session.current
-  if (!key) return
-  if (value !== null) session.answers.set(key, value)
-  session.history.push({ key, value })
-  session.current = null
-  return decide(conn, session)
-}
-
-// ==================================================
-// استخراج الضغطة من أي نوع رد
-// ==================================================
-
-function unwrap(message) {
-  let msg = message || {}
-  msg = msg.ephemeralMessage?.message || msg
-  msg = msg.viewOnceMessage?.message || msg
-  msg = msg.viewOnceMessageV2?.message || msg
-  msg = msg.documentWithCaptionMessage?.message || msg
-  return msg
-}
-
-function extractChoice(message) {
-  const msg = unwrap(message)
-  const flow = msg.interactiveResponseMessage?.nativeFlowResponseMessage
-  if (flow?.paramsJson) {
-    try {
-      const p = JSON.parse(flow.paramsJson)
-      const id = p?.id ?? p?.selectedId ?? p?.selected_id
-      if (id != null) return String(id)
-    } catch {}
-  }
-  if (msg.buttonsResponseMessage) return msg.buttonsResponseMessage.selectedButtonId
-  if (msg.listResponseMessage) return msg.listResponseMessage.singleSelectReply?.selectedRowId
-  if (msg.templateButtonReplyMessage) return msg.templateButtonReplyMessage.selectedId
-  return null
-}
-
-// ==================================================
-// الأمر
-// ==================================================
-
-let handler = async (m, { conn, args = [] }) => {
-  const chat = m.chat
-  const sub = String(args[0] || '').trim()
-
-  /* ---- وقف ---- */
-  if (/^(وقف|stop|انهاء|إنهاء)$/i.test(sub)) {
-    if (!sessions.has(chat)) return say(conn, chat, 'مفيش لعبة شغالة 🧞')
-    endSession(chat)
-    return say(conn, chat, '🧞 تمام، وقفت اللعبة.')
-  }
-
-  /* ---- تعليم ---- */
-  if (/^(هو|هي)$/i.test(sub)) {
-    const session = sessions.get(chat)
-    const name = args.slice(1).join(' ').trim()
-    if (!session || session.state !== 'learn') {
-      return say(conn, chat, 'التعليم بيشتغل بس بعد ما أخسر. العب الأول بـ *.مارد*')
-    }
-    if (!name) return say(conn, chat, 'اكتب الاسم: *.مارد هو <اسم الشخصية>*')
-
-    const traits = [...session.answers].filter(([, a]) => a >= 0.75).map(([k]) => k)
-    const learned = loadLearned()
-    const existing = learned.find(x => x.name === name)
-    if (existing) existing.traits = [...new Set([...existing.traits, ...traits])]
-    else learned.push({ name, traits })
-    saveLearned(learned)
-    endSession(chat)
-    return say(conn, chat, `${TITLE}\n\n✅ اتعلمت *${name}*! المرة الجاية هعرفها 🧞\n\n${FOOTER}`)
-  }
-
-  /* ---- لعبة جديدة ---- */
-  if (sessions.has(chat)) {
-    return say(conn, chat, 'فيه لعبة شغالة في الشات ده 🧞\nلإنهائها اكتب: *.مارد وقف*')
-  }
-
-  const session = newSession(chat, m.sender)
-  sessions.set(chat, session)
-  await say(conn, chat,
-    `${TITLE}\n\n🧞 فكّر في شخصية (حقيقية أو خيالية) وأنا هخمّنها!\nجاوب على أسئلتي بالأزرار.\n\n${FOOTER}`
-  )
-  return decide(conn, session)
-}
-
-// استقبال الإجابات (أزرار أو كتابة) من صاحب اللعبة
-handler.before = async function (m, { conn }) {
-  try {
-    if (m.fromMe) return false
-    const session = sessions.get(m.chat)
-    if (!session || m.sender !== session.owner) return false
-
-    let ans = null
-    const id = extractChoice(m.message) || (typeof m.text === 'string' && m.text.startsWith(PREFIX) ? m.text : null)
-    if (id && String(id).startsWith(PREFIX)) {
-      ans = String(id).slice(PREFIX.length)
-    } else {
-      const text = String(m.text || '').trim()
-      if (!text || /^[./!#$]/.test(text)) return false
-      const numMap = session.state === 'guess' ? NUMBER_GUESS : NUMBER_ASK
-      if (numMap[text]) ans = numMap[text]
-      else {
-        for (const [re, a] of TYPED) {
-          if (re.test(text)) { ans = a; break }
-        }
-      }
-    }
-    if (!ans) return false
-
-    await onAnswer(conn, session, ans)
-    return true
-  } catch (e) {
-    console.error('[مارد] خطأ:', e)
-    return false
-  }
-}
-
-handler.help = ['مارد']
-handler.tags = ['game']
-handler.command = /^(مارد|المارد|akinator)$/i
-
-export default handler
+  ['بيبا
