@@ -173,9 +173,9 @@ async function sendQuestion(conn, jid, question, imgUrl, quoted) {
         { text: '☽✰ ¦ الـغـاء الـعـبة 🐤 ¦ ✰☾', id: '.مارد حذف' },
     ]
 
-    // الافتراضي: 7 أزرار منفصلة. لو واتساب مش بيعرضهم، حط في Railway متغير MARID_LIST=1
-    // وهيتحولوا لقايمة واحدة فيها الـ 7 بنفس الترتيب
-    const buttons = process.env.MARID_LIST === '1'
+    // الافتراضي: قايمة واحدة فيها الـ 7 اختيارات بنفس الترتيب (واتساب بيعرضها أكيد).
+    // لو عايز 7 أزرار منفصلة جرّب متغير MARID_BUTTONS=1 في Railway (ممكن واتساب ما يعرضهاش)
+    const buttons = process.env.MARID_BUTTONS !== '1'
         ? [{
             name: 'single_select',
             buttonParamsJson: JSON.stringify({
