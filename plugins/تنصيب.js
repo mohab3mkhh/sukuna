@@ -20,7 +20,7 @@ const __filename = fileURLToPath(import.meta.url)
 const __dirname  = path.dirname(__filename)
 
 const SUKUNA_IMG = 'https://i.ibb.co/M5gwTyJJ/upload-1774680667350.jpg'
-const PAIRING_CODE      = 'SUKUNAAA'   // لازم 8 حروف/أرقام بالظبط
+const PAIRING_CODE      = 'SUKUNAAA'   // لازم 8 حروف/أرقام بالظبط — اكتب null لو الربط فشل (هيستخدم كود عشوائي)
 const JADI_FOLDER       = path.join('Sessions', 'SubBot')
 const INSTALLS_FILE     = path.join(__dirname, 'yuki_installs.json')
 const STATUS_FILE       = path.join(__dirname, 'jadibot_status.json')
@@ -257,7 +257,7 @@ const TEXT = {
 ⟡ العدد: ${total} بوت`
 }
 
-// ✅ رسالة الكود بزرار نسخ (عن طريق lib/buttons.js)
+// ✅ رسالة الكود: أزرار + رسالة نص بالكود (عشان تلاقيه حتى لو الزرار مظهرش)
 async function sendCodeMessage(conn, m, code) {
   const fmt = code.match(/.{1,4}/g)?.join('-') || code
   try {
@@ -270,11 +270,9 @@ async function sendCodeMessage(conn, m, code) {
     })
   } catch (e) {
     console.log('[JADIBOT] buttons failed, fallback:', e.message)
-    await conn.sendMessage(m.chat, {
-      image:   { url: SUKUNA_IMG },
-      caption: `${TEXT.codeBody}\n\n📋 *الكود:* ${fmt}`
-    }, { quoted: m }).catch(() => {})
+    await conn.sendMessage(m.chat, { image: { url: SUKUNA_IMG }, caption: TEXT.codeBody }, { quoted: m }).catch(() => {})
   }
+  await conn.sendMessage(m.chat, { text: `🔑 *كود الربط:*\n\n\`\`\`${fmt}\`\`\`` }, { quoted: m }).catch(() => {})
 }
 
 async function sendConnectedMessage(conn, m) {
@@ -359,9 +357,19 @@ const handler = async (m, { conn, args, isOwner }) => {
           `╔═══━━━─── • ───━━━═══╗\n   『 𝙎 𝙐 𝙆 𝙐 𝙉 𝘼 』\n╚═══━━━─── • ───━━━═══╝\n⟡ انتظر ${msToTime(left)} قبل إعادة الاستخدام`, m)
     }
 
-    const who    = m.mentionedJid?.[0] || (m.fromMe ? conn.user.jid : m.sender)
-    if (!who) return
-    const userId = who.split('@')[0]
+    // ✅ .تنصيب 201016855501 → تنصيب على الرقم المكتوب (للمالك فقط)
+    const numArg = args.map(a => String(a).replace(/\D/g, '')).find(a => a.length >= 8 && a.length <= 15)
+    if (numArg && !isOwner)
+      return conn.reply(m.chat, '⟡ التنصيب على رقم آخر للمالك فقط، اكتب الأمر من غير رقم عشان تنصّب على رقمك', m)
+
+    let userId
+    if (numArg) {
+      userId = numArg
+    } else {
+      const who = m.mentionedJid?.[0] || (m.fromMe ? conn.user.jid : m.sender)
+      if (!who) return
+      userId = who.split('@')[0]
+    }
     if (!userId) return
 
     const liveCount = global.conns.filter(s => s?.user && s?.ws?.readyState === 1).length
@@ -586,7 +594,7 @@ export async function yukiJadiBot({ sessionPath, m, conn, userId, mode = 'code' 
         st.codeSent = true
         try {
           // ✅ كود ربط مخصص
-          const code = await sock.requestPairingCode(userId, PAIRING_CODE)
+          const code = await sock.requestPairingCode(userId, PAIRING_CODE || undefined)
           if (typeof code === 'string' && code.length > 0) {
             await sendCodeMessage(conn, m, code)
           } else {
