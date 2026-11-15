@@ -1,12 +1,9 @@
 // plugins/viewonce.js
 import { downloadContentFromMessage } from '@whiskeysockets/baileys'
 
-// ===== كاش محلي للرسايل =====
-// بيتملى تلقائياً من handler.js لو أضفت السطر ده:
-// if (m.message?.viewOnceMessageV2 || m.message?.viewOnceMessage) global._voCache?.set(m.key.id, m)
-const voCache = global._voCache || (global._voCache = new Map())
+if (!global._voCache) global._voCache = new Map()
 
-let handler = async (m, { conn }) => {
+const handler = async (m, { conn }) => {
   try {
     const contextInfo =
       m.message?.extendedTextMessage?.contextInfo ||
@@ -19,21 +16,9 @@ let handler = async (m, { conn }) => {
 
     const stanzaId = contextInfo.stanzaId
 
-    // ===== جلب الرسالة الكاملة من الكاش =====
-    let fullMsg = voCache.get(stanzaId) || null
+    // جلب الرسالة الكاملة من الكاش
+    const fullMsg = global._voCache.get(stanzaId) || null
 
-    // لو مش في الكاش، جرب من conn.chats
-    if (!fullMsg) {
-      try {
-        const chatMsgs = conn.chats?.[m.chat]?.messages
-        if (chatMsgs) {
-          fullMsg = [...(chatMsgs.values?.() || Object.values(chatMsgs))]
-            .find(msg => msg.key?.id === stanzaId) || null
-        }
-      } catch {}
-    }
-
-    // استخراج الرسالة
     let quotedMessage = fullMsg?.message || contextInfo.quotedMessage
 
     // unwrap viewOnce
@@ -55,11 +40,7 @@ let handler = async (m, { conn }) => {
     const mediaMsg = quotedMessage[mediaType]
 
     if (!mediaMsg?.mediaKey) {
-      return m.reply(
-        '❌ البوت لم يخزن الرسالة\n\n' +
-        '📌 *الحل:* أضف السطر ده في handler.js بعد سطر smsg:\n' +
-        '```if (m.message?.viewOnceMessageV2 || m.message?.viewOnceMessage || m.message?.viewOnceMessageV2Extension) global._voCache?.set(m.key.id, m)```'
-      )
+      return m.reply('⚠️ فشل التحميل — الرسالة قديمة أو تم حذفها')
     }
 
     await conn.sendMessage(m.chat, { react: { text: '👁️', key: m.key } })
@@ -93,6 +74,41 @@ let handler = async (m, { conn }) => {
     console.error('[عرض]', err.message)
     m.reply('⚠️ فشل التحميل — ' + err.message)
   }
+}
+
+// ══════════════════════════════════════════════════
+// يحفظ كل رسالة viewOnce بتيجي تلقائياً
+// ══════════════════════════════════════════════════
+handler.before = async function (m) {
+  try {
+    if (!m?.message) return false
+
+    const mtype = m.mtype || ''
+    const isViewOnce =
+      mtype === 'viewOnceMessageV2' ||
+      mtype === 'viewOnceMessage' ||
+      mtype === 'viewOnceMessageV2Extension' ||
+      !!m.message?.viewOnceMessageV2 ||
+      !!m.message?.viewOnceMessage ||
+      !!m.message?.viewOnceMessageV2Extension
+
+    if (!isViewOnce) return false
+
+    const msgId = m.id || m.key?.id
+    if (!msgId) return false
+
+    global._voCache.set(msgId, m)
+
+    // امسح القديم لو الكاش كبر
+    if (global._voCache.size > 200) {
+      const firstKey = global._voCache.keys().next().value
+      global._voCache.delete(firstKey)
+    }
+
+  } catch (e) {
+    console.error('[عرض before]', e.message)
+  }
+  return false
 }
 
 handler.help    = ['فضح', 'عرض']
