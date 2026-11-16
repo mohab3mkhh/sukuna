@@ -1,7 +1,7 @@
 /**
  * plugins/قران.js
  * ⛩️ SUKUNA BOT - .قران <اسم السورة> [اسم القارئ]
- * بحث يوتيوب عن تلاوة السورة → صوت عالي الجودة مقسّم للكبَر + نص السورة كامل (مقسم رسالتين كحد أقصى بدون قطع آيات)
+ * بحث يوتيوب عن التلاوة → صوت عالي الجودة مقسّم كرسائل صوتية عادية + نص السورة كملف PDF واحد
  */
 
 import axios from 'axios'
@@ -9,6 +9,7 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import nodeFetch from 'node-fetch'
+import PDFDocument from 'pdfkit'
 import { sendButtons, btn, getButtonId } from '../lib/buttons.js'
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36'
@@ -21,13 +22,10 @@ const HEADERS = {
 const PREFIX = 'quran_'
 const MAX_RESULTS = 8
 const MAX_VIDEO_MIN = 40          // نفضّل التلاوات الأقصر من 40 دقيقة في الوضع العادي
-const MAX_AUDIO_MB = 9            // حد الجزء الواحد الطبيعي
 const DOWNLOAD_TIME_LIMIT = 90000 
 const FULL_TIME_LIMIT = 30 * 60 * 1000   // وضع "كامل": لحد 30 دقيقة تحميل (للبقرة وغيرها)
 const FULL_MAX_HOURS = 3                 
-const DOC_THRESHOLD_MB = 15              
 const TMP = os.tmpdir()
-const MAX_SINGLE_MSG = 32000      // الحد الآمن للرسالة الواحدة في واتساب
 const CACHE_TTL = 30 * 60 * 1000
 
 if (!global.quranBtnCache) global.quranBtnCache = new Map()
@@ -105,33 +103,35 @@ async function getSurahAyahs(number) {
     return verses.map(v => ({ n: +String(v.verse_key).split(':')[1], text: v.text_uthmani.trim() }))
 }
 
-// دالة تقسيم نص السورة لرسالتين كحد أقصى بدون قطع أي آية في المنتصف
-function buildSurahTexts(surahName, ayahs, header) {
-    let fullText = header + `📖 *سورة ${surahName}*\n\n`
-    for (let i = 0; i < ayahs.length; i++) {
-        fullText += `${ayahs[i].text} ﴿${toArabicDigits(ayahs[i].n)}﴾ `
-    }
-    fullText = fullText.trim()
+async function createSurahPDF(surahName, ayahs, reciter, filePath) {
+    return new Promise((resolve, reject) => {
+        const doc = new PDFDocument({ margin: 50, size: 'A4' })
+        const stream = fs.createWriteStream(filePath)
+        doc.pipe(stream)
 
-    // لو السورة تكفي في رسالة واحدة
-    if (fullText.length <= MAX_SINGLE_MSG) {
-        return [fullText]
-    }
+        doc.fontSize(20).text(`سورة ${surahName}`, { align: 'center' })
+        if (reciter) {
+            doc.fontSize(12).text(`القارئ: ${reciter}`, { align: 'center' })
+        }
+        doc.moveDown(1.5)
 
-    // لو السورة طويلة جداً (مثل البقرة)، نقسمها لرسالتين بالظبط عند منتصف الآيات
-    let mid = Math.floor(ayahs.length / 2)
+        let fullSurahText = ''
+        for (let i = 0; i < ayahs.length; i++) {
+            fullSurahText += `${ayahs[i].text} ﴿${toArabicDigits(ayahs[i].n)}﴾ `
+        }
 
-    let part1 = header + `📖 *سورة ${surahName}* (الجزء 1/2):\n\n`
-    for (let i = 0; i < mid; i++) {
-        part1 += `${ayahs[i].text} ﴿${toArabicDigits(ayahs[i].n)}﴾ `
-    }
+        doc.fontSize(14).text(fullSurahText, {
+            align: 'justify',
+            lineGap: 8
+        })
 
-    let part2 = `📖 *سورة ${surahName}* (الجزء 2/2):\n\n`
-    for (let i = mid; i < ayahs.length; i++) {
-        part2 += `${ayahs[i].text} ﴿${toArabicDigits(ayahs[i].n)}﴾ `
-    }
+        doc.moveDown(2)
+        doc.fontSize(10).text('⛩️ SUKUNA BOT ⛩️', { align: 'center' })
 
-    return [part1.trim(), part2.trim()]
+        doc.end()
+        stream.on('finish', () => resolve(filePath))
+        stream.on('error', reject)
+    })
 }
 
 function durationToSec(str) {
@@ -333,7 +333,7 @@ async function sendSurah(m, conn, data) {
     }, { quoted: m })
 
     const textPromise = getSurahAyahs(surah.number).catch(e => {
-        console.error('[quran text]', e.message)
+        console.log('[quran text]', e.message)
         return null
     })
 
@@ -364,11 +364,8 @@ async function sendSurah(m, conn, data) {
         return conn.sendMessage(m.chat, { text: `❌ فشل تحميل السورة\n\n${audioError || ''}\n\n💡 جرب تلاوة تانية` }, { quoted: m })
     }
 
-    let asDoc = false
     let sentFiles = []
     if (audio) {
-        asDoc = audio.size > DOC_THRESHOLD_MB * 1024 * 1024
-
         try {
             sentFiles = await splitAudioFile(file, audio.size)
         } catch {
@@ -380,11 +377,13 @@ async function sendSurah(m, conn, data) {
                 const partSuffix = sentFiles.length > 1 ? ` (الجزء ${i + 1} من ${sentFiles.length})` : ''
                 const fileName = `سورة ${surah.name} - ${author}${partSuffix}.mp3`
                 
-                if (asDoc) {
-                    await conn.sendMessage(m.chat, { document: { url: sentFiles[i] }, mimetype: 'audio/mpeg', fileName }, { quoted: m })
-                } else {
-                    await conn.sendMessage(m.chat, { audio: { url: sentFiles[i] }, mimetype: 'audio/mpeg', fileName, ptt: false }, { quoted: m })
-                }
+                // إرسال الصوت دائماً كرسالة صوتية عادية (audio) وليس مستند (document)
+                await conn.sendMessage(m.chat, { 
+                    audio: { url: sentFiles[i] }, 
+                    mimetype: 'audio/mpeg', 
+                    fileName, 
+                    ptt: false 
+                }, { quoted: m })
             }
         } catch (e) {
             console.error('[quran send audio]', e.message)
@@ -401,18 +400,28 @@ async function sendSurah(m, conn, data) {
     }
 
     let header = `🎙️ *${author}*\n`
-    if (audio) header += `📦 ${(audio.size / 1048576).toFixed(1)} MB${sentFiles.length > 1 ? ` (مقسّم على ${sentFiles.length} أجزاء للجودة العالية)` : ''}\n`
+    if (audio) header += `📦 ${(audio.size / 1048576).toFixed(1)} MB${sentFiles.length > 1 ? ` (مقسّم على ${sentFiles.length} أجزاء صوتية)` : ''}\n`
     if (audio?.truncated) header += full
-        ? `⚠️ التحميل وقف قبل ما يخلص (الوقت طال)، والنص تحت كامل\n`
-        : `⚠️ الصوت جزء من السورة (عشان السرعة)، والنص تحت كامل\n`
-    if (!audio) header += `⚠️ تعذّر تحميل الصوت، دي السورة مكتوبة\n`
+        ? `⚠️ التحميل وقف قبل ما يخلص (الوقت طال)، والنص كملف PDF كامل\n`
+        : `⚠️ الصوت جزء من السورة (عشان السرعة)، والنص كملف PDF كامل\n`
+    if (!audio) header += `⚠️ تعذّر تحميل الصوت، سورة ${surah.name} مرفقة كملف PDF\n`
     header += '\n'
 
+    // إرسال النص كملف PDF واحد
     if (ayahs) {
-        const textChunks = buildSurahTexts(surah.name, ayahs, header)
-        for (let i = 0; i < textChunks.length; i++) {
-            const footer = (i === textChunks.length - 1) ? '\n\n⛩️ SUKUNA BOT ⛩️' : ''
-            await conn.sendMessage(m.chat, { text: textChunks[i] + footer }, { quoted: m })
+        const pdfPath = path.join(TMP, `surah_${surah.number}_${Date.now()}.pdf`)
+        try {
+            await createSurahPDF(surah.name, ayahs, author, pdfPath)
+            await conn.sendMessage(m.chat, {
+                document: { url: pdfPath },
+                mimetype: 'application/pdf',
+                fileName: `سورة ${surah.name} - ${author}.pdf`,
+                caption: `${header.trim()}\n\n⛩️ SUKUNA BOT ⛩️`
+            }, { quoted: m })
+            setTimeout(() => { try { fs.unlinkSync(pdfPath) } catch {} }, 5 * 60 * 1000)
+        } catch (err) {
+            console.error('[quran pdf error]', err)
+            await conn.sendMessage(m.chat, { text: `📖 *سورة ${surah.name}*\n${header}⚠️ تعذّر إنشاء ملف الـ PDF` }, { quoted: m })
         }
     } else {
         await conn.sendMessage(m.chat, { text: `📖 *سورة ${surah.name}*\n${header}⚠️ تعذّر جلب النص` }, { quoted: m })
