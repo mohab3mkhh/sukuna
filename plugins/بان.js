@@ -24,57 +24,78 @@ let handler = async (m, { conn, text, usedPrefix, command, args }) => {
 
     if (!who) throw '□ منشن الشخص أو أدخل رقمه'
 
-    const userNumber = who.split('@')[0].replace(/[^0-9]/g, '')
+    // ══════════════════════════════════════════
+    // جمع كل الصيغ الممكنة للـ JID
+    // ══════════════════════════════════════════
+    const allIds = new Set([who])
+
+    // decode
+    if (typeof conn.decodeJid === 'function') {
+        const d = conn.decodeJid(who)
+        if (d) allIds.add(d)
+    }
+
+    // لو lid — حوّله لرقم حقيقي
+    if (String(who).includes('@lid')) {
+        // طريقة 1: lidMapping
+        try {
+            const pn = await conn.signalRepository?.lidMapping?.getPNForLID?.(who)
+            if (pn) allIds.add(pn)
+        } catch {}
+
+        // طريقة 2: participants في الجروب
+        if (m.isGroup) {
+            try {
+                const meta = await conn.groupMetadata(m.chat)
+                const p = meta?.participants?.find(x =>
+                    x.id === who || x.lid === who ||
+                    String(x.id).replace(/:[0-9]+@/, '@') === who ||
+                    String(x.lid).replace(/:[0-9]+@/, '@') === who
+                )
+                if (p?.phoneNumber) allIds.add(p.phoneNumber)
+                if (p?.jid) allIds.add(p.jid)
+                if (p?.id)  allIds.add(p.id)
+                if (p?.lid) allIds.add(p.lid)
+            } catch {}
+        }
+    }
+
+    // أضف صيغتي @s.whatsapp.net و @lid لكل رقم موجود
+    for (const id of [...allIds]) {
+        const num = String(id).split('@')[0].replace(/[^0-9]/g, '')
+        if (num) {
+            allIds.add(num + '@s.whatsapp.net')
+            allIds.add(num + '@lid')
+        }
+        // بدون device suffix
+        const clean = String(id).replace(/:[0-9]+@/, '@')
+        if (clean !== id) allIds.add(clean)
+    }
+
+    const rawNum = String(who).split('@')[0].replace(/[^0-9]/g, '')
 
     // ══════════════════════════════════════════
     // حماية: الرقم الممنوع لا يقدر يستخدم الأمر
     // ══════════════════════════════════════════
-    const senderNumber = m.sender.split('@')[0].replace(/[^0-9]/g, '')
-    if (userNumber === bannedTarget || senderNumber === bannedTarget) {
-        const targetJid = `${bannedTarget}@s.whatsapp.net`
-        if (!users[targetJid]) users[targetJid] = {}
-        users[targetJid].banned = true
+    const senderNum = m.sender.split('@')[0].replace(/[^0-9]/g, '')
+    if ([...allIds].some(id => id.split('@')[0].replace(/[^0-9]/g, '') === bannedTarget) || senderNum === bannedTarget) {
+        const t = `${bannedTarget}@s.whatsapp.net`
+        if (!users[t]) users[t] = {}
+        users[t].banned = true
         await conn.sendMessage(devJid, { text: `✅ تم حظر الرقم المخصص تلقائيًا: +${bannedTarget}` })
         return
     }
 
     // ══════════════════════════════════════════
-    // الحظر — نحفظ على الـ JID بالظبط زي ما بيجي
-    // عشان handler.js بيعمل users[m.sender] مباشرة
+    // الحظر على كل الصيغ
     // ══════════════════════════════════════════
-
-    // 1. حفظ على الـ JID اللي جه من المنشن أو الرد (ده هو m.sender بتاعه)
-    if (!users[who]) users[who] = {}
-    users[who].banned = true
-
-    // 2. لو lid — حاول تجيب الـ JID الحقيقي وتحفظ عليه كمان
-    if (who.includes('@lid') && m.isGroup) {
-        try {
-            const meta = await conn.groupMetadata(m.chat)
-            const match = meta?.participants?.find(p =>
-                p.id === who || p.lid === who ||
-                String(p.id).replace(/:[0-9]+@/, '@') === who ||
-                String(p.lid).replace(/:[0-9]+@/, '@') === who
-            )
-            // حفظ على كل صيغة ممكنة
-            if (match?.jid)  { if (!users[match.jid])  users[match.jid]  = {}; users[match.jid].banned  = true }
-            if (match?.id)   { if (!users[match.id])   users[match.id]   = {}; users[match.id].banned   = true }
-            if (match?.lid)  { if (!users[match.lid])  users[match.lid]  = {}; users[match.lid].banned  = true }
-        } catch {}
-    }
-
-    // 3. حفظ على صيغة @s.whatsapp.net و @lid بنفس الرقم
-    if (userNumber) {
-        const sJid = userNumber + '@s.whatsapp.net'
-        const lJid = userNumber + '@lid'
-        if (!users[sJid]) users[sJid] = {}
-        users[sJid].banned = true
-        if (!users[lJid]) users[lJid] = {}
-        users[lJid].banned = true
+    for (const id of allIds) {
+        if (!users[id]) users[id] = {}
+        users[id].banned = true
     }
 
     await conn.sendMessage(m.chat, {
-        text: `⛔ @${userNumber} تم حظرك من استخدام البوت!`,
+        text: `⛔ @${rawNum} تم حظرك من استخدام البوت!`,
         mentions: [who]
     })
 }
