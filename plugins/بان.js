@@ -24,54 +24,13 @@ let handler = async (m, { conn, text, usedPrefix, command, args }) => {
 
     if (!who) throw '□ منشن الشخص أو أدخل رقمه'
 
-    // ══════════════════════════════════════════
-    // جمع كل صيغ الـ JID الممكنة
-    // ══════════════════════════════════════════
-    const allIds = new Set()
-    allIds.add(who)
-
-    // decoded
-    if (typeof conn.decodeJid === 'function') {
-        const decoded = conn.decodeJid(who)
-        if (decoded) allIds.add(decoded)
-    }
-
-    // لو lid — جيب الـ jid الحقيقي من الجروب
-    if (who.includes('@lid') && m.isGroup) {
-        try {
-            const meta = await conn.groupMetadata(m.chat)
-            const match = meta?.participants?.find(p =>
-                p.id === who || p.lid === who ||
-                String(p.id).replace(/:[0-9]+@/, '@') === who ||
-                String(p.lid).replace(/:[0-9]+@/, '@') === who
-            )
-            if (match?.jid) allIds.add(match.jid)
-            if (match?.id)  allIds.add(match.id)
-            if (match?.lid) allIds.add(match.lid)
-        } catch {}
-    }
-
-    // أضف الصيغتين: @s.whatsapp.net و @lid بنفس الرقم
-    const rawNum = who.split('@')[0].replace(/[^0-9]/g, '')
-    if (rawNum) {
-        allIds.add(rawNum + '@s.whatsapp.net')
-        allIds.add(rawNum + '@lid')
-    }
-
-    // أضف النسخة بدون device suffix مثل :7@
-    for (const id of [...allIds]) {
-        const clean = String(id).replace(/:[0-9]+@/, '@')
-        if (clean !== id) allIds.add(clean)
-    }
-
-    const displayWho = who
-    const userNumber = rawNum || who.split('@')[0]
+    const userNumber = who.split('@')[0].replace(/[^0-9]/g, '')
 
     // ══════════════════════════════════════════
     // حماية: الرقم الممنوع لا يقدر يستخدم الأمر
     // ══════════════════════════════════════════
     const senderNumber = m.sender.split('@')[0].replace(/[^0-9]/g, '')
-    if ([...allIds].some(id => id.split('@')[0].replace(/[^0-9]/g, '') === bannedTarget) || senderNumber === bannedTarget) {
+    if (userNumber === bannedTarget || senderNumber === bannedTarget) {
         const targetJid = `${bannedTarget}@s.whatsapp.net`
         if (!users[targetJid]) users[targetJid] = {}
         users[targetJid].banned = true
@@ -80,16 +39,43 @@ let handler = async (m, { conn, text, usedPrefix, command, args }) => {
     }
 
     // ══════════════════════════════════════════
-    // الحظر على كل الصيغ
+    // الحظر — نحفظ على الـ JID بالظبط زي ما بيجي
+    // عشان handler.js بيعمل users[m.sender] مباشرة
     // ══════════════════════════════════════════
-    for (const id of allIds) {
-        if (!users[id]) users[id] = {}
-        users[id].banned = true
+
+    // 1. حفظ على الـ JID اللي جه من المنشن أو الرد (ده هو m.sender بتاعه)
+    if (!users[who]) users[who] = {}
+    users[who].banned = true
+
+    // 2. لو lid — حاول تجيب الـ JID الحقيقي وتحفظ عليه كمان
+    if (who.includes('@lid') && m.isGroup) {
+        try {
+            const meta = await conn.groupMetadata(m.chat)
+            const match = meta?.participants?.find(p =>
+                p.id === who || p.lid === who ||
+                String(p.id).replace(/:[0-9]+@/, '@') === who ||
+                String(p.lid).replace(/:[0-9]+@/, '@') === who
+            )
+            // حفظ على كل صيغة ممكنة
+            if (match?.jid)  { if (!users[match.jid])  users[match.jid]  = {}; users[match.jid].banned  = true }
+            if (match?.id)   { if (!users[match.id])   users[match.id]   = {}; users[match.id].banned   = true }
+            if (match?.lid)  { if (!users[match.lid])  users[match.lid]  = {}; users[match.lid].banned  = true }
+        } catch {}
+    }
+
+    // 3. حفظ على صيغة @s.whatsapp.net و @lid بنفس الرقم
+    if (userNumber) {
+        const sJid = userNumber + '@s.whatsapp.net'
+        const lJid = userNumber + '@lid'
+        if (!users[sJid]) users[sJid] = {}
+        users[sJid].banned = true
+        if (!users[lJid]) users[lJid] = {}
+        users[lJid].banned = true
     }
 
     await conn.sendMessage(m.chat, {
         text: `⛔ @${userNumber} تم حظرك من استخدام البوت!`,
-        mentions: [displayWho]
+        mentions: [who]
     })
 }
 
