@@ -18,7 +18,6 @@ const normalizeJid = (jid) =>
 const box = (title, lines) =>
   `╭─「 ${title} 」\n${lines.map((l) => `│  ${l}`).join('\n')}\n╰──────────────`;
 
-// ✅ الأرقام المسموح ليها بس
 const allowedNumbers = ['201036547166', '201016855501'];
 
 const handler = async (m, { conn, usedPrefix, command }) => {
@@ -34,15 +33,32 @@ const handler = async (m, { conn, usedPrefix, command }) => {
     targetJid = normalizeJid(m.mentionedJid[0]);
   }
 
+  // لو lid — جيب الـ JID الحقيقي
+  if (targetJid && targetJid.includes('@lid')) {
+    try {
+      const pn = await conn.signalRepository?.lidMapping?.getPNForLID?.(targetJid)
+      if (pn) targetJid = normalizeJid(pn)
+    } catch {}
+
+    if (targetJid.includes('@lid')) {
+      try {
+        const meta = await conn.groupMetadata(groupId)
+        const p = meta?.participants?.find(x =>
+          normalizeJid(x.id) === targetJid ||
+          normalizeJid(x.lid || '') === targetJid
+        )
+        if (p?.jid) targetJid = normalizeJid(p.jid)
+        else if (p?.id && !p.id.includes('@lid')) targetJid = normalizeJid(p.id)
+      } catch {}
+    }
+  }
+
   const senderJid = normalizeJid(m.sender);
   const botJid = normalizeJid(conn.user.id);
 
-  // ✅ تحقق من المالك أول حاجة
-  const senderNumber = senderJid.replace('@s.whatsapp.net', '');
+  const senderNumber = senderJid.replace('@s.whatsapp.net', '').replace('@lid', '');
   if (!allowedNumbers.includes(senderNumber)) {
-    return m.reply(box('🚫 ممنوع', [
-      'هذا الأمر محجوز للمالك فقط!',
-    ]));
+    return m.reply(box('🚫 ممنوع', ['هذا الأمر محجوز للمالك فقط!']));
   }
 
   switch (command) {
@@ -77,23 +93,23 @@ const handler = async (m, { conn, usedPrefix, command }) => {
           ]));
       } catch {}
 
-      const realJid = targetJid;
       const muted = loadMuted();
       if (!muted[groupId]) muted[groupId] = [];
 
-      if (muted[groupId].includes(realJid))
+      if (muted[groupId].includes(targetJid))
         return m.reply(box('🔇 تنبيه', [
           `@${targetJid.replace('@s.whatsapp.net', '')} متكتم أصلاً!`,
           '',
           `💡 استخدم *${usedPrefix}فككتم* عشان ترفع الكتم.`,
         ]));
 
-      muted[groupId].push(realJid);
+      muted[groupId].push(targetJid);
       saveMuted(muted);
 
+      const displayNum = targetJid.replace('@s.whatsapp.net', '').replace('@lid', '')
       await conn.sendMessage(groupId, {
         text: box('🔇 تم الكتم', [
-          `👤  *العضو:* @${targetJid.replace('@s.whatsapp.net', '')}`,
+          `👤  *العضو:* @${displayNum}`,
           `👮  *بواسطة:* @${senderNumber}`,
           `📦  *الحالة:* متكتم الآن`,
           '',
@@ -126,9 +142,10 @@ const handler = async (m, { conn, usedPrefix, command }) => {
 
       saveMuted(muted);
 
+      const displayNum = targetJid.replace('@s.whatsapp.net', '').replace('@lid', '')
       await conn.sendMessage(groupId, {
         text: box('🔊 تم فك الكتم', [
-          `👤  *العضو:* @${targetJid.replace('@s.whatsapp.net', '')}`,
+          `👤  *العضو:* @${displayNum}`,
           `👮  *بواسطة:* @${senderNumber}`,
           `📦  *الحالة:* طليق يبعت زي ما يريد 😄`,
         ]),
@@ -138,6 +155,44 @@ const handler = async (m, { conn, usedPrefix, command }) => {
     }
   }
 };
+
+// ══════════════════════════════════════════════════
+// يمسح رسايل المتكتمين تلقائياً
+// ══════════════════════════════════════════════════
+handler.before = async function (m, { conn }) {
+  try {
+    if (!m?.isGroup || !m?.sender || !m?.chat) return false
+
+    const muted = loadMuted()
+    const groupMuted = muted[m.chat]
+    if (!groupMuted || groupMuted.length === 0) return false
+
+    const senderNorm = normalizeJid(m.sender)
+
+    // تحقق من كل الصيغ الممكنة للـ sender
+    const senderVariants = new Set([senderNorm])
+    const rawNum = senderNorm.split('@')[0].replace(/[^0-9]/g, '')
+    if (rawNum) {
+      senderVariants.add(rawNum + '@s.whatsapp.net')
+      senderVariants.add(rawNum + '@lid')
+    }
+
+    const isMuted = groupMuted.some(jid =>
+      senderVariants.has(normalizeJid(jid))
+    )
+
+    if (!isMuted) return false
+
+    // امسح الرسالة
+    await conn.sendMessage(m.chat, {
+      delete: m.key
+    })
+
+  } catch (e) {
+    console.error('[كتم before]', e.message)
+  }
+  return false
+}
 
 handler.help = ['كتم', 'فككتم'];
 handler.tags = ['group'];
