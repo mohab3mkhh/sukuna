@@ -100,7 +100,8 @@ function runYtDlp(args) {
   })
 }
 
-async function downloadAudio(videoId) {
+async function ytdlpAudio(videoId) {
+  log('cookies file:', fs.existsSync(COOKIES) ? 'found' : 'MISSING')
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shaghal-'))
   const out = path.join(dir, `${videoId}.%(ext)s`)
   const url = `https://www.youtube.com/watch?v=${videoId}`
@@ -135,6 +136,57 @@ async function downloadAudio(videoId) {
   } finally {
     try { fs.rmSync(dir, { recursive: true, force: true }) } catch {}
   }
+}
+
+// ━━━ مصدر cnv.cx (من غير cookies) ━━━
+const CNV_HEADERS = { 'User-Agent': UA, Origin: 'https://iframe.y2meta-uk.com', Referer: 'https://iframe.y2meta-uk.com/' }
+
+async function cnvAudio(videoId) {
+  const k = await axios.get(`https://cnv.cx/v2/sanity/key?id=${videoId}`, { headers: CNV_HEADERS, timeout: 20000 })
+  if (!k.data?.key) throw new Error('cnv: no key')
+  await new Promise(r => setTimeout(r, 1500))
+
+  const params = new URLSearchParams({
+    link: `https://youtu.be/${videoId}`,
+    format: 'mp3',
+    audioBitrate: '128',
+    videoQuality: '720',
+    filenameStyle: 'pretty',
+    vCodec: 'h264',
+  })
+  const r = await axios.post('https://cnv.cx/v2/converter', params.toString(), {
+    headers: { ...CNV_HEADERS, 'Content-Type': 'application/x-www-form-urlencoded', accept: '*/*', key: k.data.key },
+    timeout: 120000,
+    validateStatus: () => true,
+  })
+  if (!(r.status === 200 && r.data?.url)) throw new Error(r.data?.errorMsg || `cnv: status ${r.status}`)
+
+  for (let i = 0; i < 3; i++) {
+    try {
+      const d = await axios.get(r.data.url, {
+        headers: { 'User-Agent': UA, Referer: 'https://cnv.cx/', Origin: 'https://cnv.cx' },
+        responseType: 'arraybuffer',
+        timeout: 180000,
+        maxContentLength: MAX_MB * 1024 * 1024,
+        validateStatus: () => true,
+      })
+      if (d.status === 200 && d.data?.length > 20 * 1024) return Buffer.from(d.data)
+    } catch (e) { log('cnv dl:', e.message) }
+    await new Promise(r => setTimeout(r, 2000))
+  }
+  throw new Error('cnv: الملف فاضي')
+}
+
+async function downloadAudio(videoId) {
+  try {
+    const b = await cnvAudio(videoId)
+    log('✅ cnv.cx')
+    return b
+  } catch (e) { log('cnv.cx:', e.message) }
+
+  const b = await ytdlpAudio(videoId)
+  log('✅ yt-dlp')
+  return b
 }
 
 // ━━━ معالج الأزرار (اختيار أغنية من القائمة) ━━━
