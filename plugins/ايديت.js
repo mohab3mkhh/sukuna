@@ -531,29 +531,177 @@ async function sendPinterestList(conn, m, name) {
 //             معالج الأزرار + الأمر
 // ════════════════════════════════════════════
 
+// ── إنستجرام + فيسبوك (تحميل من رابط) ──
+
+const PLATFORMS = {
+    tiktok:    { label: '🎵 تيك توك',  desc: 'كاروسيل فيديوهات' },
+    youtube:   { label: '📺 يوتيوب',   desc: 'قايمة + اختيار جودة' },
+    pinterest: { label: '📌 بينترست',  desc: 'صور' },
+    instagram: { label: '📷 انستجرام', desc: 'تحميل من رابط' },
+    facebook:  { label: '📘 فيسبوك',   desc: 'تحميل من رابط' }
+}
+const LINK_RE = {
+    instagram: /instagram\.com/i,
+    facebook: /(facebook\.com|fb\.watch|fb\.com)/i
+}
+const MENU_IMAGE_URL = 'https://i.ibb.co/F4CNxTDR/2f5c033d8cb0.jpg'
+const PENDING_TTL = 5 * 60 * 1000
+
+if (!global.editPending) global.editPending = new Map()
+
+async function facebookDownload(url) {
+    const form = new URLSearchParams()
+    form.append('q', url)
+    form.append('vt', 'home')
+
+    const response = await axios.post('https://yt5s.io/api/ajaxSearch', form, {
+        headers: {
+            'Accept': 'application/json',
+            'X-Requested-With': 'XMLHttpRequest',
+            'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        timeout: 30000
+    })
+
+    if (response.data.status !== 'ok') throw new Error('فشل تحميل الفيديو: ' + response.data.message)
+
+    const cheerioMod = await import('cheerio')
+    const load = cheerioMod.load || cheerioMod.default?.load
+    const $ = load(response.data.data)
+
+    const qualities = []
+    $('table tbody tr').each((_, el) => {
+        const quality = $(el).find('.video-quality').text().trim()
+        const downloadLink = $(el).find('a.download-link-fb').attr('href')
+        if (quality && downloadLink) qualities.push({ quality, downloadLink })
+    })
+
+    const hd = qualities.find(v => v.quality.toLowerCase().includes('hd'))
+    const sd = qualities.find(v => v.quality.toLowerCase().includes('sd'))
+    const videoUrl = hd ? hd.downloadLink : sd ? sd.downloadLink : null
+    if (!videoUrl) throw new Error('لا يوجد رابط تحميل للفيديو.')
+    return { videoUrl }
+}
+
+async function handleLink(m, conn, platform, link) {
+    const react = async e => { try { await conn.sendMessage(m.chat, { react: { text: e, key: m.key } }) } catch {} }
+
+    if (platform === 'instagram') {
+        let mod
+        try { mod = await import('./انستا.js') } catch {
+            return conn.sendMessage(m.chat, { text: '❌ ملف انستا.js مش موجود في فولدر plugins' }, { quoted: m })
+        }
+        return mod.default(m, { conn, text: link, usedPrefix: '.', command: 'انستا' })
+    }
+
+    await react('⏳')
+    try {
+        const result = await facebookDownload(link)
+        await conn.sendMessage(m.chat, { video: { url: result.videoUrl }, mimetype: 'video/mp4', caption: '📘 Facebook\n\n⛩️ SUKUNA BOT ⛩️' }, { quoted: m })
+        await react('✅')
+    } catch (e) {
+        await react('❌')
+        await conn.sendMessage(m.chat, { text: '❌ ' + (e.message || e) }, { quoted: m })
+    }
+}
+
+// ── القائمة + تشغيل المنصة المختارة ──
+
+async function sendPlatformMenu(conn, m, name) {
+    const rows = Object.entries(PLATFORMS).map(([key, p]) => ({
+        title: p.label,
+        description: p.desc,
+        id: cacheBtn({ type: 'platform', platform: key, name })
+    }))
+
+    await sendButtons(conn, m.chat, {
+        title: '🎞️ ايديت',
+        subtitle: name,
+        text: `🎞️ *ايديت:* ${name}\n\n👇 اختار تبحث في انهي برنامج:`,
+        footer: '⛩️ SUKUNA BOT',
+        image: MENU_IMAGE_URL,
+        buttons: [btn.list('📡 اختر البرنامج', [{ title: 'البرامج', rows }])]
+    }, m)
+}
+
+async function runPlatform(conn, m, platform, name) {
+    const react = async e => { try { await conn.sendMessage(m.chat, { react: { text: e, key: m.key } }) } catch {} }
+
+    if (platform === 'instagram' || platform === 'facebook') {
+        global.editPending.set(`${m.chat}:${m.sender}`, { platform, createdAt: Date.now() })
+        const label = PLATFORMS[platform].label
+        return conn.sendMessage(m.chat, {
+            text: `${label}\n\n🔗 ابعت رابط الفيديو دلوقتي (خلال 5 دقايق)\n\n⚠️ انستجرام وفيسبوك مفيهمش بحث، بس تحميل من رابط`
+        }, { quoted: m })
+    }
+
+    await react('🔍')
+    await conn.sendMessage(m.chat, { text: `🔍 *جاري البحث في ${PLATFORMS[platform].label}:* ${name}` }, { quoted: m })
+
+    try {
+        if (platform === 'tiktok') await sendTikTokCarousel(conn, m, name)
+        else if (platform === 'youtube') await sendYouTubeList(conn, m, name)
+        else if (platform === 'pinterest') await sendPinterestList(conn, m, name)
+        await react('✅')
+    } catch (e) {
+        console.error(`[edit ${platform}]`, e.message)
+        await react('❌')
+        await conn.sendMessage(m.chat, {
+            text: `❌ ${e.message}\n\n💡 جرب برنامج تاني أو اسم تاني`
+        }, { quoted: m })
+    }
+}
+
+// ── معالج الأزرار + الأمر ──
+
 let before = async (m, { conn }) => {
     try {
         const buttonId = getButtonId(m)
-        if (!buttonId || !buttonId.startsWith(PREFIX)) return false
 
-        const data = global.editBtnCache.get(buttonId.slice(PREFIX.length))
-        if (!data) return false
-        global.editBtnCache.delete(buttonId.slice(PREFIX.length))
+        if (buttonId && buttonId.startsWith(PREFIX)) {
+            const key = buttonId.slice(PREFIX.length)
+            const data = global.editBtnCache.get(key)
+            if (!data) return false
 
-        if (data.type === 'quality_menu') {
-            await showQualityMenu(conn, m, data.videoId, data.title, data.author)
-            return true
+            // أزرار البرامج تفضل شغالة عشان تقدر تجرب أكتر من برنامج
+            if (data.type !== 'platform') global.editBtnCache.delete(key)
+
+            if (data.type === 'platform') {
+                await runPlatform(conn, m, data.platform, data.name)
+                return true
+            }
+            if (data.type === 'quality_menu') {
+                await showQualityMenu(conn, m, data.videoId, data.title, data.author)
+                return true
+            }
+            if (data.type === 'video' || data.type === 'audio') {
+                await handleQualitySelect(m, conn, data)
+                return true
+            }
+            if (data.type === 'pin') {
+                await conn.sendMessage(m.chat, {
+                    image: { url: data.url },
+                    caption: `📌 *الصورة رقم ${data.index + 1}*\n\n⛩️ SUKUNA BOT`
+                }, { quoted: m })
+                return true
+            }
+            return false
         }
-        if (data.type === 'video' || data.type === 'audio') {
-            await handleQualitySelect(m, conn, data)
-            return true
-        }
-        if (data.type === 'pin') {
-            await conn.sendMessage(m.chat, {
-                image: { url: data.url },
-                caption: `📌 *الصورة رقم ${data.index + 1}*\n\n⛩️ SUKUNA BOT`
-            }, { quoted: m })
-            return true
+
+        // استنى رابط انستا/فيسبوك بعد ما الشخص اختار البرنامج
+        const pKey = `${m.chat}:${m.sender}`
+        const pending = global.editPending.get(pKey)
+        if (pending) {
+            if (Date.now() - pending.createdAt > PENDING_TTL) {
+                global.editPending.delete(pKey)
+                return false
+            }
+            const link = (m.text || '').match(/https?:\/\/\S+/)?.[0]
+            if (link && LINK_RE[pending.platform].test(link)) {
+                global.editPending.delete(pKey)
+                await handleLink(m, conn, pending.platform, link)
+                return true
+            }
         }
         return false
     } catch (e) {
@@ -563,44 +711,23 @@ let before = async (m, { conn }) => {
 }
 
 let handler = async (m, { conn, args, usedPrefix, command }) => {
-    const chat = m.chat
-    const react = async emoji => { try { await conn.sendMessage(chat, { react: { text: emoji, key: m.key } }) } catch {} }
-
     if (!args[0]) {
-        await react('❌')
-        return conn.sendMessage(chat, {
-            text: `🎞️ *ايديت*\n\n${usedPrefix}${command} <اسم الشخصية>\n\n💡 مثال:\n${usedPrefix}${command} زورو\n${usedPrefix}${command} ناروتو\n\n⛩️ SUKUNA BOT ⛩️`
+        try { await conn.sendMessage(m.chat, { react: { text: '❌', key: m.key } }) } catch {}
+        return conn.sendMessage(m.chat, {
+            text: `🎞️ *ايديت*\n\n${usedPrefix}${command} <اسم الشخصية>\n\n💡 مثال:\n${usedPrefix}${command} زورو\n${usedPrefix}${command} ناروتو\n\nبعدها هتختار تبحث في انهي برنامج\n\n⛩️ SUKUNA BOT ⛩️`
         }, { quoted: m })
     }
 
-    const name = args.join(' ').trim()
-    await react('🔍')
-    await conn.sendMessage(chat, { text: `🔍 *جاري البحث عن اديتات:* ${name}\n📡 تيك توك + يوتيوب + بينترست` }, { quoted: m })
-
-    const results = await Promise.allSettled([
-        sendTikTokCarousel(conn, m, name),
-        sendYouTubeList(conn, m, name),
-        sendPinterestList(conn, m, name)
-    ])
-
-    results.forEach((r, i) => {
-        if (r.status === 'rejected') console.error(`[edit ${['tiktok', 'youtube', 'pinterest'][i]}]`, r.reason?.message)
-    })
-
-    if (results.every(r => r.status === 'rejected')) {
-        await react('❌')
-        return conn.sendMessage(chat, {
-            text: `❌ ما لقيت اديتات لـ *${name}*\n\n💡 جرب اسم تاني أو بالإنجليزي\n\n⛩️ SUKUNA BOT ⛩️`
-        }, { quoted: m })
-    }
-
-    await react('✅')
+    await sendPlatformMenu(conn, m, args.join(' ').trim())
 }
 
 setInterval(() => {
     const now = Date.now()
     for (const [k, v] of global.editBtnCache.entries()) {
         if (now - v.createdAt > CACHE_TTL) global.editBtnCache.delete(k)
+    }
+    for (const [k, v] of global.editPending.entries()) {
+        if (now - v.createdAt > PENDING_TTL) global.editPending.delete(k)
     }
 }, 5 * 60 * 1000)
 
