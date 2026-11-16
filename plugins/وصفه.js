@@ -4,71 +4,87 @@
  */
 
 let handler = async (m, { conn }) => {
-  // تحديد مين
-  let who;
-  const textMatch = m.text?.match(/@(\d+)/);
-  if (textMatch) {
-    who = textMatch[1] + '@s.whatsapp.net';
-  } else if (m.quoted) {
-    who = m.quoted.sender;
-  } else if (m.mentionedJid?.[0]) {
-    who = m.mentionedJid[0];
+  // ══════════════════════════════════════════
+  // تحديد مين — أولوية: منشن > رد > رقم مكتوب > أنت
+  // ══════════════════════════════════════════
+  let who
+
+  if (m.mentionedJid?.[0]) {
+    who = m.mentionedJid[0]
+  } else if (m.quoted?.sender) {
+    who = m.quoted.sender
   } else {
-    who = m.sender;
+    const textMatch = m.text?.match(/@?(\d{7,15})/)
+    if (textMatch) who = textMatch[1] + '@s.whatsapp.net'
   }
 
-  if (!who || who.endsWith('@lid')) who = m.sender;
+  // لو lid — حوّله لـ JID حقيقي
+  if (who?.includes('@lid')) {
+    try {
+      const pn = await conn.signalRepository?.lidMapping?.getPNForLID?.(who)
+      if (pn) who = pn
+    } catch {}
 
-  await conn.sendMessage(m.chat, { react: { text: '⏳', key: m.key } });
+    // لو لسه lid — جرب من الجروب
+    if (who?.includes('@lid') && m.isGroup) {
+      try {
+        const meta = await conn.groupMetadata(m.chat)
+        const p = meta?.participants?.find(x =>
+          x.id === who || x.lid === who ||
+          String(x.id).replace(/:[0-9]+@/, '@') === who ||
+          String(x.lid).replace(/:[0-9]+@/, '@') === who
+        )
+        if (p?.jid && !p.jid.includes('@lid')) who = p.jid
+        else if (p?.id && !p.id.includes('@lid')) who = p.id
+      } catch {}
+    }
+  }
 
-  const username = conn.getName(who) || who.split('@')[0];
+  // لو لسه مش واضح
+  if (!who || who.includes('@lid')) who = m.sender
 
-  // جرب كل الطرق الممكنة
-  let bio = null;
+  await conn.sendMessage(m.chat, { react: { text: '⏳', key: m.key } })
 
-  // طريقة 1: fetchStatus
+  const username = conn.getName(who) || who.split('@')[0]
+
+  // جيب البايو
+  let bio = null
+
+  try {
+    const res = await conn.fetchStatus(who)
+    const arr = Array.isArray(res) ? res : [res]
+    const found = arr.find(r => r?.status?.status?.trim())
+    bio = found?.status?.status?.trim() || null
+  } catch {}
+
   if (!bio) {
     try {
-      const res = await conn.fetchStatus(who);
-      const arr = Array.isArray(res) ? res : [res];
-      const found = arr.find(r => r?.status?.status?.trim());
-      bio = found?.status?.status?.trim() || null;
-      console.log('[وصفه] fetchStatus:', JSON.stringify(res));
-    } catch (e) { console.log('[وصفه] fetchStatus fail:', e.message); }
+      const res = await conn.getStatus(who)
+      const arr = Array.isArray(res) ? res : [res]
+      const found = arr.find(r => r?.status?.status?.trim())
+      bio = found?.status?.status?.trim() || null
+    } catch {}
   }
 
-  // طريقة 2: getStatus
   if (!bio) {
     try {
-      const res = await conn.getStatus(who);
-      const arr = Array.isArray(res) ? res : [res];
-      const found = arr.find(r => r?.status?.status?.trim());
-      bio = found?.status?.status?.trim() || null;
-      console.log('[وصفه] getStatus:', JSON.stringify(res));
-    } catch (e) { console.log('[وصفه] getStatus fail:', e.message); }
+      const contact = conn.contacts?.[who]
+      bio = contact?.status || contact?.statusMsg || null
+    } catch {}
   }
 
-  // طريقة 3: contacts
-  if (!bio) {
-    try {
-      const contact = conn.contacts?.[who];
-      bio = contact?.status || contact?.statusMsg || null;
-      console.log('[وصفه] contacts:', JSON.stringify(contact));
-    } catch (e) { console.log('[وصفه] contacts fail:', e.message); }
-  }
-
-  if (!bio) bio = '❌ لا يوجد وصف';
+  if (!bio) bio = '❌ لا يوجد وصف'
 
   // جيب الصورة
-  let ppBuffer = null;
+  let ppBuffer = null
   try {
-    const ppUrl = await conn.profilePictureUrl(who, 'image');
-    const res   = await fetch(ppUrl);
-    ppBuffer    = await res.buffer();
+    const ppUrl = await conn.profilePictureUrl(who, 'image')
+    const res   = await fetch(ppUrl)
+    ppBuffer    = await res.buffer()
   } catch {
     try {
-      const { promises: fs } = await import('fs');
-      ppBuffer = await fs.readFile('./src/sinfoto.jpg').catch(() => null);
+      const { promises: fs } = await import('fs')
+      ppBuffer = await fs.readFile('./src/sinfoto.jpg').catch(() => null)
     } catch {}
   }
 
@@ -82,18 +98,18 @@ let handler = async (m, { conn }) => {
 ┊:•⪼ *📝 الوصف:*
 ┊  ${bio}
 ✦───────✿───────✦
-  `.trim();
+  `.trim()
 
   await conn.sendMessage(m.chat, {
     ...(ppBuffer ? { image: ppBuffer } : { text: str }),
     ...(ppBuffer ? { caption: str } : {}),
     mentions: [who]
-  }, { quoted: m });
+  }, { quoted: m })
 
-  await conn.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
-};
+  await conn.sendMessage(m.chat, { react: { text: '✅', key: m.key } })
+}
 
-handler.help    = ['وصفه'];
-handler.tags    = ['info'];
-handler.command = ['وصفه', 'بايو', 'bio', 'status'];
-export default handler;
+handler.help    = ['وصفه']
+handler.tags    = ['info']
+handler.command = ['وصفه', 'بايو', 'bio', 'status']
+export default handler
