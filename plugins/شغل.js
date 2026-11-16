@@ -1,8 +1,16 @@
 import axios from 'axios'
+import fs from 'fs'
+import os from 'os'
+import path from 'path'
+import { execFile } from 'child_process'
 
 const CHANNEL_LINK = 'https://whatsapp.com/channel/0029VbBilcVAO7RNV5OlOI0j'
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
-const MAX_BYTES = 60 * 1024 * 1024
+const MAX_MB = 60
+
+const YTDLP = fs.existsSync('/root/.nix-profile/bin/yt-dlp') ? '/root/.nix-profile/bin/yt-dlp' : 'yt-dlp'
+const FFMPEG = fs.existsSync('/root/.nix-profile/bin/ffmpeg') ? '/root/.nix-profile/bin/ffmpeg' : 'ffmpeg'
+const COOKIES = '/app/cookies.txt'
 
 const log = (...a) => console.log('[شغل]', ...a)
 
@@ -32,115 +40,56 @@ async function searchVideo(query) {
   return null
 }
 
-// ━━━ 2) مصادر التحميل ━━━
-
-// cobalt.tools — بيشتغل بدون cookies
-async function cobaltSource(video) {
-  const r = await axios.post('https://cobalt.tools/api/json', {
-    url: video.url,
-    aFormat: 'mp3',
-    isAudioOnly: true
-  }, {
-    headers: {
-      'Content-Type': 'application/json',
-      'Accept': 'application/json',
-      'User-Agent': UA
-    },
-    timeout: 30000
+// ━━━ 2) التحميل عبر yt-dlp (بدل المواقع اللي ماتت) ━━━
+function runYtDlp(args) {
+  return new Promise((resolve, reject) => {
+    execFile(YTDLP, args, { timeout: 120000, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
+      if (err) return reject(new Error((stderr || err.message).toString().trim().split('\n').slice(-2).join(' ').slice(0, 300)))
+      resolve(stdout)
+    })
   })
-  const url = r.data?.url
-  if (!url) throw new Error('cobalt: no url — ' + JSON.stringify(r.data).slice(0, 100))
-  return { name: 'cobalt', url, mimetype: 'audio/mpeg' }
-}
-
-// y2mate API
-async function y2mateSource(video) {
-  const r1 = await axios.post('https://www.y2mate.com/mates/analyzeV2/ajax',
-    new URLSearchParams({ k_query: video.url, k_page: 'home', hl: 'en', q_auto: '0' }),
-    { headers: { 'User-Agent': UA, 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 }
-  )
-  const links = r1.data?.links?.mp3
-  if (!links) throw new Error('y2mate: no mp3 links')
-  const best = Object.values(links).find(x => x?.f === 'mp3') || Object.values(links)[0]
-  if (!best?.k) throw new Error('y2mate: no key')
-
-  const r2 = await axios.post('https://www.y2mate.com/mates/convertV2/index',
-    new URLSearchParams({ vid: video.id, k: best.k }),
-    { headers: { 'User-Agent': UA, 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 }
-  )
-  const url = r2.data?.dlink
-  if (!url) throw new Error('y2mate: no dlink')
-  return { name: 'y2mate', url, mimetype: 'audio/mpeg' }
-}
-
-// yt1s.com
-async function yt1sSource(video) {
-  const r1 = await axios.post('https://yt1s.com/api/ajaxSearch/index',
-    new URLSearchParams({ q: video.url, vt: 'mp3' }),
-    { headers: { 'User-Agent': UA, 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 }
-  )
-  const links = r1.data?.links?.mp3
-  if (!links) throw new Error('yt1s: no mp3 links')
-  const best = Object.values(links)[0]
-  if (!best?.k) throw new Error('yt1s: no key')
-
-  const r2 = await axios.post('https://yt1s.com/api/ajaxConvert/convert',
-    new URLSearchParams({ vid: video.id, k: best.k }),
-    { headers: { 'User-Agent': UA, 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 30000 }
-  )
-  const url = r2.data?.dlink
-  if (!url) throw new Error('yt1s: no dlink')
-  return { name: 'yt1s', url, mimetype: 'audio/mpeg' }
-}
-
-// musicdownloader.bot
-async function musicDlSource(video) {
-  const r = await axios.get(
-    `https://musicdownloader.bot/api/download?url=${encodeURIComponent(video.url)}`,
-    { headers: { 'User-Agent': UA }, timeout: 30000 }
-  )
-  const url = r.data?.url || r.data?.download_url || r.data?.link
-  if (!url) throw new Error('musicdl: no url')
-  return { name: 'musicdl', url, mimetype: 'audio/mpeg' }
-}
-
-// agatz
-async function agatzSource(video) {
-  const r = await axios.get(
-    `https://api.agatz.xyz/api/ytmp3?url=${encodeURIComponent(video.url)}`,
-    { headers: { 'User-Agent': UA }, timeout: 25000 }
-  )
-  const url = r.data?.download || r.data?.url || r.data?.data?.download
-  if (!url) throw new Error('agatz: no url — ' + JSON.stringify(r.data).slice(0, 100))
-  return { name: 'agatz', url, mimetype: 'audio/mpeg' }
 }
 
 async function getAudio(video) {
-  const sources = [cobaltSource, y2mateSource, yt1sSource, agatzSource, musicDlSource]
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shaghal-'))
+  const out = path.join(dir, `${video.id}.%(ext)s`)
 
-  for (const srcFn of sources) {
-    try {
-      const res = await srcFn(video)
-      let buffer = res.buffer
+  const base = [
+    '-x',
+    '--audio-format', 'mp3',
+    '--audio-quality', '5',
+    '--no-playlist',
+    '--no-warnings',
+    '--max-filesize', `${MAX_MB}M`,
+    '--ffmpeg-location', FFMPEG,
+    '-o', out,
+  ]
+  if (fs.existsSync(COOKIES)) base.push('--cookies', COOKIES)
 
-      if (!buffer) {
-        const r = await axios.get(res.url, {
-          responseType: 'arraybuffer',
-          timeout: 90000,
-          maxContentLength: MAX_BYTES,
-          headers: { 'User-Agent': UA },
-        })
-        buffer = Buffer.from(r.data)
+  // محاولة 1: الإعدادات العادية — محاولة 2: عميل android كبديل
+  const attempts = [
+    [...base, video.url],
+    [...base, '--extractor-args', 'youtube:player_client=android,web', video.url],
+  ]
+
+  try {
+    for (const args of attempts) {
+      try {
+        await runYtDlp(args)
+        const file = fs.readdirSync(dir).find(f => f.endsWith('.mp3'))
+        if (!file) throw new Error('no mp3 produced')
+        const buffer = fs.readFileSync(path.join(dir, file))
+        if (buffer.length < 20 * 1024) throw new Error('الملف صغير جداً / غير صالح')
+        log(`✅ yt-dlp (${(buffer.length / 1048576).toFixed(1)}MB)`)
+        return { buffer, mimetype: 'audio/mpeg' }
+      } catch (e) {
+        log(`❌ yt-dlp: ${e.message}`)
       }
-
-      if (buffer.length < 20 * 1024) throw new Error('الملف صغير جداً / غير صالح')
-      log(`✅ ${res.name} (${(buffer.length / 1048576).toFixed(1)}MB)`)
-      return { buffer, mimetype: res.mimetype }
-    } catch (e) {
-      log(`❌ ${e.message}`)
     }
+    return null
+  } finally {
+    try { fs.rmSync(dir, { recursive: true, force: true }) } catch {}
   }
-  return null
 }
 
 // ━━━ الأمر ━━━
@@ -180,8 +129,8 @@ const handler = async (m, { conn, text, usedPrefix, command }) => {
       audio: audio.buffer,
       mimetype: audio.mimetype,
       ptt: false,
-      fileName: `${safeName}.${audio.mimetype === 'audio/mpeg' ? 'mp3' : 'm4a'}`,
-    })
+      fileName: `${safeName}.mp3`,
+    }, { quoted: m })
     await react('✅')
   } catch (e) {
     console.error('[شغل] ERROR:', e)
