@@ -1,10 +1,17 @@
 /**
  * plugins/ايه.js
- * ⛩️ SUKUNA BOT - .ايه <اسم السورة> <رقم الآية>
- * جلب آية معينة نصاً (رسم عثماني) وصوتاً (مشاري العفاسي)
+ * ⛩️ SUKUNA BOT - .ايه <اسم السورة> [اسم الآية]
+ * جلب الآية المحددة: تحميل الصوت مؤقتاً وإرساله كملف صوتي يعمل بكفاءة + النص رسالة نصية
  */
 
 import fetch from 'node-fetch';
+import axios from 'axios';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+
+const TMP = os.tmpdir();
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36';
 
 const surahNames = [
   'الفاتحة', 'البقرة', 'آل عمران', 'النساء', 'المائدة', 'الأنعام', 'الأعراف', 'الأنفال', 'التوبة', 'يونس',
@@ -21,10 +28,12 @@ const surahNames = [
   'المسد', 'الإخلاص', 'الفلق', 'الناس',
 ];
 
-// توحيد الحروف عشان يقبل أشكال مختلفة من كتابة الاسم (بهمزة أو من غيرها.. إلخ)
+const toArabicDigits = n => String(n).replace(/\d/g, d => '٠١ي٢٣٤٥٦٧٨٩'[d]);
+
+// توحيد الحروف
 const normalizeArabic = (str = '') =>
   str
-    .replace(/[\u064B-\u065F\u0670]/g, '') // إزالة التشكيل
+    .replace(/[\u064B-\u065F\u0670]/g, '')
     .replace(/[إأآا]/g, 'ا')
     .replace(/ى/g, 'ي')
     .replace(/ة/g, 'ه')
@@ -40,7 +49,6 @@ const findSurahNumber = (name) => {
   return idx === -1 ? null : idx + 1;
 };
 
-// نجيب النص برسم عثماني (quran-uthmani) + الصوت في طلب واحد
 const fetchAyah = async (surahNumber, ayahNumber) => {
   const response = await fetch(
     `https://api.alquran.cloud/v1/ayah/${surahNumber}:${ayahNumber}/editions/quran-uthmani,ar.alafasy`
@@ -57,8 +65,23 @@ const fetchAyah = async (surahNumber, ayahNumber) => {
   };
 };
 
+// دالة تحميل الصوت على الجهاز مؤقتاً بنفس طريقة أمر سورة لضمان عمله
+async function downloadAudioToFile(url, filePath) {
+    const res = await axios.get(url, {
+        headers: { 'User-Agent': UA },
+        responseType: 'stream',
+        timeout: 30000
+    });
+    return new Promise((resolve, reject) => {
+        const writer = fs.createWriteStream(filePath);
+        res.data.pipe(writer);
+        writer.on('finish', resolve);
+        writer.on('error', reject);
+    });
+}
+
 const handler = async (m, { conn }) => {
-  const args = m.text.trim().split(/\s+/).slice(1); // إزالة كلمة الأمر "ايه"
+  const args = m.text.trim().split(/\s+/).slice(1);
 
   if (args.length < 2) {
     m.reply('❌ الصيغة غير صحيحة.\nمثال:\n.ايه البقرة 255');
@@ -79,28 +102,54 @@ const handler = async (m, { conn }) => {
     return;
   }
 
+  const react = async e => { try { await conn.sendMessage(m.chat, { react: { text: e, key: m.key } }) } catch {} }
+  await react('⏳');
+
+  const file = path.join(TMP, `ayah_${Date.now()}.mp3`);
+
   try {
     const ayah = await fetchAyah(surahNumber, ayahNumber);
+    const sName = surahNames[surahNumber - 1];
 
-    await m.reply(`📖 *${surahNames[surahNumber - 1]}* - الآية ${ayahNumber}:\n${ayah.textUthmani}`);
+    // تحميل ملف الصوت محلياً أولاً
+    await downloadAudioToFile(ayah.audio, file);
 
+    const fileName = `سورة ${sName} - آية ${ayahNumber}.mp3`;
+
+    // إرسال الصوت بنفس طريقة أمر سورة (بالملف المحلي المضمن)
     await conn.sendMessage(
       m.chat,
       {
-        audio: { url: ayah.audio },
+        audio: { url: file },
         mimetype: 'audio/mpeg',
-        filename: 'quran_audio.mp3',
-        ptt: true,
+        fileName: fileName,
+        ptt: false,
       },
       { quoted: m }
     );
+
+    // إرسال النص كرسالة نصية عادية في الشات
+    await conn.sendMessage(
+      m.chat,
+      {
+        text: `📖 *سورة ${sName}* - الآية (${ayahNumber})\n\n${ayah.textUthmani} ﴿${toArabicDigits(ayahNumber)}﴾\n\n⛩️ SUKUNA BOT ⛩️`
+      },
+      { quoted: m }
+    );
+
+    await react('✅');
+
   } catch (err) {
     console.error(err);
+    await react('❌');
     if (err.message === 'HTTP_404' || err.message === 'BAD_RESPONSE') {
       m.reply(`❌ رقم الآية ${ayahNumber} غير موجود في سورة ${surahNames[surahNumber - 1]}.`);
     } else {
       m.reply('❌ حصل خطأ أثناء جلب الآية، حاول تاني بعد شوية.');
     }
+  } finally {
+    // تنظيف الملف المؤقت بعد الإرسال بدقائق
+    setTimeout(() => { try { fs.unlinkSync(file) } catch {} }, 5 * 60 * 1000);
   }
 };
 
