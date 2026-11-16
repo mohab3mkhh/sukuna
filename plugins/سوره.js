@@ -1,10 +1,13 @@
 /**
  * plugins/قران.js
  * ⛩️ SUKUNA BOT - .قران <اسم السورة> [اسم القارئ]
- * بحث يوتيوب عن تلاوة السورة → صوت فقط (بحد أقصى عشان السرعة) + نص السورة كامل
+ * بحث يوتيوب عن تلاوة السورة → صوت عالي الجودة مقسّم للكبَر + نص السورة كامل (مقسم رسالتين كحد أقصى بدون قطع آيات)
  */
 
 import axios from 'axios'
+import fs from 'fs'
+import os from 'os'
+import path from 'path'
 import nodeFetch from 'node-fetch'
 import { sendButtons, btn, getButtonId } from '../lib/buttons.js'
 
@@ -17,10 +20,14 @@ const HEADERS = {
 
 const PREFIX = 'quran_'
 const MAX_RESULTS = 8
-const MAX_VIDEO_MIN = 40          // نفضّل التلاوات الأقصر من 40 دقيقة عشان التحويل ميطولش
-const MAX_AUDIO_MB = 9            // حد الصوت (~10 دقايق بجودة 128) عشان ميعلقش
-const DOWNLOAD_TIME_LIMIT = 90000 // لو التحميل عدّى 90 ثانية نبعت اللي نزل
-const TEXT_CHUNK = 3500
+const MAX_VIDEO_MIN = 40          // نفضّل التلاوات الأقصر من 40 دقيقة في الوضع العادي
+const MAX_AUDIO_MB = 9            // حد الجزء الواحد الطبيعي
+const DOWNLOAD_TIME_LIMIT = 90000 
+const FULL_TIME_LIMIT = 30 * 60 * 1000   // وضع "كامل": لحد 30 دقيقة تحميل (للبقرة وغيرها)
+const FULL_MAX_HOURS = 3                 
+const DOC_THRESHOLD_MB = 15              
+const TMP = os.tmpdir()
+const MAX_SINGLE_MSG = 32000      // الحد الآمن للرسالة الواحدة في واتساب
 const CACHE_TTL = 30 * 60 * 1000
 
 if (!global.quranBtnCache) global.quranBtnCache = new Map()
@@ -28,10 +35,6 @@ if (!global.quranSearchCache) global.quranSearchCache = new Map()
 
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 const genId = () => Math.random().toString(36).slice(2, 10)
-
-// ════════════════════════════════════════════
-//                قايمة السور
-// ════════════════════════════════════════════
 
 const SURAHS = ['الفاتحة', 'البقرة', 'آل عمران', 'النساء', 'المائدة', 'الأنعام', 'الأعراف', 'الأنفال', 'التوبة', 'يونس',
     'هود', 'يوسف', 'الرعد', 'إبراهيم', 'الحجر', 'النحل', 'الإسراء', 'الكهف', 'مريم', 'طه',
@@ -58,7 +61,6 @@ function normalize(s) {
         .trim()
 }
 
-// بيرجّع { number, name, rest } — rest = اسم القارئ (لو اتكتب)
 function parseQuery(args) {
     let text = normalize(args.join(' ')).replace(/^سوره\s+/, '')
     if (!text) return null
@@ -86,10 +88,6 @@ function parseQuery(args) {
     return { number: best.number, name: SURAHS[best.number - 1], rest: best.rest }
 }
 
-// ════════════════════════════════════════════
-//                نص السورة
-// ════════════════════════════════════════════
-
 const toArabicDigits = n => String(n).replace(/\d/g, d => '٠١٢٣٤٥٦٧٨٩'[d])
 
 async function getSurahAyahs(number) {
@@ -107,33 +105,42 @@ async function getSurahAyahs(number) {
     return verses.map(v => ({ n: +String(v.verse_key).split(':')[1], text: v.text_uthmani.trim() }))
 }
 
-// بيقسّم النص لرسايل (عند حدود الآيات) عشان واتساب ميرفضش الرسالة الطويلة
-function buildTextChunks(surahName, ayahs, header) {
-    const chunks = []
-    let cur = header + `📖 *سورة ${surahName}*\n\n`
-    for (const a of ayahs) {
-        const line = `${a.text} ﴿${toArabicDigits(a.n)}﴾ `
-        if (cur.length + line.length > TEXT_CHUNK) {
-            chunks.push(cur.trim())
-            cur = ''
-        }
-        cur += line
+// دالة تقسيم نص السورة لرسالتين كحد أقصى بدون قطع أي آية في المنتصف
+function buildSurahTexts(surahName, ayahs, header) {
+    let fullText = header + `📖 *سورة ${surahName}*\n\n`
+    for (let i = 0; i < ayahs.length; i++) {
+        fullText += `${ayahs[i].text} ﴿${toArabicDigits(ayahs[i].n)}﴾ `
     }
-    if (cur.trim()) chunks.push(cur.trim())
-    return chunks
-}
+    fullText = fullText.trim()
 
-// ════════════════════════════════════════════
-//                بحث يوتيوب
-// ════════════════════════════════════════════
+    // لو السورة تكفي في رسالة واحدة
+    if (fullText.length <= MAX_SINGLE_MSG) {
+        return [fullText]
+    }
+
+    // لو السورة طويلة جداً (مثل البقرة)، نقسمها لرسالتين بالظبط عند منتصف الآيات
+    let mid = Math.floor(ayahs.length / 2)
+
+    let part1 = header + `📖 *سورة ${surahName}* (الجزء 1/2):\n\n`
+    for (let i = 0; i < mid; i++) {
+        part1 += `${ayahs[i].text} ﴿${toArabicDigits(ayahs[i].n)}﴾ `
+    }
+
+    let part2 = `📖 *سورة ${surahName}* (الجزء 2/2):\n\n`
+    for (let i = mid; i < ayahs.length; i++) {
+        part2 += `${ayahs[i].text} ﴿${toArabicDigits(ayahs[i].n)}﴾ `
+    }
+
+    return [part1.trim(), part2.trim()]
+}
 
 function durationToSec(str) {
     if (!str) return 0
     return str.split(':').reverse().reduce((s, p, i) => s + (parseInt(p) || 0) * 60 ** i, 0)
 }
 
-async function searchYouTube(query) {
-    const key = query.toLowerCase().trim()
+async function searchYouTube(query, full = false) {
+    const key = query.toLowerCase().trim() + (full ? '|full' : '')
     const cached = global.quranSearchCache.get(key)
     if (cached && Date.now() - cached.time < CACHE_TTL) return cached.results
 
@@ -169,13 +176,17 @@ async function searchYouTube(query) {
         }
     }
 
-    // نفضّل التلاوات الأقصر عشان التحويل ميعلقش، ولو كلها طويلة ناخد الأقصر
     const maxSec = MAX_VIDEO_MIN * 60
     const short = all.filter(v => v.seconds > 0 && v.seconds <= maxSec)
-    const results = (short.length >= 3
-        ? short
-        : [...all].filter(v => v.seconds > 0).sort((a, b) => a.seconds - b.seconds)
-    ).slice(0, MAX_RESULTS)
+    let results
+    if (full) {
+        results = all.filter(v => v.seconds > 0 && v.seconds <= FULL_MAX_HOURS * 3600).slice(0, MAX_RESULTS)
+    } else {
+        results = (short.length >= 3
+            ? short
+            : [...all].filter(v => v.seconds > 0).sort((a, b) => a.seconds - b.seconds)
+        ).slice(0, MAX_RESULTS)
+    }
 
     global.quranSearchCache.set(key, { results, time: Date.now() })
     if (global.quranSearchCache.size > 50) global.quranSearchCache.delete(global.quranSearchCache.keys().next().value)
@@ -192,17 +203,13 @@ async function getThumbBuffer(url, fallback) {
     return null
 }
 
-// ════════════════════════════════════════════
-//            تحويل وتحميل الصوت (بحد أقصى)
-// ════════════════════════════════════════════
-
 async function getDownloadKey(videoId) {
     const r = await axios.get(`https://cnv.cx/v2/sanity/key?id=${videoId}`, { headers: HEADERS, timeout: 20000 })
     if (!r.data?.key) throw new Error('فشل جلب المفتاح')
     return r.data.key
 }
 
-async function convertToMp3(videoId) {
+async function convertToMp3(videoId, bitrate = '128', timeout = 120000) {
     const key = await getDownloadKey(videoId)
     await sleep(1500)
 
@@ -210,14 +217,14 @@ async function convertToMp3(videoId) {
         link: `https://youtu.be/${videoId}`,
         format: 'mp3',
         videoQuality: '720',
-        audioBitrate: '128',
+        audioBitrate: String(bitrate),
         filenameStyle: 'pretty',
         vCodec: 'h264'
     })
 
     const r = await axios.post('https://cnv.cx/v2/converter', params.toString(), {
         headers: { ...HEADERS, 'Content-Type': 'application/x-www-form-urlencoded', 'accept': '*/*', 'key': key },
-        timeout: 120000,
+        timeout,
         validateStatus: () => true
     })
 
@@ -226,8 +233,7 @@ async function convertToMp3(videoId) {
     throw new Error('فشل التحويل: ' + r.status)
 }
 
-// بيحمّل لحد الحد الأقصى بس ويقطع (MP3 بيشتغل عادي حتى لو اتقطع)
-async function downloadCapped(url, maxBytes = MAX_AUDIO_MB * 1024 * 1024) {
+async function downloadToFile(url, file, { maxBytes = Infinity, timeLimit = DOWNLOAD_TIME_LIMIT } = {}) {
     const r = await axios.get(url, {
         headers: { 'User-Agent': UA, 'Referer': 'https://cnv.cx/', 'Origin': 'https://cnv.cx' },
         responseType: 'stream',
@@ -238,39 +244,59 @@ async function downloadCapped(url, maxBytes = MAX_AUDIO_MB * 1024 * 1024) {
     if (r.status !== 200 && r.status !== 206) throw new Error('فشل تحميل الصوت: ' + r.status)
 
     return await new Promise((resolve, reject) => {
-        const chunks = []
+        const ws = fs.createWriteStream(file)
         let size = 0
         let done = false
 
-        const finish = (truncated) => {
+        const finish = (truncated, err) => {
             if (done) return
             done = true
             clearTimeout(timer)
-            try { r.data.destroy() } catch {}
-            if (size < 10000) return reject(new Error('الملف فاضي'))
-            resolve({ buffer: Buffer.concat(chunks), truncated })
+            try { r.data.unpipe(ws); r.data.destroy() } catch {}
+            ws.end(() => {
+                if (err) return reject(err)
+                if (size < 10000) return reject(new Error('الملف فاضي'))
+                resolve({ size, truncated })
+            })
         }
 
-        const timer = setTimeout(() => finish(true), DOWNLOAD_TIME_LIMIT)
+        const timer = setTimeout(() => finish(true), timeLimit)
 
         r.data.on('data', c => {
-            chunks.push(c)
             size += c.length
             if (size >= maxBytes) finish(true)
         })
         r.data.on('end', () => finish(false))
-        r.data.on('error', e => {
-            if (done) return
-            done = true
-            clearTimeout(timer)
-            reject(e)
-        })
+        r.data.on('error', e => finish(false, e))
+        ws.on('error', e => finish(false, e))
+        r.data.pipe(ws)
     })
 }
 
-// ════════════════════════════════════════════
-//                  الإرسال
-// ════════════════════════════════════════════
+async function splitAudioFile(filePath, totalSize) {
+    let parts = 1
+    if (totalSize > 35 * 1024 * 1024) {
+        parts = 4 // السور الكبرى مثل البقرة وآل عمران
+    } else if (totalSize > 9 * 1024 * 1024) {
+        parts = 2 // السور المتوسطة
+    }
+
+    if (parts === 1) return [filePath]
+
+    const buffer = fs.readFileSync(filePath)
+    const partSize = Math.floor(totalSize / parts)
+    const files = []
+
+    for (let i = 0; i < parts; i++) {
+        const partFile = `${filePath}_part${i + 1}.mp3`
+        const start = i * partSize
+        const end = (i === parts - 1) ? totalSize : (start + partSize)
+        fs.writeFileSync(partFile, buffer.slice(start, end))
+        files.push(partFile)
+    }
+
+    return files
+}
 
 function cacheBtn(data) {
     const id = genId()
@@ -278,11 +304,11 @@ function cacheBtn(data) {
     return PREFIX + id
 }
 
-async function sendResultsList(conn, m, surah, reciter, videos) {
+async function sendResultsList(conn, m, surah, reciter, videos, full = false) {
     const rows = videos.map((v, i) => ({
         title: `${i + 1}. ${v.title.slice(0, 50)}`,
         description: `🎙️ ${v.author} | ⏱️ ${v.duration}`,
-        id: cacheBtn({ videoId: v.id, title: v.title, author: v.author, surah })
+        id: cacheBtn({ videoId: v.id, title: v.title, author: v.author, surah, full })
     }))
 
     const thumb = await getThumbBuffer(videos[0].thumbnail, `https://i.ytimg.com/vi/${videos[0].id}/hqdefault.jpg`)
@@ -290,7 +316,7 @@ async function sendResultsList(conn, m, surah, reciter, videos) {
     await sendButtons(conn, m.chat, {
         title: '📖 القرآن الكريم',
         subtitle: `سورة ${surah.name}`,
-        text: `📖 *سورة ${surah.name}*${reciter ? `\n🎙️ ${reciter}` : ''}\n📊 *النتائج:* ${videos.length}\n\n👇 اختار التلاوة:`,
+        text: `📖 *سورة ${surah.name}*${reciter ? `\n🎙️ ${reciter}` : ''}${full ? '\n🎚️ *الوضع:* كامل' : ''}\n📊 *النتائج:* ${videos.length}\n\n👇 اختار التلاوة:`,
         footer: '⛩️ SUKUNA BOT',
         image: thumb || `https://i.ytimg.com/vi/${videos[0].id}/hqdefault.jpg`,
         buttons: [btn.list('🎧 اختر التلاوة', [{ title: 'التلاوات', rows }])]
@@ -298,26 +324,36 @@ async function sendResultsList(conn, m, surah, reciter, videos) {
 }
 
 async function sendSurah(m, conn, data) {
-    const { surah, videoId, title, author } = data
+    const { surah, videoId, author, full } = data
     const react = async e => { try { await conn.sendMessage(m.chat, { react: { text: e, key: m.key } }) } catch {} }
 
     await react('⏳')
-    const status = await conn.sendMessage(m.chat, { text: `⏳ *جاري تحضير سورة ${surah.name}...*` }, { quoted: m })
+    const status = await conn.sendMessage(m.chat, {
+        text: `⏳ *جاري تحضير سورة ${surah.name}...*${full ? '\n⚠️ وضع كامل: ممكن ياخد كام دقيقة' : ''}`
+    }, { quoted: m })
 
-    // النص بيتجاب مع الصوت في نفس الوقت
     const textPromise = getSurahAyahs(surah.number).catch(e => {
         console.error('[quran text]', e.message)
         return null
     })
 
+    const file = path.join(TMP, `quran_${Date.now()}.mp3`)
     let audio = null
     let audioError = null
     try {
-        const conv = await convertToMp3(videoId)
-        audio = await downloadCapped(conv.url)
+        let conv
+        const convTimeout = full ? 900000 : 120000
+        conv = await convertToMp3(videoId, '128', convTimeout)
+
+        if (full) {
+            audio = await downloadToFile(conv.url, file, { timeLimit: FULL_TIME_LIMIT })
+        } else {
+            audio = await downloadToFile(conv.url, file, { maxBytes: 150 * 1024 * 1024 })
+        }
     } catch (e) {
         console.error('[quran audio]', e.message)
         audioError = e.message
+        try { fs.unlinkSync(file) } catch {}
     }
 
     const ayahs = await textPromise
@@ -328,26 +364,55 @@ async function sendSurah(m, conn, data) {
         return conn.sendMessage(m.chat, { text: `❌ فشل تحميل السورة\n\n${audioError || ''}\n\n💡 جرب تلاوة تانية` }, { quoted: m })
     }
 
+    let asDoc = false
+    let sentFiles = []
     if (audio) {
-        await conn.sendMessage(m.chat, {
-            audio: audio.buffer,
-            mimetype: 'audio/mpeg',
-            fileName: `سورة ${surah.name} - ${author}.mp3`,
-            ptt: false
-        }, { quoted: m })
+        asDoc = audio.size > DOC_THRESHOLD_MB * 1024 * 1024
+
+        try {
+            sentFiles = await splitAudioFile(file, audio.size)
+        } catch {
+            sentFiles = [file]
+        }
+
+        try {
+            for (let i = 0; i < sentFiles.length; i++) {
+                const partSuffix = sentFiles.length > 1 ? ` (الجزء ${i + 1} من ${sentFiles.length})` : ''
+                const fileName = `سورة ${surah.name} - ${author}${partSuffix}.mp3`
+                
+                if (asDoc) {
+                    await conn.sendMessage(m.chat, { document: { url: sentFiles[i] }, mimetype: 'audio/mpeg', fileName }, { quoted: m })
+                } else {
+                    await conn.sendMessage(m.chat, { audio: { url: sentFiles[i] }, mimetype: 'audio/mpeg', fileName, ptt: false }, { quoted: m })
+                }
+            }
+        } catch (e) {
+            console.error('[quran send audio]', e.message)
+            audioError = e.message
+            audio = null
+        } finally {
+            setTimeout(() => { 
+                try { fs.unlinkSync(file) } catch {}
+                sentFiles.forEach(f => {
+                    if (f !== file) { try { fs.unlinkSync(f) } catch {} }
+                })
+            }, 5 * 60 * 1000)
+        }
     }
 
-    // الهيدر + النص كامل حتى لو الصوت مش كامل
     let header = `🎙️ *${author}*\n`
-    if (audio?.truncated) header += `⚠️ الصوت جزء من السورة (عشان السرعة)، والنص تحت كامل\n`
+    if (audio) header += `📦 ${(audio.size / 1048576).toFixed(1)} MB${sentFiles.length > 1 ? ` (مقسّم على ${sentFiles.length} أجزاء للجودة العالية)` : ''}\n`
+    if (audio?.truncated) header += full
+        ? `⚠️ التحميل وقف قبل ما يخلص (الوقت طال)، والنص تحت كامل\n`
+        : `⚠️ الصوت جزء من السورة (عشان السرعة)، والنص تحت كامل\n`
     if (!audio) header += `⚠️ تعذّر تحميل الصوت، دي السورة مكتوبة\n`
     header += '\n'
 
     if (ayahs) {
-        const chunks = buildTextChunks(surah.name, ayahs, header)
-        for (let i = 0; i < chunks.length; i++) {
-            await conn.sendMessage(m.chat, { text: chunks[i] + (i === chunks.length - 1 ? '\n\n⛩️ SUKUNA BOT ⛩️' : '') }, { quoted: i === 0 ? m : undefined })
-            if (i < chunks.length - 1) await sleep(700)
+        const textChunks = buildSurahTexts(surah.name, ayahs, header)
+        for (let i = 0; i < textChunks.length; i++) {
+            const footer = (i === textChunks.length - 1) ? '\n\n⛩️ SUKUNA BOT ⛩️' : ''
+            await conn.sendMessage(m.chat, { text: textChunks[i] + footer }, { quoted: m })
         }
     } else {
         await conn.sendMessage(m.chat, { text: `📖 *سورة ${surah.name}*\n${header}⚠️ تعذّر جلب النص` }, { quoted: m })
@@ -355,10 +420,6 @@ async function sendSurah(m, conn, data) {
 
     await react('✅')
 }
-
-// ════════════════════════════════════════════
-//             معالج الأزرار + الأمر
-// ════════════════════════════════════════════
 
 let before = async (m, { conn }) => {
     try {
@@ -383,11 +444,14 @@ let handler = async (m, { conn, args, usedPrefix, command }) => {
 
     if (!args[0]) {
         return conn.sendMessage(m.chat, {
-            text: `📖 *القرآن الكريم*\n\n${usedPrefix}${command} <اسم السورة> [اسم القارئ]\n\n💡 *أمثلة:*\n${usedPrefix}${command} الكهف\n${usedPrefix}${command} الملك مشاري العفاسي\n${usedPrefix}${command} 36\n\n⛩️ SUKUNA BOT ⛩️`
+            text: `📖 *القرآن الكريم*\n\n${usedPrefix}${command} <اسم السورة> [اسم القارئ]\n\n💡 *أمثلة:*\n${usedPrefix}${command} الكهف\n${usedPrefix}${command} الملك مشاري العفاسي\n${usedPrefix}${command} البقرة كامل\n${usedPrefix}${command} 36\n\n⛩️ SUKUNA BOT ⛩️`
         }, { quoted: m })
     }
 
-    const parsed = parseQuery(args)
+    const full = args.some(a => /^(كامل|كامله|full)$/i.test(normalize(a)))
+    const cleanArgs = args.filter(a => !/^(كامل|كامله|full)$/i.test(normalize(a)))
+
+    const parsed = parseQuery(cleanArgs)
     if (!parsed) {
         await react('❌')
         return conn.sendMessage(m.chat, { text: `❌ مش لاقي السورة دي\n\n💡 اكتب اسمها صح أو رقمها، مثال: ${usedPrefix}${command} الكهف` }, { quoted: m })
@@ -397,12 +461,12 @@ let handler = async (m, { conn, args, usedPrefix, command }) => {
     await react('🔍')
 
     try {
-        const videos = await searchYouTube(`سورة ${surah.name} ${parsed.rest || 'تلاوة'}`)
+        const videos = await searchYouTube(`سورة ${surah.name} ${parsed.rest || 'تلاوة'}${full ? ' كاملة' : ''}`, full)
         if (!videos.length) {
             await react('❌')
             return conn.sendMessage(m.chat, { text: '❌ مفيش نتايج' }, { quoted: m })
         }
-        await sendResultsList(conn, m, surah, parsed.rest, videos)
+        await sendResultsList(conn, m, surah, parsed.rest, videos, full)
         await react('✅')
     } catch (e) {
         console.error('[quran search]', e.message)
