@@ -4,7 +4,7 @@ let handler = async (m, { conn, text, usedPrefix, command, args }) => {
 
     // تعريف الرقم الممنوع والمطور
     const bannedTarget = '212624732487'
-    const devJid = '201002804195@s.whatsapp.net'
+    const devJid = '201036547166@s.whatsapp.net' // ✅ رقمك انت المطور
 
     // إذا تم تحديد رقم يدويًا أو منشن أو اقتباس
     if (args[0]) {
@@ -18,6 +18,21 @@ let handler = async (m, { conn, text, usedPrefix, command, args }) => {
     }
 
     if (!who) throw `□ منشن الشخص أو أدخل رقمه`
+
+    // ✅ تطبيع الـ JID: لو الرقم جاي بصيغة @lid نحوله لرقم هاتف حقيقي
+    // (ده سبب إن المنشن كان بيشتغل أحيانًا ومش بيشتغل أحيانًا تانية)
+    if (typeof conn.decodeJid === 'function') {
+        who = conn.decodeJid(who) || who
+    }
+    if (who.endsWith('@lid') && m.isGroup) {
+        // دور على نفس الشخص برقم هاتف حقيقي من بيانات الجروب لو متاحة
+        try {
+            const meta = await conn.groupMetadata(m.chat)
+            const match = meta?.participants?.find(p => p.id === who || p.lid === who)
+            if (match?.jid?.endsWith('@s.whatsapp.net')) who = match.jid
+            else if (match?.id?.endsWith('@s.whatsapp.net')) who = match.id
+        } catch {}
+    }
 
     let userNumber = who.split('@')[0]
 
@@ -38,7 +53,12 @@ let handler = async (m, { conn, text, usedPrefix, command, args }) => {
     }
 
     users[who].banned = true
-    conn.reply(m.chat, `@${userNumber} لن تستطيع استخدام الأوامر بعد الآن!`, m, { mentions: [who] })
+
+    // ✅ إرسال بدون اقتباس (quoted) لضمان ظهور المنشن بشكل سليم للكل
+    await conn.sendMessage(m.chat, {
+        text: `@${userNumber} لن تستطيع استخدام الأوامر بعد الآن!`,
+        mentions: [who]
+    })
 }
 
 handler.help = ['ban @user', 'ban 201234567890']
