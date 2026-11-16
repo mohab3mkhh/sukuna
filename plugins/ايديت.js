@@ -463,6 +463,71 @@ async function handleQualitySelect(m, conn, data) {
 }
 
 // ════════════════════════════════════════════
+//                 بينترست
+// ════════════════════════════════════════════
+
+async function sendPinterestList(conn, m, name) {
+    const q = `${name} edit`
+
+    let pinterest = null
+    try {
+        const scraper = await import('../lib/scraper.js')
+        pinterest = scraper.pinterest
+    } catch {}
+
+    const sources = []
+    if (pinterest?.search) {
+        sources.push(async () => {
+            const response = await pinterest.search(q, 6)
+            return response.result.pins.slice(0, 6).map(pin => pin.media.images.orig.url)
+        })
+    }
+    sources.push(
+        async () => {
+            const res = await axios.get(`https://api.siputzx.my.id/api/s/pinterest?query=${encodeURIComponent(q)}`, { timeout: 20000 })
+            return res.data.data.slice(0, 6).map(r => r.images_url)
+        },
+        async () => {
+            const res = await axios.get(`https://api.dorratz.com/v2/pinterest?q=${encodeURIComponent(q)}`, { timeout: 20000 })
+            return res.data.slice(0, 6).map(r => r.image)
+        },
+        async () => {
+            const res = await axios.get(`https://pinterest-api-one.vercel.app/?q=${encodeURIComponent(q)}`, { timeout: 20000 })
+            return res.data.images?.slice(0, 6) || []
+        }
+    )
+
+    let images = []
+    for (const source of sources) {
+        try {
+            images = (await source()).filter(Boolean)
+            if (images.length) break
+        } catch (e) {
+            console.error('[edit pinterest]', e.message)
+        }
+    }
+    if (!images.length) throw new Error('بينترست: مفيش نتايج')
+
+    const rows = images.map((img, i) => ({
+        title: `📸 صورة ${i + 1}`,
+        description: `نتيجة البحث رقم ${i + 1}`,
+        id: cacheBtn({ type: 'pin', url: img, index: i })
+    }))
+
+    await sendButtons(conn, m.chat, {
+        title: '📌 Pinterest',
+        subtitle: name,
+        text: `📌 *بينترست:* ${name}\n📊 *عدد الصور:* ${images.length}`,
+        footer: '⛩️ SUKUNA BOT',
+        image: images[0],
+        buttons: [
+            btn.list('📸 اختر صورة', [{ title: `🔍 ${name}`.slice(0, 24), rows }]),
+            btn.url('🔗 فتح في Pinterest', `https://www.pinterest.com/search/pins/?q=${encodeURIComponent(q)}`)
+        ]
+    }, m)
+}
+
+// ════════════════════════════════════════════
 //             معالج الأزرار + الأمر
 // ════════════════════════════════════════════
 
@@ -481,6 +546,13 @@ let before = async (m, { conn }) => {
         }
         if (data.type === 'video' || data.type === 'audio') {
             await handleQualitySelect(m, conn, data)
+            return true
+        }
+        if (data.type === 'pin') {
+            await conn.sendMessage(m.chat, {
+                image: { url: data.url },
+                caption: `📌 *الصورة رقم ${data.index + 1}*\n\n⛩️ SUKUNA BOT`
+            }, { quoted: m })
             return true
         }
         return false
@@ -503,17 +575,19 @@ let handler = async (m, { conn, args, usedPrefix, command }) => {
 
     const name = args.join(' ').trim()
     await react('🔍')
-    await conn.sendMessage(chat, { text: `🔍 *جاري البحث عن اديتات:* ${name}\n📡 تيك توك + يوتيوب` }, { quoted: m })
+    await conn.sendMessage(chat, { text: `🔍 *جاري البحث عن اديتات:* ${name}\n📡 تيك توك + يوتيوب + بينترست` }, { quoted: m })
 
-    const [tt, yt] = await Promise.allSettled([
+    const results = await Promise.allSettled([
         sendTikTokCarousel(conn, m, name),
-        sendYouTubeList(conn, m, name)
+        sendYouTubeList(conn, m, name),
+        sendPinterestList(conn, m, name)
     ])
 
-    if (tt.status === 'rejected') console.error('[edit tiktok]', tt.reason?.message)
-    if (yt.status === 'rejected') console.error('[edit youtube]', yt.reason?.message)
+    results.forEach((r, i) => {
+        if (r.status === 'rejected') console.error(`[edit ${['tiktok', 'youtube', 'pinterest'][i]}]`, r.reason?.message)
+    })
 
-    if (tt.status === 'rejected' && yt.status === 'rejected') {
+    if (results.every(r => r.status === 'rejected')) {
         await react('❌')
         return conn.sendMessage(chat, {
             text: `❌ ما لقيت اديتات لـ *${name}*\n\n💡 جرب اسم تاني أو بالإنجليزي\n\n⛩️ SUKUNA BOT ⛩️`
