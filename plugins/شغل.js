@@ -1,11 +1,4 @@
 import axios from 'axios'
-import { execFile } from 'child_process'
-import { promisify } from 'util'
-import fs from 'fs'
-import os from 'os'
-import path from 'path'
-
-const execFileP = promisify(execFile)
 
 const CHANNEL_LINK = 'https://whatsapp.com/channel/0029VbBilcVAO7RNV5OlOI0j'
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
@@ -15,17 +8,14 @@ const log = (...a) => console.log('[شغل]', ...a)
 
 // ━━━ 1) البحث في يوتيوب ━━━
 async function searchVideo(query) {
-  // أ) yt-search
   try {
     const mod = await import('yt-search')
     const yts = mod.default || mod
     const res = await yts(query)
     const v = res?.videos?.find(x => x.seconds && x.seconds < 1200) || res?.videos?.[0]
     if (v) return { id: v.videoId, title: v.title, url: v.url, author: v.author?.name }
-  } catch (e) {
-    log('yt-search:', e.message)
-  }
-  // ب) سحب مباشر من صفحة البحث
+  } catch (e) { log('yt-search:', e.message) }
+
   try {
     const r = await axios.get(
       `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}&hl=en`,
@@ -37,205 +27,102 @@ async function searchVideo(query) {
     const id = idm[1]
     const tm = html.slice(html.indexOf(id)).match(/"title":\{"runs":\[\{"text":"(.*?)"\}/)
     return { id, title: tm ? tm[1] : query, url: `https://www.youtube.com/watch?v=${id}` }
-  } catch (e) {
-    log('scrape:', e.message)
-  }
+  } catch (e) { log('scrape:', e.message) }
+
   return null
 }
 
-// ━━━ 2) yt-dlp (المصدر الأول) ━━━
-let ytdlpPath = null
+// ━━━ 2) مصادر التحميل ━━━
 
-// يجرّب يشغّل الـ binary فعلياً للتأكد إنه قابل للتنفيذ
-async function canRun(bin) {
-  try {
-    await execFileP(bin, ['--version'], { timeout: 20000 })
-    return true
-  } catch (e) {
-    log(`yt-dlp test (${bin}): ${e.code || e.message}`)
-    return false
-  }
-}
-
-async function ensureYtdlp() {
-  if (ytdlpPath && fs.existsSync(ytdlpPath)) return ytdlpPath
-
-  // مجلدات بديلة، لأن بعض المجلدات ممكن تكون ممنوع التنفيذ منها (noexec)
-  const dirs = [...new Set(['/tmp', os.tmpdir(), process.cwd(), '/home'])]
-  const candidates = dirs.map(d => path.join(d, 'yt-dlp-bin'))
-
-  // لو في نسخة جاهزة من قبل، جرّبها الأول
-  for (const bin of candidates) {
-    if (fs.existsSync(bin)) {
-      try { fs.chmodSync(bin, 0o755) } catch {}
-      if (await canRun(bin)) return (ytdlpPath = bin)
-    }
-  }
-
-  log('بنزّل yt-dlp...')
-  const r = await axios.get(
-    'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux',
-    { responseType: 'arraybuffer', timeout: 120000, maxRedirects: 5 }
-  )
-  const data = Buffer.from(r.data)
-  if (data.length < 1024 * 1024) throw new Error('yt-dlp: التحميل ناقص أو غير صالح')
-
-  for (const bin of candidates) {
-    try {
-      fs.writeFileSync(bin, data)
-      fs.chmodSync(bin, 0o755) // صلاحية التنفيذ صراحةً
-      if (await canRun(bin)) {
-        log('yt-dlp جاهز في', bin)
-        return (ytdlpPath = bin)
-      }
-    } catch (e) {
-      log(`yt-dlp write (${bin}): ${e.message}`)
-    }
-  }
-  throw new Error('yt-dlp: مفيش مكان يسمح بالتنفيذ على السيرفر')
-}
-
-// كوكيز اختيارية: ملف cookies.txt في جذر المشروع، أو متغير YT_COOKIES على Railway
-function prepareCookies() {
-  const tmp = path.join(os.tmpdir(), `cookies_${process.pid}.txt`)
-  if (process.env.YT_COOKIES) {
-    fs.writeFileSync(tmp, process.env.YT_COOKIES)
-    return tmp
-  }
-  const local = path.join(process.cwd(), 'cookies.txt')
-  if (fs.existsSync(local)) {
-    fs.copyFileSync(local, tmp) // نسخة عشان yt-dlp بيحاول يكتب على الملف
-    return tmp
-  }
-  return null
-}
-
-// يدور على ffmpeg: ffmpeg-static لو منزّلة، وإلا ffmpeg بتاع السيستم، وإلا null
-async function findFfmpeg() {
-  try {
-    const mod = await import('ffmpeg-static')
-    const p = mod.default || mod
-    if (p && fs.existsSync(p)) return p
-  } catch {}
-  try {
-    await execFileP('ffmpeg', ['-version'], { timeout: 5000 })
-    return 'ffmpeg'
-  } catch {}
-  return null
-}
-
-const ytdlpLocal = video => async () => {
-  const bin = await ensureYtdlp()
-  // ffprobe مش موجود على السيرفر، وyt-dlp -x بيحتاجه (ده سبب خطأ "ffprobe and ffmpeg not found")
-  // فبننزّل m4a جاهز من غير أي تحويل
-  const ffmpeg = null
-  const ext = ffmpeg ? 'mp3' : 'm4a'
-  const out = path.join(os.tmpdir(), `yt_${video.id}_${Date.now()}.${ext}`)
-  const cookies = prepareCookies()
-  const args = ffmpeg
-    ? [
-        '-x', '--audio-format', 'mp3', '--audio-quality', '5',
-        '--no-playlist', '--no-warnings', '--max-filesize', '60M',
-        '--ffmpeg-location', ffmpeg,
-        '-o', out,
-      ]
-    : [
-        // بدون ffmpeg: نزّل الصوت جاهز m4a من غير تحويل
-        '-f', 'bestaudio[ext=m4a]/bestaudio',
-        '--no-playlist', '--no-warnings', '--max-filesize', '60M',
-        '-o', out,
-      ]
-  if (cookies) args.push('--cookies', cookies)
-  if (process.env.YT_PROXY) args.push('--proxy', process.env.YT_PROXY)
-  args.push(video.url)
-
-  try {
-    try {
-      await execFileP(bin, args, { timeout: 150000, maxBuffer: 1 << 24 })
-    } catch (e) {
-      const msg = String(e.stderr || e.message).trim().split('\n').slice(-2).join(' | ')
-      throw new Error('yt-dlp: ' + msg)
-    }
-    const buffer = fs.readFileSync(out)
-    return { name: 'yt-dlp', buffer, mimetype: ffmpeg ? 'audio/mpeg' : 'audio/mp4' }
-  } finally {
-    try { fs.unlinkSync(out) } catch {}
-    if (cookies) { try { fs.unlinkSync(cookies) } catch {} }
-  }
-}
-
-// ━━━ 3) باقي طرق التحميل (احتياطي) ━━━
-function pickUrl(obj, depth = 0) {
-  if (!obj || depth > 5) return null
-  if (typeof obj === 'string') return null
-  const keys = Object.keys(obj)
-  for (const k of keys) {
-    const v = obj[k]
-    if (typeof v === 'string' && /^https?:\/\//.test(v) &&
-        /^(dl|download|download_url|downloadurl|downloadlink|link|url|mp3)$/i.test(k) &&
-        !/\.(jpe?g|png|webp)(\?|$)/i.test(v) &&
-        !/youtube\.com\/watch|youtu\.be\//.test(v)) return v
-  }
-  for (const k of keys) {
-    if (typeof obj[k] === 'object') {
-      const f = pickUrl(obj[k], depth + 1)
-      if (f) return f
-    }
-  }
-  return null
-}
-
-const apiSources = video => {
-  const u = encodeURIComponent(video.url)
-  return [
-    ['agatz', `https://api.agatz.xyz/api/ytmp3?url=${u}`],
-  ].map(([name, endpoint]) => async () => {
-    const r = await axios.get(endpoint, { timeout: 25000, headers: { 'User-Agent': UA } })
-    const link = pickUrl(r.data)
-    if (!link) throw new Error(`${name}: no download link in response`)
-    return { name, url: link, mimetype: 'audio/mpeg' }
+// cobalt.tools — بيشتغل بدون cookies
+async function cobaltSource(video) {
+  const r = await axios.post('https://cobalt.tools/api/json', {
+    url: video.url,
+    aFormat: 'mp3',
+    isAudioOnly: true
+  }, {
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+      'User-Agent': UA
+    },
+    timeout: 30000
   })
+  const url = r.data?.url
+  if (!url) throw new Error('cobalt: no url — ' + JSON.stringify(r.data).slice(0, 100))
+  return { name: 'cobalt', url, mimetype: 'audio/mpeg' }
 }
 
-const loaderTo = video => async () => {
-  const r1 = await axios.get(
-    `https://loader.to/ajax/download.php?format=mp3&url=${encodeURIComponent(video.url)}`,
-    { timeout: 15000, headers: { 'User-Agent': UA } }
+// y2mate API
+async function y2mateSource(video) {
+  const r1 = await axios.post('https://www.y2mate.com/mates/analyzeV2/ajax',
+    new URLSearchParams({ k_query: video.url, k_page: 'home', hl: 'en', q_auto: '0' }),
+    { headers: { 'User-Agent': UA, 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 }
   )
-  if (!r1.data?.id) throw new Error('loader.to: no id')
-  for (let i = 0; i < 15; i++) {
-    await new Promise(r => setTimeout(r, 3000))
-    const r2 = await axios.get(`https://loader.to/ajax/progress.php?id=${r1.data.id}`, { timeout: 10000 })
-    if (r2.data?.download_url) return { name: 'loader.to', url: r2.data.download_url, mimetype: 'audio/mpeg' }
-  }
-  throw new Error('loader.to: timeout')
+  const links = r1.data?.links?.mp3
+  if (!links) throw new Error('y2mate: no mp3 links')
+  const best = Object.values(links).find(x => x?.f === 'mp3') || Object.values(links)[0]
+  if (!best?.k) throw new Error('y2mate: no key')
+
+  const r2 = await axios.post('https://www.y2mate.com/mates/convertV2/index',
+    new URLSearchParams({ vid: video.id, k: best.k }),
+    { headers: { 'User-Agent': UA, 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 }
+  )
+  const url = r2.data?.dlink
+  if (!url) throw new Error('y2mate: no dlink')
+  return { name: 'y2mate', url, mimetype: 'audio/mpeg' }
 }
 
-const ytdlLocal = video => async () => {
-  let ytdl
-  try {
-    const mod = await import('@distube/ytdl-core')
-    ytdl = mod.default || mod
-  } catch {
-    throw new Error('@distube/ytdl-core غير منزّلة')
-  }
-  const stream = ytdl(video.url, { filter: 'audioonly', quality: 'highestaudio', highWaterMark: 1 << 25 })
-  const chunks = []
-  let size = 0
-  for await (const c of stream) {
-    size += c.length
-    if (size > MAX_BYTES) throw new Error('الملف كبير')
-    chunks.push(c)
-  }
-  return { name: 'ytdl', buffer: Buffer.concat(chunks), mimetype: 'audio/mp4' }
+// yt1s.com
+async function yt1sSource(video) {
+  const r1 = await axios.post('https://yt1s.com/api/ajaxSearch/index',
+    new URLSearchParams({ q: video.url, vt: 'mp3' }),
+    { headers: { 'User-Agent': UA, 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 }
+  )
+  const links = r1.data?.links?.mp3
+  if (!links) throw new Error('yt1s: no mp3 links')
+  const best = Object.values(links)[0]
+  if (!best?.k) throw new Error('yt1s: no key')
+
+  const r2 = await axios.post('https://yt1s.com/api/ajaxConvert/convert',
+    new URLSearchParams({ vid: video.id, k: best.k }),
+    { headers: { 'User-Agent': UA, 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 30000 }
+  )
+  const url = r2.data?.dlink
+  if (!url) throw new Error('yt1s: no dlink')
+  return { name: 'yt1s', url, mimetype: 'audio/mpeg' }
+}
+
+// musicdownloader.bot
+async function musicDlSource(video) {
+  const r = await axios.get(
+    `https://musicdownloader.bot/api/download?url=${encodeURIComponent(video.url)}`,
+    { headers: { 'User-Agent': UA }, timeout: 30000 }
+  )
+  const url = r.data?.url || r.data?.download_url || r.data?.link
+  if (!url) throw new Error('musicdl: no url')
+  return { name: 'musicdl', url, mimetype: 'audio/mpeg' }
+}
+
+// agatz
+async function agatzSource(video) {
+  const r = await axios.get(
+    `https://api.agatz.xyz/api/ytmp3?url=${encodeURIComponent(video.url)}`,
+    { headers: { 'User-Agent': UA }, timeout: 25000 }
+  )
+  const url = r.data?.download || r.data?.url || r.data?.data?.download
+  if (!url) throw new Error('agatz: no url — ' + JSON.stringify(r.data).slice(0, 100))
+  return { name: 'agatz', url, mimetype: 'audio/mpeg' }
 }
 
 async function getAudio(video) {
-  const sources = [ytdlpLocal(video), ytdlLocal(video), ...apiSources(video), loaderTo(video)]
-  for (const src of sources) {
+  const sources = [cobaltSource, y2mateSource, yt1sSource, agatzSource, musicDlSource]
+
+  for (const srcFn of sources) {
     try {
-      const res = await src()
+      const res = await srcFn(video)
       let buffer = res.buffer
+
       if (!buffer) {
         const r = await axios.get(res.url, {
           responseType: 'arraybuffer',
@@ -245,6 +132,7 @@ async function getAudio(video) {
         })
         buffer = Buffer.from(r.data)
       }
+
       if (buffer.length < 20 * 1024) throw new Error('الملف صغير جداً / غير صالح')
       log(`✅ ${res.name} (${(buffer.length / 1048576).toFixed(1)}MB)`)
       return { buffer, mimetype: res.mimetype }
