@@ -19,28 +19,31 @@ let handler = async (m, { conn, text, usedPrefix, command, args }) => {
 
     if (!who) throw `□ منشن الشخص أو أدخل رقمه`
 
-    // ✅ تطبيع الـ JID: لو الرقم جاي بصيغة @lid نحوله لرقم هاتف حقيقي
-    // (ده سبب إن المنشن كان بيشتغل أحيانًا ومش بيشتغل أحيانًا تانية)
+    // ✅ نجمع كل الصيغ الممكنة لنفس الشخص (الأصلية + المطبّعة)
+    // عشان الحظر يتمسك مهما كانت الصيغة اللي بيتفحص بيها في باقي البوت
+    const allIds = new Set([who])
+
+    let displayWho = who // للمنشن في الرسالة، نفضّل رقم هاتف حقيقي لو لقيناه
+
     if (typeof conn.decodeJid === 'function') {
-        who = conn.decodeJid(who) || who
+        const decoded = conn.decodeJid(who)
+        if (decoded) { allIds.add(decoded); displayWho = decoded }
     }
+
     if (who.endsWith('@lid') && m.isGroup) {
-        // دور على نفس الشخص برقم هاتف حقيقي من بيانات الجروب لو متاحة
         try {
             const meta = await conn.groupMetadata(m.chat)
             const match = meta?.participants?.find(p => p.id === who || p.lid === who)
-            if (match?.jid?.endsWith('@s.whatsapp.net')) who = match.jid
-            else if (match?.id?.endsWith('@s.whatsapp.net')) who = match.id
+            if (match?.jid) { allIds.add(match.jid); displayWho = match.jid }
+            if (match?.id) allIds.add(match.id)
         } catch {}
     }
 
-    let userNumber = who.split('@')[0]
-
-    // التأكد من وجود بيانات المستخدم في قاعدة البيانات قبل التعديل
-    if (!users[who]) users[who] = {}
+    let userNumber = displayWho.split('@')[0]
 
     // إذا الرقم الممنوع حاول يستخدم الأمر أو حد حاول يبنده
-    if (userNumber === bannedTarget || m.sender.split('@')[0] === bannedTarget) {
+    const senderNumber = m.sender.split('@')[0]
+    if ([...allIds].some(id => id.split('@')[0] === bannedTarget) || senderNumber === bannedTarget) {
         const targetJid = `${bannedTarget}@s.whatsapp.net`
         if (!users[targetJid]) users[targetJid] = {}
         users[targetJid].banned = true
@@ -52,12 +55,15 @@ let handler = async (m, { conn, text, usedPrefix, command, args }) => {
         return
     }
 
-    users[who].banned = true
+    // ✅ نحظر على كل الصيغ مع بعض
+    for (const id of allIds) {
+        if (!users[id]) users[id] = {}
+        users[id].banned = true
+    }
 
-    // ✅ إرسال بدون اقتباس (quoted) لضمان ظهور المنشن بشكل سليم للكل
     await conn.sendMessage(m.chat, {
         text: `@${userNumber} لن تستطيع استخدام الأوامر بعد الآن!`,
-        mentions: [who]
+        mentions: [displayWho]
     })
 }
 
