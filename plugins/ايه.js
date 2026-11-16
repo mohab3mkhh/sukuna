@@ -1,3 +1,9 @@
+/**
+ * plugins/ايه.js
+ * ⛩️ SUKUNA BOT - .ايه <اسم السورة> <رقم الآية>
+ * جلب آية معينة نصاً (رسم عثماني) وصوتاً (مشاري العفاسي)
+ */
+
 import fetch from 'node-fetch';
 
 const surahNames = [
