@@ -23,12 +23,26 @@ const handler = async (m, { conn, text, isROwner }) => {
     if (typeof conn.query !== 'function') return m.reply('❌ conn.query مش متاحة')
 
     try {
-        const user = new B.USyncUser().withUsername(username)
+        const user = new B.USyncUser()
+        user.withUsername(username)
         if (key) user.withUsernameKey(key)
 
         const q = new B.USyncQuery()
         q.withUsernameProtocol()
         q.withUser(user)
+
+        // معلومات تشخيص: الكود الفعلي للدوال اللي بتبني عنصر اليوزر
+        const src = (fn) => { try { return String(fn).replace(/\s+/g, ' ').slice(0, 600) } catch { return '—' } }
+        let userEls = '—'
+        try { userEls = JSON.stringify(q.protocols.map(p => p.getUserElement(user))) } catch (e) { userEls = 'خطأ: ' + e.message }
+        await m.reply(
+            `🔬 *تشخيص*\n\n` +
+            `👤 USyncUser: ${JSON.stringify(user)}\n\n` +
+            `🧱 getUserElement() رجّع: ${userEls}\n\n` +
+            `*getUserElement (الكود):*\n${src(B.USyncUsernameProtocol?.prototype?.getUserElement)}\n\n` +
+            `*withUsername (الكود):*\n${src(B.USyncUser.prototype.withUsername)}\n\n` +
+            `*withUsernameKey (الكود):*\n${src(B.USyncUser.prototype.withUsernameKey)}`
+        )
 
         // نفس الطلب اللي بتبنيه executeUSyncQuery
         const iq = {
