@@ -1,19 +1,31 @@
 /**
  * plugins/حديث.js
  * ⛩️ SUKUNA BOT - .حديث <موضوع / كلمة>
- * بيدور في الدرر السنية → حديث واحد (نص فقط) + هل هو من البخاري/مسلم + موكد ولا لأ
+ * البوت بيدور في الدرر السنية ويجيب أول حديث بالأولوية:
+ * صحيح → حسن → مختلف عليه → ضعيف (وجوه نفس الدرجة الصحيحين الأول)
+ * وبيكتب جنب المصدر هو متأكد منه ولا لأ (حسب حكم المحدّث مش حسب الكتاب)
  */
 
 import axios from 'axios'
 
-const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36'
+const UAS = [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Linux; Android 13; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36',
+    'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1'
+]
 const API = 'https://dorar.net/dorar_api.json'
 
+// اختياري: لو الموقع رافض IP السيرفر، حط رابط API وسيط في متغير البيئة
+// مثال: DORAR_PROXY=https://your-proxy.vercel.app/v1/site/hadith/search
+// (لازم يرجّع { data: [{ hadith, rawi, mohdith, book, numberOrPage, grade }] })
+const PROXY = process.env.DORAR_PROXY || ''
+
 const MAX_HADITH_CHARS = 1800
-const PICK_FROM = 5            // بيختار عشوائي من أول كام حديث صحيح عشان النتيجة تتنوع
 const CACHE_TTL = 30 * 60 * 1000
 
 if (!global.hadithCache) global.hadithCache = new Map()
+
+const sleep = ms => new Promise(r => setTimeout(r, ms))
 
 // ════════════════════════════════════════════
 //                  أدوات النص
@@ -42,28 +54,42 @@ function stripHtml(s) {
         .trim()
 }
 
-const norm = s => String(s || '').replace(/[\u064B-\u065F\u0670\u0640]/g, '').replace(/[أإآٱ]/g, 'ا').replace(/ة/g, 'ه')
+const norm = s => String(s || '')
+    .replace(/[\u064B-\u065F\u0670\u0640]/g, '')
+    .replace(/[أإآٱ]/g, 'ا')
+    .replace(/ى/g, 'ي')
+    .replace(/ة/g, 'ه')
 
 // ════════════════════════════════════════════
-//             تصنيف المصدر والحكم
+//          تصنيف المصدر (جابو منين)
 // ════════════════════════════════════════════
 
 function detectSource(sourceText) {
     const s = norm(sourceText)
-    if (s.includes('صحيح البخاري')) return { key: 'bukhari', label: '📗 من صحيح البخاري' }
-    if (s.includes('صحيح مسلم')) return { key: 'muslim', label: '📘 من صحيح مسلم' }
-    return { key: 'other', label: `📚 مش من الصحيحين${sourceText ? ` (${sourceText})` : ''}` }
+    const bukhari = s.includes('صحيح البخاري')
+    const muslim = s.includes('صحيح مسلم')
+    if (bukhari && muslim) return { key: 'both', name: 'متفق عليه (البخاري ومسلم)', icon: '📗📘' }
+    if (bukhari) return { key: 'bukhari', name: 'صحيح البخاري', icon: '📗' }
+    if (muslim) return { key: 'muslim', name: 'صحيح مسلم', icon: '📘' }
+    return { key: 'other', name: sourceText || 'مصدر غير معروف', icon: '📚' }
 }
 
-function detectGrade(gradeText, sourceKey) {
+// ════════════════════════════════════════════
+//     تصنيف الحكم (مستقل عن المصدر تماماً)
+// ════════════════════════════════════════════
+
+// tier أقل = أقوى
+function detectGrade(gradeText) {
     const g = norm(gradeText)
-    // الأول نشوف النفي والتضعيف
-    const weak = /(ضعيف|موضوع|منكر|باطل|لا يصح|ليس بصحيح|لم يصح|لا اصل|مكذوب|واه)/.test(g)
-    if (weak) return { sure: false, label: '⚠️ *غير موكد* (ضعيف)' }
-    if (sourceKey === 'bukhari' || sourceKey === 'muslim') return { sure: true, label: '✅ *موكد* (صحيح)' }
-    if (/صحيح/.test(g)) return { sure: true, label: '✅ *موكد* (صحيح)' }
-    if (/حسن/.test(g)) return { sure: true, label: '✅ *موكد* (حسن)' }
-    return { sure: false, label: '⚠️ *غير موكد* (الحكم مش واضح)' }
+
+    const weak = /(ضعيف|موضوع|منكر|باطل|لا يصح|ليس بصحيح|لم يصح|لا اصل|مكذوب|واه|متروك)/.test(g)
+    const disputed = /(اختلف|مختلف|مقال|لين|فيه ضعف|تفرد|مرسل|منقطع|مجهول|لا يثبت|شاذ)/.test(g)
+
+    if (weak) return { tier: 4, label: '❌ غير متأكدين منه (ضعيف)' }
+    if (disputed) return { tier: 3, label: '⚠️ مختلف عليه (العلماء اختلفوا في صحته)' }
+    if (/صحيح/.test(g)) return { tier: 1, label: '✅ متأكدين منه (صحيح)' }
+    if (/حسن/.test(g)) return { tier: 2, label: '✅ متأكدين منه (حسن)' }
+    return { tier: 3, label: '⚠️ مش متأكدين منه (الحكم مش واضح)' }
 }
 
 // ════════════════════════════════════════════
@@ -97,37 +123,97 @@ function parseResults(html) {
     return out
 }
 
+// الموقع الرسمي: بيجرب أكتر من User-Agent ولو اترفض (403/429) بيستنى ويعيد
+async function fetchFromDorar(query) {
+    let lastErr
+    for (let i = 0; i < UAS.length; i++) {
+        try {
+            const r = await axios.get(API, {
+                params: { skey: query },
+                headers: {
+                    'User-Agent': UAS[i],
+                    'Accept': 'application/json, text/plain, */*',
+                    'Accept-Language': 'ar,en;q=0.8',
+                    'Referer': 'https://dorar.net/',
+                    'Origin': 'https://dorar.net'
+                },
+                timeout: 25000
+            })
+            const html = r.data?.ahadith?.result
+            if (!html) throw new Error('الموقع ماردش بنتايج')
+            return parseResults(html)
+        } catch (e) {
+            lastErr = e
+            const st = e.response?.status
+            console.log(`[hadith] dorar محاولة ${i + 1} فشلت:`, st || e.message)
+            if (st === 403 || st === 429) await sleep(1200)
+            else break
+        }
+    }
+    throw lastErr
+}
+
+// الـ API الوسيط (اختياري)
+async function fetchFromProxy(query) {
+    const r = await axios.get(PROXY, {
+        params: { value: query },
+        headers: { 'User-Agent': UAS[0], 'Accept': 'application/json' },
+        timeout: 25000
+    })
+    const list = r.data?.data
+    if (!Array.isArray(list) || !list.length) return []
+    return list.map(h => ({
+        text: stripHtml(h.hadith),
+        narrator: h.rawi || '',
+        scholar: h.mohdith || '',
+        source: h.book || '',
+        page: h.numberOrPage || '',
+        grade: h.grade || ''
+    })).filter(h => h.text)
+}
+
 async function searchHadith(query) {
     const key = query.toLowerCase()
     const cached = global.hadithCache.get(key)
     if (cached && Date.now() - cached.time < CACHE_TTL) return cached.results
 
-    const r = await axios.get(API, {
-        params: { skey: query },
-        headers: { 'User-Agent': UA, 'Accept-Language': 'ar,en;q=0.8' },
-        timeout: 25000
-    })
+    let raw
+    try {
+        raw = await fetchFromDorar(query)
+    } catch (e) {
+        if (!PROXY) {
+            const st = e.response?.status
+            throw new Error(st === 403
+                ? 'الدرر السنية رافضة الطلب من السيرفر (403)'
+                : e.message)
+        }
+        console.log('[hadith] بجرب الـ API الوسيط...')
+        raw = await fetchFromProxy(query)
+    }
 
-    const html = r.data?.ahadith?.result
-    if (!html) throw new Error('الموقع ماردش بنتايج')
-
-    const results = parseResults(html).map(h => {
-        const src = detectSource(h.source)
-        return { ...h, src, grd: detectGrade(h.grade, src.key) }
-    })
+    const results = raw.map(h => ({
+        ...h,
+        src: detectSource(h.source),
+        grd: detectGrade(h.grade)
+    }))
 
     global.hadithCache.set(key, { results, time: Date.now() })
     if (global.hadithCache.size > 50) global.hadithCache.delete(global.hadithCache.keys().next().value)
     return results
 }
 
-// الأولوية: الصحيحين → أي صحيح/حسن → أي حاجة
+// الأولوية: الحكم الأول، وجوه نفس الحكم الصحيحين قبل غيرهم، وبعدها ترتيب الموقع
 function pickHadith(results) {
-    const sahihayn = results.filter(h => h.src.key !== 'other')
-    const sure = results.filter(h => h.grd.sure)
-    const pool = sahihayn.length ? sahihayn : sure.length ? sure : results
-    const top = pool.slice(0, PICK_FROM)
-    return top[Math.floor(Math.random() * top.length)]
+    const isSahihayn = h => h.src.key !== 'other' ? 0 : 1
+    let best = null
+    for (const h of results) {
+        if (
+            !best ||
+            h.grd.tier < best.grd.tier ||
+            (h.grd.tier === best.grd.tier && isSahihayn(h) < isSahihayn(best))
+        ) best = h
+    }
+    return best
 }
 
 // ════════════════════════════════════════════
@@ -141,10 +227,19 @@ function buildText(query, h) {
     let text = `📜 *حديث عن: ${query}*\n\n`
     text += `${body}\n\n━━━━━━━━━━━━━━━\n`
     if (h.narrator) text += `👤 *الراوي:* ${h.narrator}\n`
-    text += `${h.src.label}${h.page ? ` (${h.page})` : ''}\n`
-    text += `${h.grd.label}\n`
+    text += `${h.src.icon} *المصدر:* ${h.src.name}${h.page ? ` (${h.page})` : ''}\n`
+    text += `🔒 *التأكد:* ${h.grd.label}\n`
     if (h.scholar) text += `🎓 *المحدّث:* ${h.scholar}\n`
-    if (h.grade) text += `📝 *الحكم:* ${h.grade}\n`
+    if (h.grade) text += `📝 *حكم المحدّث:* ${h.grade}\n`
+
+    if (h.grd.tier === 4) {
+        text += `\n💡 مالقيناش حديث متأكد منه في الموضوع ده، ده أقرب حاجة لقيناها.\n`
+    } else if (h.grd.tier === 3) {
+        text += `\n💡 مالقيناش حديث متأكد منه، ده أقرب حاجة لقيناها والعلماء مختلفين فيه.\n`
+    } else if (h.src.key === 'other') {
+        text += `\n💡 مالقيناش في الصحيحين، ده أقوى حديث لقيناه من كتب تانية.\n`
+    }
+
     text += '\n⛩️ SUKUNA BOT ⛩️'
     return text
 }
