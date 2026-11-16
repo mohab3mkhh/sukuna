@@ -24,6 +24,17 @@ function findJids(node, out = [], depth = 0) {
     return out
 }
 
+// في Baileys 7.0.0-rc14 دالة getUserElement بتاعة بروتوكول اليوزر فاضية (بترجع null)،
+// يعني اليوزر ما بيتبعتش لواتساب أصلاً. الفحص ده بيفتح الميزة لوحده لو نسخة جاية نفّذتها.
+function usernameLookupSupported() {
+    try {
+        if (!B.USyncUsernameProtocol || !B.USyncUser) return false
+        const probe = new B.USyncUser()
+        probe.withUsername('probe_user')
+        return !!new B.USyncUsernameProtocol().getUserElement(probe)
+    } catch { return false }
+}
+
 // يحوّل يوزرنيم واتساب لـ JID عن طريق USync
 async function resolveUsername(conn, username, key) {
     if (!B.USyncQuery || !B.USyncUser || typeof conn.executeUSyncQuery !== 'function') {
@@ -103,6 +114,10 @@ const handler = async (m, { conn, text, usedPrefix, command, isROwner }) => {
 
             if (!/^[a-z0-9_.]{3,35}$/.test(uname)) {
                 return m.reply('❌ اليوزر غير صالح\nحروف إنجليزية صغيرة وأرقام و _ و . فقط، من 3 لـ 35 حرف')
+            }
+
+            if (!usernameLookupSupported()) {
+                return m.reply(`⚠️ البحث بيوزر واتساب مش مدعوم في نسخة Baileys الحالية (rc14)\nاستخدم منشن أو رد على الشخص أو رقمه`)
             }
 
             try {
