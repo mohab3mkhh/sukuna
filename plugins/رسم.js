@@ -21,7 +21,7 @@ import { sendList } from '../lib/buttons.js'
 
 const BOT = 'GPT4Telegrambot'
 const MENU_FALLBACK = process.env.TG_IMG_BTN || '🎨 إنشاء الصور'
-const COOLDOWN_MS = (Number(process.env.DRAW_COOLDOWN_SEC) || 60) * 1000
+const COOLDOWN_MS = (Number(process.env.DRAW_COOLDOWN_SEC) || 0) * 1000
 const MAX_PENDING = 5
 const JOB_TTL = 30 * 60 * 1000
 const GEN_TIMEOUT = 180 * 1000
@@ -46,18 +46,31 @@ const MODELS = {
     },
 }
 
+const OWNERS = ['201036547166', '201016855501', '201066036607']
+const numOf = jid => String(jid || '').split('@')[0].split(':')[0].replace(/\D/g, '')
+const isOwner = m => {
+    const extra = (global.owner || []).map(o => numOf(Array.isArray(o) ? o[0] : o))
+    const n = numOf(m.sender)
+    return !!m.fromMe || OWNERS.includes(n) || extra.includes(n)
+}
+
 if (!global.drawJobs) global.drawJobs = new Map()
 if (!global.drawLast) global.drawLast = new Map()
 
-async function getClient() {
-    if (global._drawTgClient?.connected) return global._drawTgClient
+const sessions = () => [process.env.TG_SESSION, process.env.TG_SESSION_2].filter(Boolean)
+
+// بنحفظ الاتصالات في global عشان لو الأمر اتعمله reload ما يفتحش اتصال جديد
+async function getClient(i = 0) {
+    if (!global._drawTgClients) global._drawTgClients = {}
+    if (global._drawTgClients[i]?.connected) return global._drawTgClients[i]
     const apiId = parseInt(process.env.TG_API_ID)
     const apiHash = process.env.TG_API_HASH
-    if (!apiId || !apiHash || !process.env.TG_SESSION) throw new Error('ENV_MISSING')
-    const client = new TelegramClient(new StringSession(process.env.TG_SESSION), apiId, apiHash, { connectionRetries: 5 })
+    const session = sessions()[i]
+    if (!apiId || !apiHash || !session) throw new Error('ENV_MISSING')
+    const client = new TelegramClient(new StringSession(session), apiId, apiHash, { connectionRetries: 5 })
     await client.connect()
-    console.log('[TG] ✅ Connected (draw)')
-    global._drawTgClient = client
+    console.log(`[TG] ✅ Connected (draw) account ${i + 1}`)
+    global._drawTgClients[i] = client
     return client
 }
 
@@ -192,6 +205,28 @@ async function generate(client, job, option) {
     return buffer
 }
 
+// بيجرّب الحسابات بالترتيب، ولو حساب رصيده خلص (البوت رد بنص بدل صورة) بيروح للتاني
+async function generateWithFallback(job, option) {
+    const n = sessions().length
+    if (!n) throw new Error('ENV_MISSING')
+    const start = (global._drawAcc || 0) % n
+    let lastErr
+    for (let k = 0; k < n; k++) {
+        const i = (start + k) % n
+        try {
+            const buf = await generate(await getClient(i), job, option)
+            global._drawAcc = i
+            return buf
+        } catch (e) {
+            lastErr = e
+            log(`الحساب ${i + 1} فشل:`, e?.message, e?.extra || '')
+            const switchable = ['NO_MODEL', 'NO_SUBMODEL', 'NO_OPTION'].includes(e?.message) || (e?.message === 'NO_IMAGE' && e?.extra)
+            if (!switchable) throw e
+        }
+    }
+    throw lastErr
+}
+
 // ════════════ طابور ════════════
 let chain = Promise.resolve()
 let pending = 0
@@ -255,7 +290,7 @@ async function onChoice(m, conn, usedPrefix, text) {
 
         await reply(conn, m, `⏳ جاري الرسم بـ *${model.label}* (${option})...\nممكن ياخد لحد دقيقتين.`)
         try {
-            const buffer = await enqueue(async () => generate(await getClient(), job, option))
+            const buffer = await enqueue(() => generateWithFallback(job, option))
             const caption =
                 `╭━━━〔 🎨 𝑫𝑹𝑨𝑾 〕━━━⬣\n` +
                 `┃ ✦ 𝑴𝒐𝒅𝒆𝒍 ↬ ${model.label}\n` +
@@ -273,6 +308,7 @@ async function onChoice(m, conn, usedPrefix, text) {
 }
 
 let handler = async (m, { conn, text, usedPrefix = '.', command }) => {
+    if (!isOwner(m)) return reply(conn, m, '❌ الأمر ده للمطور بس')
     const cmd = String(command || '').replace(/^[.!#/]/, '')
     const now = Date.now()
     for (const [k, v] of global.drawJobs) if (now - v.createdAt > JOB_TTL) global.drawJobs.delete(k)
