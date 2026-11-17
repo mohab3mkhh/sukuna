@@ -15,7 +15,8 @@
  *   DRAW_COOLDOWN_SEC  الانتظار بين طلب وطلب لنفس الشخص (الافتراضي 60 ثانية)
  */
 
-import { getTgClient } from '../lib/tg.js'
+import { TelegramClient } from 'telegram'
+import { StringSession } from 'telegram/sessions/index.js'
 import { sendButtons } from '../lib/buttons.js'
 
 const BOT = 'GPT4Telegrambot'
@@ -35,6 +36,20 @@ const QUALITIES = ['1k', '2k', '4k']
 
 if (!global.drawJobs) global.drawJobs = new Map()   // token → طلب
 if (!global.drawLast) global.drawLast = new Map()   // المستخدم → وقت آخر رسم
+
+// نفس طريقة الربط اللي في numbers.js (متغيرات TG_API_ID / TG_API_HASH / TG_SESSION من Railway)
+// بنحفظ الاتصال في global عشان لو الأمر اتعمله reload ما يفتحش اتصال جديد
+async function getClient() {
+    if (global._drawTgClient?.connected) return global._drawTgClient
+    const apiId = parseInt(process.env.TG_API_ID)
+    const apiHash = process.env.TG_API_HASH
+    if (!apiId || !apiHash || !process.env.TG_SESSION) throw new Error('ENV_MISSING')
+    const client = new TelegramClient(new StringSession(process.env.TG_SESSION), apiId, apiHash, { connectionRetries: 5 })
+    await client.connect()
+    console.log('[TG] ✅ Connected (draw)')
+    global._drawTgClient = client
+    return client
+}
 
 const log = (...a) => console.log('[رسم]', ...a)
 const sleep = ms => new Promise(r => setTimeout(r, ms))
@@ -209,7 +224,7 @@ async function onChoice(m, conn, usedPrefix, text) {
         const model = MODELS[job.model]
         await reply(conn, m, `⏳ جاري الرسم بـ *${model.label}* (${quality})...\nممكن ياخد لحد دقيقتين.`)
         try {
-            const buffer = await enqueue(async () => generate(await getTgClient(), job, quality))
+            const buffer = await enqueue(async () => generate(await getClient(), job, quality))
             const caption =
                 `╭━━━〔 🎨 𝑫𝑹𝑨𝑾 〕━━━⬣\n` +
                 `┃ ✦ 𝑴𝒐𝒅𝒆𝒍 ↬ ${model.label}\n` +
