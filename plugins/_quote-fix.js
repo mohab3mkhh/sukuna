@@ -6,7 +6,7 @@
 //   وللتثبيت: غيّر DEFAULT_MODE تحت للرقم الشغال.
 
 const DEFAULT_MODE = 5
-const VER = 6
+const VER = 7
 // لو الملف اتحدّث (حتى من غير Restart) بنطبّق الوضع الافتراضي الجديد ونعيد التركيب
 if (global.__quoteVer !== VER) { global.quoteMode = DEFAULT_MODE; global.__quoteVer = VER }
 
@@ -73,12 +73,24 @@ function walk(o, d = 0) {
     }
 }
 
+// الاقتباس التلقائي: لو الرسالة رايحة لنفس الشات اللي جت منه الرسالة الحالية ومفيش quoted، بنضيفه
+// لإيقافه: global.autoQuote = false
+function autoQuotable(content) {
+    return content && typeof content === 'object' &&
+        !content.react && !content.delete && !content.forward && !content.edit && !content.pin &&
+        !('disappearingMessagesInMessage' in content) && !content.contextInfo?.stanzaId
+}
+
 function patch(conn) {
     if (!conn || conn.__quotePatched === VER) return
     const orig = conn.__origSend || conn.sendMessage.bind(conn)
     conn.__origSend = orig
     conn.sendMessage = (jid, content, opts) => {
         try {
+            if (global.autoQuote !== false && !opts?.quoted) {
+                const cur = global.__msgCtx?.getStore?.()
+                if (cur?.key && jid === cur.chat && autoQuotable(content)) opts = { ...(opts || {}), quoted: cur }
+            }
             const hadQuote = !!opts?.quoted?.key
             if (hadQuote) stats.sendQuoted++
             if (hadQuote) {
