@@ -1,11 +1,15 @@
 // plugins/رسم.js — توليد صور بالذكاء الاصطناعي (.رسم / .تخيل / .imagine)
-// المزوّد القديم (image-generator-xvi.vercel.app) واقع (HTTP 500)، فبقينا على Pollinations (من غير مفتاح).
-// ملاحظة: النسخة المجانية من غير تسجيل = طلب واحد كل ~15 ثانية، فلو اتزحمت الطلبات بيستنى ويعيد.
+// المزوّد القديم (image-generator-xvi.vercel.app) واقع. الحالي:
+//   1) Pollinations (مجاني من غير مفتاح، سريع، لكن بيحدّ طلب كل ~45 ثانية لكل IP، والزيادة بترجّع HTTP 402)
+//   2) AI Horde (مجاني ومجهول، أبطأ: بيستنى في طابور، لكن مفيش حد على الطلبات)
+// اختياري: حط مفتاح AI Horde مجاني في متغير بيئة HORDE_KEY (من aihorde.net) عشان تاخد أولوية في الطابور.
 
 import axios from 'axios'
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36'
 const sleep = ms => new Promise(r => setTimeout(r, ms))
+const POLL_MS = Number(process.env.HORDE_POLL_MS) || 5000
+const HORDE = 'https://aihorde.net/api/v2'
 
 // الوصف بالإنجليزي بيطلع صور أحسن بكتير، فبنترجمه لو الحزمة موجودة (ولو فشلت بنكمّل بالأصلي)
 async function toEnglish(text) {
@@ -17,23 +21,58 @@ async function toEnglish(text) {
     } catch { return text }
 }
 
-// المزوّدين — لو واحد مات امسحه أو ضيف غيره (كل واحد بيرجّع رابط الصورة)
-const PROVIDERS = [
-    { name: 'pollinations-flux', url: (p, seed) => `https://image.pollinations.ai/prompt/${encodeURIComponent(p)}?width=1024&height=1024&nologo=true&model=flux&seed=${seed}` },
-    { name: 'pollinations-turbo', url: (p, seed) => `https://image.pollinations.ai/prompt/${encodeURIComponent(p)}?width=1024&height=1024&nologo=true&model=turbo&seed=${seed}` },
-]
-
-const shortErr = e => e?.response?.status ? `HTTP ${e.response.status}` : String(e?.code || e?.message || e).slice(0, 80)
+const httpErr = (status, headers = {}) => Object.assign(new Error(`HTTP ${status}`), { response: { status, headers } })
+const shortErr = e => e?.response?.status ? `HTTP ${e.response.status}` : String(e?.code || e?.message || e).slice(0, 90)
 
 async function fetchImage(url) {
     const r = await axios.get(url, { responseType: 'arraybuffer', timeout: 90000, headers: { 'User-Agent': UA }, validateStatus: () => true })
-    if (r.status === 429) { const e = new Error('429'); e.response = { status: 429 }; throw e }
-    if (r.status !== 200) { const e = new Error(`HTTP ${r.status}`); e.response = { status: r.status }; throw e }
-    const type = String(r.headers['content-type'] || '')
+    if (r.status !== 200) throw httpErr(r.status, r.headers)
     const buf = Buffer.from(r.data)
-    if (!type.startsWith('image') || buf.length < 1000) throw new Error('الرد مش صورة')
+    if (!String(r.headers['content-type'] || '').startsWith('image') || buf.length < 1000) throw new Error('الرد مش صورة')
     return buf
 }
+
+// ───────── 1) Pollinations ─────────
+async function pollinations(prompt, seed) {
+    const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=768&height=768&nologo=true&seed=${seed}`
+    try { return await fetchImage(url) }
+    catch (e) {
+        // 402/429 = وصلنا للحد: لو الانتظار قصير نستنى ونعيد مرة، غير كده ننتقل للمزوّد التاني
+        const st = e?.response?.status
+        const wait = Number(e?.response?.headers?.['retry-after'])
+        if ((st === 402 || st === 429) && wait > 0 && wait <= 25) { await sleep(wait * 1000 + 500); return await fetchImage(url) }
+        throw e
+    }
+}
+
+// ───────── 2) AI Horde ─────────
+async function horde(prompt) {
+    const H = { apikey: process.env.HORDE_KEY || '0000000000', 'Client-Agent': 'sukuna-bot:1.0:anonymous', 'Content-Type': 'application/json', 'User-Agent': UA }
+    const sub = await axios.post(`${HORDE}/generate/async`, { prompt, params: { width: 512, height: 512, steps: 25, n: 1 }, nsfw: false, censor_nsfw: true }, { headers: H, timeout: 30000 })
+    const id = sub.data?.id
+    if (!id) throw new Error('مفيش id: ' + JSON.stringify(sub.data).slice(0, 80))
+
+    const t0 = Date.now()
+    let done = false
+    while (Date.now() - t0 < 180000) {
+        await sleep(POLL_MS)
+        const c = await axios.get(`${HORDE}/generate/check/${id}`, { headers: H, timeout: 20000 })
+        if (c.data?.faulted) throw new Error('المهمة فشلت')
+        if (c.data?.done) { done = true; break }
+    }
+    if (!done) throw new Error('الطابور طويل (انتهى الوقت)')
+
+    const s = await axios.get(`${HORDE}/generate/status/${id}`, { headers: H, timeout: 30000 })
+    const g = s.data?.generations?.[0]
+    if (!g?.img) throw new Error('مفيش صورة في الرد')
+    if (g.censored) throw new Error('الصورة اتحجبت (محتوى غير مناسب)')
+    return /^https?:/.test(g.img) ? await fetchImage(g.img) : Buffer.from(g.img, 'base64')
+}
+
+const PROVIDERS = [
+    { name: 'pollinations', run: pollinations },
+    { name: 'ai-horde', run: horde },
+]
 
 let handler = async (m, { conn, text, usedPrefix = '.', command }) => {
     const say = t => conn.sendMessage(m.chat, { text: t }, { quoted: m })
@@ -42,7 +81,7 @@ let handler = async (m, { conn, text, usedPrefix = '.', command }) => {
     if (!text) return say(`🚀 *أدخل وصفًا للصورة التي تريد تخيلها.*\n\nمثال:\n${usedPrefix}${command} قطة ترتدي بدلة فضاء`)
 
     await react('🎨')
-    await say('🎨 *يتم معالجة طلبك... لا تطلب الأمر مرة أخرى حتى يكتمل التنفيذ!*')
+    await say('🎨 *يتم معالجة طلبك... لا تطلب الأمر مرة أخرى حتى يكتمل التنفيذ!*\n⏳ ممكن ياخد لحد دقيقتين لو الخدمة زحمة.')
 
     const prompt = await toEnglish(text)
     const seed = Math.floor(Math.random() * 1e9)
@@ -50,20 +89,14 @@ let handler = async (m, { conn, text, usedPrefix = '.', command }) => {
     let image = null
 
     for (const p of PROVIDERS) {
-        for (let attempt = 0; attempt < 2 && !image; attempt++) {
-            try {
-                image = await fetchImage(p.url(prompt, seed))
-                console.log(`[رسم] ✅ ${p.name}`)
-            } catch (e) {
-                const msg = shortErr(e)
-                console.error(`[رسم] ❌ ${p.name}: ${msg}`)
-                // 429 = الحد المجاني (طلب كل 15 ثانية): نستنى ونعيد مرة
-                if (e?.response?.status === 429 && attempt === 0) { await sleep(16000); continue }
-                errors.push(`${p.name}: ${msg}`)
-                break
-            }
+        try {
+            image = await p.run(prompt, seed)
+            console.log(`[رسم] ✅ ${p.name}`)
+            break
+        } catch (e) {
+            errors.push(`${p.name}: ${shortErr(e)}`)
+            console.error(`[رسم] ❌ ${p.name}: ${shortErr(e)}`)
         }
-        if (image) break
     }
 
     if (!image) {
