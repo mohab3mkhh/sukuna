@@ -17,7 +17,7 @@
 
 import { TelegramClient } from 'telegram'
 import { StringSession } from 'telegram/sessions/index.js'
-import { sendButtons } from '../lib/buttons.js'
+import { sendList } from '../lib/buttons.js'
 
 const BOT = 'GPT4Telegrambot'
 const MENU_FALLBACK = process.env.TG_IMG_BTN || '🎨 إنشاء الصور'
@@ -204,11 +204,15 @@ async function onChoice(m, conn, usedPrefix, text) {
         if (!model) return
         if (!model.ready) return reply(conn, m, `🚧 نموذج *${model.label}* لسه مش متفعّل، جرّب *Nano Banana Pro* دلوقتي`)
         job.model = action.slice(2)
-        return sendButtons(conn, m.chat, {
+        return sendList(conn, m.chat, {
             text: `🎨 *${model.label}*\n\nاختار الجودة 👇`,
             footer: FOOTER,
             title: '🎨 جودة الصورة',
-            buttons: QUALITIES.map(q => ({ text: q, id: `${usedPrefix}رسم_خيار ${token} q_${q}` })),
+            buttonText: 'اختار الجودة',
+            sections: [{
+                title: 'الجودة',
+                rows: QUALITIES.map(q => ({ header: '', title: q, description: '', id: `${usedPrefix}رسم_خيار ${token} q_${q}` })),
+            }],
             quoted: m,
         })
     }
@@ -262,11 +266,15 @@ let handler = async (m, { conn, text, usedPrefix = '.', command }) => {
     global.drawJobs.set(token, { token, chat: m.chat, sender: m.sender, prompt, m, createdAt: now })
 
     try {
-        await sendButtons(conn, m.chat, {
+        await sendList(conn, m.chat, {
             text: `🎨 *الوصف:* ${prompt.slice(0, 200)}\n\nاختار النموذج 👇`,
             footer: FOOTER,
             title: '🎨 رسم بالذكاء الاصطناعي',
-            buttons: Object.entries(MODELS).map(([key, mod]) => ({ text: mod.label, id: `${usedPrefix}رسم_خيار ${token} m_${key}` })),
+            buttonText: 'اختار النموذج',
+            sections: [{
+                title: 'النماذج',
+                rows: Object.entries(MODELS).map(([key, mod]) => ({ header: '', title: mod.label, description: '', id: `${usedPrefix}رسم_خيار ${token} m_${key}` })),
+            }],
             quoted: m,
         })
     } catch (e) {
