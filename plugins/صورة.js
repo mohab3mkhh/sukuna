@@ -6,8 +6,6 @@ import { tmpdir } from 'os'
 import { createWriteStream, unlinkSync, statSync } from 'fs'
 import { pipeline } from 'stream/promises'
 
-const OWNER_NUMBERS = ['201036547166', '201016855501']
-
 let handler = async (m, { conn, text, usedPrefix, command }) => {
   const react = async (emoji) => {
     try { await conn.sendMessage(m.chat, { react: { text: emoji, key: m.key } }) } catch {}
