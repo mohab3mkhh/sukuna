@@ -1,337 +1,267 @@
+// plugins/draw.js
 /**
- * plugins/رسم.js
- * توليد الصور عبر @GPT4Telegrambot على تليجرام
- * النماذج: Nano Banana Pro / GPT Image / Recraft
+ * .ارسم / .رسم <وصف>
+ * بيرسم الصورة عن طريق بوت تليجرام @GPT4Telegrambot بحسابك انت (نفس ربط أمر numbers).
+ *
+ * الخطوات:
+ *  1) المستخدم يبعت  .ارسم <وصف>  ← البوت يبعتله 3 أزرار نماذج
+ *  2) يختار النموذج ← يظهر له أزرار الجودة 1k / 2k / 4k
+ *  3) يختار الجودة ← البوت يدوس على الأزرار في تليجرام ويبعت الوصف ويرجّع الصورة
+ *
+ * النموذج الشغّال دلوقتي: Nano Banana Pro  (GPT Image و Recraft جايين في الخطوة الجاية)
+ *
+ * متغيرات اختيارية في Railway:
+ *   TG_IMG_BTN         نص زرار "إنشاء الصور" لو البوت ماقدرش يلاقيه لوحده
+ *   DRAW_COOLDOWN_SEC  الانتظار بين طلب وطلب لنفس الشخص (الافتراضي 60 ثانية)
  */
 
-import { TelegramClient } from 'telegram'
-import { StringSession } from 'telegram/sessions/index.js'
-import { NewMessage } from 'telegram/events/index.js'
+import { getTgClient } from '../lib/tg.js'
+import { sendButtons } from '../lib/buttons.js'
 
-const API_ID   = parseInt(process.env.TG_API_ID)
-const API_HASH = process.env.TG_API_HASH
-const BOT_USER = 'GPT4Telegrambot'
+const BOT = 'GPT4Telegrambot'
+const MENU_FALLBACK = process.env.TG_IMG_BTN || '🎨 إنشاء الصور'
+const COOLDOWN_MS = (Number(process.env.DRAW_COOLDOWN_SEC) || 60) * 1000
+const MAX_PENDING = 5                 // أقصى عدد طلبات واقفة في الطابور
+const JOB_TTL = 30 * 60 * 1000        // صلاحية الأزرار
+const GEN_TIMEOUT = 180 * 1000        // أقصى وقت لانتظار الصورة
+const FOOTER = '⛩️ SUKUNA BOT ⛩️'
 
-// النماذج المسموح بيها بس
-const ALLOWED_MODELS = ['Nano Banana Pro', 'GPT Image 2.6', 'Recraft']
-
-// الجودات
-const QUALITY_LABELS = { '1': '1k', '2': '2k', '3': '4k' }
-
-let _client = null
-
-// ══════════════════════════════════════════════════
-// اتصال بتليجرام
-// ══════════════════════════════════════════════════
-async function getClient() {
-  if (_client?.connected) return _client
-  const session = new StringSession(process.env.TG_SESSION || '')
-  const client  = new TelegramClient(session, API_ID, API_HASH, { connectionRetries: 5 })
-  await client.connect()
-  console.log('[رسم] ✅ TG Connected')
-  _client = client
-  return client
+const MODELS = {
+    nano:    { label: 'Nano Banana Pro', tg: /nano\s*banana\s*pro/i, ready: true },
+    gpt:     { label: 'GPT Image 2.6',   tg: /gpt\s*image/i,        ready: false },
+    recraft: { label: 'Recraft',         tg: /recraft/i,            ready: false },
 }
+const QUALITIES = ['1k', '2k', '4k']
 
-// ══════════════════════════════════════════════════
-// انتظر رد من البوت (نص أو صورة)
-// ══════════════════════════════════════════════════
-function waitForReply(client, timeout = 60000) {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      client.removeEventHandler(h)
-      reject(new Error('انتهى الوقت — مفيش رد من تليجرام'))
-    }, timeout)
+if (!global.drawJobs) global.drawJobs = new Map()   // token → طلب
+if (!global.drawLast) global.drawLast = new Map()   // المستخدم → وقت آخر رسم
 
-    const h = async (event) => {
-      const msg = event.message
-      if (!msg) return
-      try {
-        const sender = await msg.getSender()
-        if (sender?.username?.toLowerCase() === BOT_USER.toLowerCase()) {
-          clearTimeout(timer)
-          client.removeEventHandler(h)
-          resolve(msg)
+const log = (...a) => console.log('[رسم]', ...a)
+const sleep = ms => new Promise(r => setTimeout(r, ms))
+const tgErr = (code, extra) => Object.assign(new Error(code), { extra })
+
+// بينضّف نص الزرار من الإيموجي والرموز عشان المقارنة تبقى سهلة: "✅ 2k" ← "2k"
+const norm = s => String(s || '').toLowerCase().replace(/[^\p{L}\p{N}\s.]/gu, ' ').replace(/\s+/g, ' ').trim()
+
+const buttonsOf = msg => msg?.replyMarkup?.rows?.flatMap(r => r.buttons || []) || []
+
+// بيدور على زرار (inline له data) نصه يطابق الاختبار، في أحدث الرسايل الأول
+function findBtn(msgs, test) {
+    for (const msg of msgs) {
+        for (const btn of buttonsOf(msg)) {
+            if (btn.data && test(norm(btn.text))) return { msg, btn }
         }
-      } catch {}
     }
-    client.addEventHandler(h, new NewMessage({}))
-  })
+    return null
 }
 
-async function sendAndWait(client, message, timeout = 30000) {
-  const p = waitForReply(client, timeout)
-  await client.sendMessage(BOT_USER, { message })
-  return p
+async function waitFor(fn, { timeout = 25000, every = 900 } = {}) {
+    const end = Date.now() + timeout
+    while (Date.now() < end) {
+        const r = await fn()
+        if (r) return r
+        await sleep(every)
+    }
+    return null
 }
 
-async function clickAndWait(client, msg, btnData, timeout = 60000) {
-  const p = waitForReply(client, timeout)
-  await msg.click({ data: btnData })
-  return p
-}
-
-// ══════════════════════════════════════════════════
-// استخرج الأزرار من رسالة
-// ══════════════════════════════════════════════════
-function getButtons(msg) {
-  return msg?.replyMarkup?.rows?.flatMap(r => r.buttons) || []
-}
-
-// ══════════════════════════════════════════════════
-// حالة كل مستخدم
-// ══════════════════════════════════════════════════
-if (!global._rsmState) global._rsmState = {}
-
-// ══════════════════════════════════════════════════
-// Handler الرئيسي
-// ══════════════════════════════════════════════════
-const handler = async (m, { conn, text, usedPrefix, command }) => {
-  const jid    = m.chat
-  const sender = m.sender
-  const input  = (text || '').trim()
-
-  const reply = async (txt) =>
-    conn.sendMessage(jid, { text: txt }, { quoted: m })
-
-  const sendBtns = async (txt, btns) => {
-    // بعت زراير كـ list
-    const sections = [{
-      title: '🎨 اختار',
-      rows: btns.map((b, i) => ({
-        title: b.label,
-        rowId: `${usedPrefix}${command} _btn_${i}_${sender}`,
-        description: ''
-      }))
-    }]
+async function clickBtn(hit) {
     try {
-      await conn.sendMessage(jid, {
-        text: txt,
-        buttonText: '🎨 اختار',
-        sections,
-        listType: 1
-      }, { quoted: m })
-    } catch {
-      // fallback نص عادي لو list مش شغال
-      const nums = btns.map((b, i) => `*${i + 1}.* ${b.label}`).join('\n')
-      await reply(`${txt}\n\n${nums}\n\nابعت الرقم`)
+        await hit.msg.click({ data: hit.btn.data })
+    } catch (e) {
+        // تليجرام ساعات مابيردش على الضغطة في الوقت، ده مش خطأ
+        if (!/timeout/i.test(String(e?.message || e))) throw e
     }
-  }
-
-  const state = global._rsmState[sender] || {}
-
-  try {
-    const client = await getClient()
-
-    // ══════════════════════════════════════════════
-    // مرحلة 1: بداية — اضغط "إنشاء الصور"
-    // ══════════════════════════════════════════════
-    if (!state.step) {
-      await m.react('⏳')
-
-      // بعت /start للبوت
-      const startMsg = await sendAndWait(client, '/start', 30000)
-      const startBtns = getButtons(startMsg)
-
-      // دور على زرار "إنشاء الصور"
-      const createBtn = startBtns.find(b =>
-        b.text?.includes('إنشاء الصور') || b.text?.includes('صور') || b.text?.toLowerCase().includes('image')
-      )
-
-      if (!createBtn) {
-        await m.react('❌')
-        return reply('❌ مش لاقي زرار "إنشاء الصور" — جرب تاني')
-      }
-
-      // اضغط الزرار
-      const modelsMsg = await clickAndWait(client, startMsg, createBtn.data, 30000)
-      const modelBtns = getButtons(modelsMsg)
-
-      // فلتر النماذج المسموح بيها بس
-      const filtered = modelBtns.filter(b =>
-        ALLOWED_MODELS.some(m => b.text?.includes(m))
-      )
-
-      if (!filtered.length) {
-        await m.react('❌')
-        return reply('❌ مش لاقي النماذج — جرب تاني')
-      }
-
-      // احفظ الحالة
-      global._rsmState[sender] = {
-        step: 'choose_model',
-        modelBtns: filtered.map(b => ({ label: b.text, data: b.data })),
-        tgMsg: modelsMsg
-      }
-
-      await m.react('✅')
-      await sendBtns(
-        `🎨 *اختار النموذج:*`,
-        filtered.map(b => ({ label: b.text }))
-      )
-      return
-    }
-
-    // ══════════════════════════════════════════════
-    // مرحلة 2: اختار النموذج
-    // ══════════════════════════════════════════════
-    if (state.step === 'choose_model') {
-      const { modelBtns, tgMsg } = state
-
-      let chosen = null
-      const idx = parseInt(input) - 1
-      if (!isNaN(idx) && modelBtns[idx]) {
-        chosen = modelBtns[idx]
-      } else {
-        chosen = modelBtns.find(b => b.label?.toLowerCase().includes(input.toLowerCase()))
-      }
-
-      if (!chosen) {
-        return reply(`❌ اختار رقم من 1 لـ ${modelBtns.length}`)
-      }
-
-      await m.react('⏳')
-
-      // اضغط النموذج
-      const afterModel = await clickAndWait(client, tgMsg, chosen.data, 30000)
-      const afterBtns  = getButtons(afterModel)
-
-      const isNanoPro = chosen.label?.includes('Nano Banana Pro')
-
-      if (isNanoPro && afterBtns.length > 0) {
-        // في خيارات جودة
-        const qualityBtns = afterBtns.filter(b =>
-          b.text?.match(/\d[kK]/) || b.text?.match(/^[1234]$/)
-        )
-
-        if (qualityBtns.length > 0) {
-          global._rsmState[sender] = {
-            step: 'choose_quality',
-            model: chosen.label,
-            qualityBtns: qualityBtns.map(b => ({ label: b.text, data: b.data })),
-            tgMsg: afterModel
-          }
-
-          await m.react('✅')
-          await sendBtns(
-            `✅ اخترت *${chosen.label}*\n\n📊 *اختار الجودة:*`,
-            qualityBtns.map(b => ({ label: b.text }))
-          )
-          return
-        }
-      }
-
-      // مفيش جودة — اطلب الوصف مباشرة
-      global._rsmState[sender] = {
-        step: 'waiting_prompt',
-        model: chosen.label,
-        tgMsg: afterModel
-      }
-
-      await m.react('✅')
-      await reply(
-        `✅ اخترت *${chosen.label}*\n\n` +
-        `✏️ *اكتب وصف الصورة:*\n` +
-        `مثال: \`${usedPrefix}${command} قطة نائمة على القمر\``
-      )
-      return
-    }
-
-    // ══════════════════════════════════════════════
-    // مرحلة 3: اختار الجودة (Nano Banana Pro فقط)
-    // ══════════════════════════════════════════════
-    if (state.step === 'choose_quality') {
-      const { qualityBtns, tgMsg, model } = state
-
-      let chosen = null
-      const idx = parseInt(input) - 1
-      if (!isNaN(idx) && qualityBtns[idx]) {
-        chosen = qualityBtns[idx]
-      } else {
-        chosen = qualityBtns.find(b => b.label?.toLowerCase().includes(input.toLowerCase()))
-      }
-
-      if (!chosen) {
-        return reply(`❌ اختار رقم من 1 لـ ${qualityBtns.length}`)
-      }
-
-      await m.react('⏳')
-
-      // اضغط الجودة
-      const afterQuality = await clickAndWait(client, tgMsg, chosen.data, 30000)
-
-      global._rsmState[sender] = {
-        step: 'waiting_prompt',
-        model,
-        quality: chosen.label,
-        tgMsg: afterQuality
-      }
-
-      await m.react('✅')
-      await reply(
-        `✅ اخترت *${model}* — جودة *${chosen.label}*\n\n` +
-        `✏️ *اكتب وصف الصورة:*\n` +
-        `مثال: \`${usedPrefix}${command} قطة نائمة على القمر\``
-      )
-      return
-    }
-
-    // ══════════════════════════════════════════════
-    // مرحلة 4: استقبل الوصف وبعته، انتظر الصورة
-    // ══════════════════════════════════════════════
-    if (state.step === 'waiting_prompt') {
-      if (!input) return reply('✏️ اكتب وصف الصورة')
-
-      const { model, quality, tgMsg } = state
-
-      await m.react('⏳')
-      await reply(`⏳ جاري توليد الصورة...\n📝 ${input}\n🎨 ${model}${quality ? ` — ${quality}` : ''}`)
-
-      // بعت الوصف للبوت
-      const imgMsg = await sendAndWait(client, input, 120000)
-
-      // امسح الحالة
-      delete global._rsmState[sender]
-
-      // جيب الصورة
-      let imgBuffer = null
-      if (imgMsg.media) {
-        try {
-          imgBuffer = await client.downloadMedia(imgMsg.media, {})
-        } catch (e) {
-          console.error('[رسم] download error:', e.message)
-        }
-      }
-
-      if (!imgBuffer) {
-        await m.react('❌')
-        return reply(`❌ مش قادر أجيب الصورة\n\n${imgMsg.text || 'مفيش نص'}`)
-      }
-
-      await conn.sendMessage(jid, {
-        image: imgBuffer,
-        caption:
-          `╭━━━〔 ✅ *تـم تـولـيـد الـصـورة* 〕━━━⬣\n` +
-          `┃ 📝 *الوصف:* ${input}\n` +
-          `┃ 🎨 *النموذج:* ${model}${quality ? `\n┃ 📊 *الجودة:* ${quality}` : ''}\n` +
-          `╰━━━━━━━━━━━━━━⬣\n\n` +
-          `> ⛩️ SUKUNA BOT ⛩️`
-      }, { quoted: m })
-
-      await m.react('✅')
-      return
-    }
-
-  } catch (e) {
-    console.error('[رسم]', e.message)
-    delete global._rsmState[sender]
-    await m.react('❌')
-    await reply(`❌ *فشل*\n⚠️ ${e.message}`)
-  }
 }
 
-handler.help    = ['رسم <وصف الصورة>']
-handler.tags    = ['ai']
-handler.command = /^(رسم|ارسم|draw|رسمه|صميم)$/i
+// ════════════ التنفيذ على تليجرام ════════════
+async function generate(client, job, quality) {
+    const model = MODELS[job.model]
+    const startSec = Math.floor(Date.now() / 1000)
+    const recent = async () => Array.from(await client.getMessages(BOT, { limit: 15 }))
+    const latestId = async () => (await recent())[0]?.id || 0
+    const baseId = await latestId()
+    // رسالة "جديدة" = اتبعتت بعد ما بدأنا، أو اتعدّلت بعد ما بدأنا (البوت ساعات بيعدّل نفس الرسالة)
+    const fresh = m => m.id > baseId || (m.editDate && m.editDate >= startSec - 3)
+    const visible = async () => [...new Set((await recent()).flatMap(buttonsOf).map(b => b.text))].slice(0, 20).join(' | ')
 
+    // 1) زرار "إنشاء الصور" في لوحة المفاتيح السفلية
+    const findLabel = ms => {
+        for (const msg of ms) {
+            for (const b of buttonsOf(msg)) {
+                if (!b.data && /نشاء\s*الصور/.test(norm(b.text))) return b.text
+            }
+        }
+        return null
+    }
+    let label = global._tgImgLabel || findLabel(await recent())
+    if (!label) {
+        await client.sendMessage(BOT, { message: '/start' })
+        label = await waitFor(async () => findLabel((await recent()).filter(fresh)), { timeout: 12000 })
+    }
+    if (label) global._tgImgLabel = label
+    label = label || MENU_FALLBACK
+    log('بدوس على:', label)
+    await client.sendMessage(BOT, { message: label })
+
+    // 2) قايمة النماذج ← نضغط على النموذج المطلوب
+    const modelHit = await waitFor(async () => findBtn((await recent()).filter(fresh), t => model.tg.test(t)), { timeout: 25000 })
+    if (!modelHit) throw tgErr('NO_MODEL', await visible())
+    log('بدوس على النموذج:', modelHit.btn.text)
+    await clickBtn(modelHit)
+
+    // 3) أزرار الجودة ← نضغط على الجودة (نموذج 2.1 / Pro جوه نفس الشاشة بنسيبه زي ما هو)
+    const qHit = await waitFor(async () => findBtn((await recent()).filter(fresh), t => t === quality), { timeout: 20000 })
+    if (!qHit) throw tgErr('NO_QUALITY', await visible())
+    log('بدوس على الجودة:', qHit.btn.text)
+    await clickBtn(qHit)
+    await sleep(1000)
+
+    // 4) نبعت الوصف ونستنى الصورة
+    const before = await latestId()
+    const t0 = Math.floor(Date.now() / 1000)
+    await client.sendMessage(BOT, { message: job.prompt })
+    log('بعتّ الوصف، مستني الصورة...')
+
+    const isNew = m => !m.out && (m.id > before || (m.editDate && m.editDate >= t0 - 3))
+    const images = ms => ms.filter(m => isNew(m) && (m.photo || String(m.document?.mimeType || '').startsWith('image/')))
+
+    let found = await waitFor(async () => {
+        const c = images(await recent())
+        return c.length ? c : null
+    }, { timeout: GEN_TIMEOUT, every: 2500 })
+
+    if (!found) {
+        const texts = (await recent()).filter(m => isNew(m) && m.message).map(m => m.message).join('\n---\n')
+        throw tgErr('NO_IMAGE', texts)
+    }
+
+    // البوت بيبعت الملف الكامل (PNG تقيل) وبعده الصورة العادية، فنفضّل الصورة العادية
+    if (!found.some(m => m.photo)) {
+        const more = await waitFor(async () => {
+            const c = images(await recent())
+            return c.some(m => m.photo) ? c : null
+        }, { timeout: 12000, every: 2000 })
+        if (more) found = more
+    }
+
+    const target = found.find(m => m.photo) || found[0]
+    const buffer = await client.downloadMedia(target)
+    if (!Buffer.isBuffer(buffer) || !buffer.length) throw tgErr('DOWNLOAD')
+    return buffer
+}
+
+// ════════════ طابور (حساب تليجرام واحد = طلب واحد في نفس الوقت) ════════════
+let chain = Promise.resolve()
+let pending = 0
+function enqueue(fn) {
+    if (pending >= MAX_PENDING) return Promise.reject(new Error('BUSY'))
+    pending++
+    const run = chain.then(() => fn())
+    chain = run.catch(() => {})
+    return run.finally(() => { pending-- })
+}
+
+function explain(e) {
+    const c = e?.message
+    const x = e?.extra ? `\n\n🔎 ${String(e.extra).slice(0, 400)}` : ''
+    if (c === 'ENV_MISSING') return 'متغيرات TG_API_ID / TG_API_HASH / TG_SESSION ناقصة في Railway'
+    if (c === 'BUSY') return 'فيه طلبات كتير شغالة دلوقتي، جرّب بعد شوية'
+    if (c === 'NO_MODEL') return `مقدرتش ألاقي زرار النموذج في بوت تليجرام (ممكن شكل البوت اتغيّر).\nالأزرار اللي ظهرت: ${e.extra || 'ولا حاجة'}`
+    if (c === 'NO_QUALITY') return `مقدرتش ألاقي أزرار الجودة في بوت تليجرام.\nالأزرار اللي ظهرت: ${e.extra || 'ولا حاجة'}`
+    if (c === 'NO_IMAGE') return `البوت ماريّحش بصورة في الوقت المحدد.${x ? '\nآخر رد منه:' + x : ''}`
+    if (c === 'DOWNLOAD') return 'الصورة وصلت بس مقدرتش أنزّلها من تليجرام'
+    return String(c || e).slice(0, 200)
+}
+
+// ════════════ واتساب ════════════
+const reply = (conn, m, text) => conn.sendMessage(m.chat, { text }, { quoted: m })
+
+async function onChoice(m, conn, usedPrefix, text) {
+    const [token, action = ''] = text.split(/\s+/)
+    const job = global.drawJobs.get(token)
+    if (!job) return reply(conn, m, `⚠️ الطلب ده انتهت صلاحيته، ابعت ${usedPrefix}ارسم <الوصف> من جديد`)
+    if (job.sender !== m.sender) return reply(conn, m, '⚠️ الأزرار دي لصاحب الطلب بس')
+
+    // اختيار النموذج
+    if (action.startsWith('m_')) {
+        const model = MODELS[action.slice(2)]
+        if (!model) return
+        if (!model.ready) return reply(conn, m, `🚧 نموذج *${model.label}* لسه مش متفعّل، جرّب *Nano Banana Pro* دلوقتي`)
+        job.model = action.slice(2)
+        return sendButtons(conn, m.chat, {
+            text: `🎨 *${model.label}*\n\nاختار الجودة 👇`,
+            footer: FOOTER,
+            title: '🎨 جودة الصورة',
+            buttons: QUALITIES.map(q => ({ text: q, id: `${usedPrefix}رسم_خيار ${token} q_${q}` })),
+            quoted: m,
+        })
+    }
+
+    // اختيار الجودة ← نبدأ الرسم
+    if (action.startsWith('q_')) {
+        const quality = action.slice(2)
+        if (!QUALITIES.includes(quality) || !job.model) return
+        if (job.running) return
+        job.running = true
+        global.drawLast.set(job.sender, Date.now())
+
+        const model = MODELS[job.model]
+        await reply(conn, m, `⏳ جاري الرسم بـ *${model.label}* (${quality})...\nممكن ياخد لحد دقيقتين.`)
+        try {
+            const buffer = await enqueue(async () => generate(await getTgClient(), job, quality))
+            const caption =
+                `╭━━━〔 🎨 𝑫𝑹𝑨𝑾 〕━━━⬣\n` +
+                `┃ ✦ 𝑴𝒐𝒅𝒆𝒍 ↬ ${model.label}\n` +
+                `┃ ✦ 𝑸𝒖𝒂𝒍𝒊𝒕𝒚 ↬ ${quality}\n` +
+                `┃ ✦ 𝑷𝒓𝒐𝒎𝒑𝒕 ↬ ${job.prompt.slice(0, 200)}\n` +
+                `╰━━━━━━━━━━━━━━⬣\n\n> ${FOOTER}`
+            await conn.sendMessage(job.chat, { image: buffer, caption }, { quoted: job.m })
+        } catch (e) {
+            console.error('[رسم] فشل:', e?.message || e, e?.extra || '')
+            await reply(conn, m, `❌ *فشل الرسم*\n\n⚠️ ${explain(e)}`)
+        } finally {
+            global.drawJobs.delete(token)
+        }
+    }
+}
+
+let handler = async (m, { conn, text, usedPrefix = '.', command }) => {
+    const cmd = String(command || '').replace(/^[.!#/]/, '')
+    const now = Date.now()
+    for (const [k, v] of global.drawJobs) if (now - v.createdAt > JOB_TTL) global.drawJobs.delete(k)
+
+    // ضغطة زرار
+    if (/^رسم_خيار$/i.test(cmd)) return onChoice(m, conn, usedPrefix, String(text || '').trim())
+
+    // .ارسم / .رسم <وصف>
+    const prompt = String(text || '').trim()
+    if (!prompt) {
+        return reply(conn, m, `🎨 *الرسم بالذكاء الاصطناعي*\n\nاكتب:\n*${usedPrefix}${cmd} <وصف الصورة>*\n\nمثال:\n*${usedPrefix}${cmd} فتاة نائمة على سرير أسود*\n\n> ${FOOTER}`)
+    }
+
+    const left = COOLDOWN_MS - (now - (global.drawLast.get(m.sender) || 0))
+    if (left > 0) return reply(conn, m, `⏳ استنى ${Math.ceil(left / 1000)} ثانية قبل الرسمة الجاية`)
+
+    const token = Math.random().toString(36).slice(2, 8)
+    global.drawJobs.set(token, { token, chat: m.chat, sender: m.sender, prompt, m, createdAt: now })
+
+    try {
+        await sendButtons(conn, m.chat, {
+            text: `🎨 *الوصف:* ${prompt.slice(0, 200)}\n\nاختار النموذج 👇`,
+            footer: FOOTER,
+            title: '🎨 رسم بالذكاء الاصطناعي',
+            buttons: Object.entries(MODELS).map(([key, mod]) => ({ text: mod.label, id: `${usedPrefix}رسم_خيار ${token} m_${key}` })),
+            quoted: m,
+        })
+    } catch (e) {
+        global.drawJobs.delete(token)
+        console.error('[رسم] الأزرار فشلت:', e?.message || e)
+        await reply(conn, m, `❌ مقدرتش أبعت الأزرار: ${e?.message || e}`)
+    }
+}
+
+handler.help = ['ارسم <وصف>']
+handler.tags = ['ai']
+handler.command = /^(ارسم|رسم|رسم_خيار)$/i
 export default handler
