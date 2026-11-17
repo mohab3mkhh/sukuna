@@ -28,7 +28,7 @@ let handler = async (m, { conn, isROwner, text }) => {
         while (!sent && attempts < maxRetries) {
             try {
                 await conn.sendMessage(id, {
-                    text: '––––––『 *إذاعة* 』––––––\n\n' + pesan + '\n\n*💌  هذا بيان رسمي من مالك البوت تربو*'
+                    text: '––––––『 *إذاعة* 』––––––\n\n' + pesan + '\n\n*💌  هذا بيان رسمي من مالك البوت مهاب*'
                 });
 
                 // تحديد ما إذا كان الشات مجموعة أو خاص
