@@ -43,83 +43,92 @@ async function resizeIfNeeded(buf, maxSize = 1024) {
     } catch { return buf }
 }
 
-// ━━━ Stability AI — تعديل صورة (img2img) ━━━
-async function stabilityEdit(buffer, prompt) {
-    const resized = await resizeIfNeeded(buffer)
+// ━━━ Stability AI v1 — image-to-image (متاح على الـ free tier) ━━━
+async function stabilityImg2Img(buffer, prompt) {
+    const resized = await resizeIfNeeded(buffer, 512)
     const form = new FormData()
-    form.append('image', resized, { filename: 'image.jpg', contentType: 'image/jpeg' })
-    form.append('prompt', prompt)
-    form.append('output_format', 'jpeg')
-    form.append('strength', '0.7') // 0 = مش بيغير كتير، 1 = بيغير كتير
+    form.append('init_image', resized, { filename: 'image.png', contentType: 'image/png' })
+    form.append('init_image_mode', 'IMAGE_STRENGTH')
+    form.append('image_strength', '0.35')
+    form.append('text_prompts[0][text]', prompt)
+    form.append('text_prompts[0][weight]', '1')
+    form.append('cfg_scale', '7')
+    form.append('samples', '1')
+    form.append('steps', '30')
 
     const r = await axios.post(
-        'https://api.stability.ai/v2beta/stable-image/edit/inpaint',
+        'https://api.stability.ai/v1/generation/stable-diffusion-xl-1024-v1-0/image-to-image',
         form,
         {
             headers: {
                 ...form.getHeaders(),
                 'Authorization': `Bearer ${STABILITY_KEY}`,
-                'Accept': 'image/*'
+                'Accept': 'application/json'
             },
-            responseType: 'arraybuffer',
             timeout: 120000
         }
     )
-    const buf = Buffer.from(r.data)
-    if (buf.length < 1000) throw new Error('الرد فارغ')
-    return buf
+    const b64 = r.data?.artifacts?.[0]?.base64
+    if (!b64) throw new Error('مفيش صورة في الرد')
+    return Buffer.from(b64, 'base64')
 }
 
-// ━━━ Stability AI — تعديل بأسلوب (style transfer) ━━━
+// ━━━ Stability AI v1 — style (SD v1.6) ━━━
 async function stabilityStyle(buffer, prompt) {
-    const resized = await resizeIfNeeded(buffer)
+    const resized = await resizeIfNeeded(buffer, 512)
     const form = new FormData()
-    form.append('image', resized, { filename: 'image.jpg', contentType: 'image/jpeg' })
-    form.append('prompt', prompt)
-    form.append('output_format', 'jpeg')
-    form.append('fidelity', '0.5')
+    form.append('init_image', resized, { filename: 'image.png', contentType: 'image/png' })
+    form.append('init_image_mode', 'IMAGE_STRENGTH')
+    form.append('image_strength', '0.5')
+    form.append('text_prompts[0][text]', prompt)
+    form.append('text_prompts[0][weight]', '1')
+    form.append('cfg_scale', '7')
+    form.append('samples', '1')
+    form.append('steps', '30')
 
     const r = await axios.post(
-        'https://api.stability.ai/v2beta/stable-image/control/style',
+        'https://api.stability.ai/v1/generation/stable-diffusion-v1-6/image-to-image',
         form,
         {
             headers: {
                 ...form.getHeaders(),
                 'Authorization': `Bearer ${STABILITY_KEY}`,
-                'Accept': 'image/*'
+                'Accept': 'application/json'
             },
-            responseType: 'arraybuffer',
             timeout: 120000
         }
     )
-    const buf = Buffer.from(r.data)
-    if (buf.length < 1000) throw new Error('الرد فارغ')
-    return buf
+    const b64 = r.data?.artifacts?.[0]?.base64
+    if (!b64) throw new Error('مفيش صورة في الرد')
+    return Buffer.from(b64, 'base64')
 }
 
-// ━━━ Stability AI — توليد صورة من نص ━━━
+// ━━━ Stability AI v1 — توليد من نص ━━━
 async function stabilityGenerate(prompt) {
     const form = new FormData()
-    form.append('prompt', prompt)
-    form.append('output_format', 'jpeg')
-    form.append('aspect_ratio', '1:1')
+    form.append('text_prompts[0][text]', prompt)
+    form.append('text_prompts[0][weight]', '1')
+    form.append('cfg_scale', '7')
+    form.append('width', '512')
+    form.append('height', '512')
+    form.append('samples', '1')
+    form.append('steps', '30')
 
     const r = await axios.post(
-        'https://api.stability.ai/v2beta/stable-image/generate/core',
+        'https://api.stability.ai/v1/generation/stable-diffusion-xl-1024-v1-0/text-to-image',
         form,
         {
             headers: {
                 ...form.getHeaders(),
                 'Authorization': `Bearer ${STABILITY_KEY}`,
-                'Accept': 'image/*'
+                'Accept': 'application/json'
             },
-            responseType: 'arraybuffer',
             timeout: 120000
         }
     )
-    const buf = Buffer.from(r.data)
-    if (buf.length < 1000) throw new Error('الرد فارغ')
-    return buf
+    const b64 = r.data?.artifacts?.[0]?.base64
+    if (!b64) throw new Error('مفيش صورة في الرد')
+    return Buffer.from(b64, 'base64')
 }
 
 // ━━━ Pollinations (احتياطي مجاني) ━━━
@@ -177,8 +186,8 @@ let handler = async (m, { conn, text }) => {
         } catch { return say('❌ فشل تحميل الصورة!') }
 
         result = await runChain([
-            ['stability-style', () => stabilityStyle(buffer, prompt)],
-            ['stability-edit', () => stabilityEdit(buffer, prompt)],
+            ['stability-xl-img2img', () => stabilityImg2Img(buffer, prompt)],
+            ['stability-v1-style', () => stabilityStyle(buffer, prompt)],
         ])
     } else {
         result = await runChain([
