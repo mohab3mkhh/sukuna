@@ -4,6 +4,7 @@ import fs from 'fs'
 import fetch from 'node-fetch'
 import axios from 'axios'
 import moment from 'moment-timezone'
+import { AsyncLocalStorage } from 'node:async_hooks'
 
 function pickRandom(list) {
   return list[Math.floor(Math.random() * list.length)]
@@ -13,7 +14,12 @@ const icono = 'https://files.catbox.moe/v41exb.jpg'
 
 var handler = m => m
 
+// الرد بالاقتباس التلقائي: كل رسالة بتتعالج بنسجّلها هنا، و_quote-fix.js بيقرأها ويضيف الاقتباس
+global.__msgCtx = global.__msgCtx || new AsyncLocalStorage()
+
 handler.all = async function (m) {
+  // لازم يكون قبل أي await
+  try { if (m?.key) global.__msgCtx.enterWith(m) } catch {}
   try {
 
     // ── القنوات ──────────────────────────────────────────
