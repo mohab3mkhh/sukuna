@@ -1,12 +1,12 @@
-// plugins/imagine.js
-// ✧ 𝑪𝑯𝑶𝑺𝑶 - توليد الصور بالذكاء الاصطناعي 🎨
+// plugins/صورة.js — توليد الصور بالذكاء الاصطناعي
 
 import axios from 'axios'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { createWriteStream, unlinkSync, statSync } from 'fs'
 import { pipeline } from 'stream/promises'
-import { theme } from '../core/theme.js'
+
+const OWNER_NUMBERS = ['201036547166', '201016855501']
 
 let handler = async (m, { conn, text, usedPrefix, command }) => {
   const react = async (emoji) => {
@@ -15,24 +15,21 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
 
   if (!text) {
     await react('❌')
-    return m.reply(theme.build([
-      { type: 'title', text: '🎨 𝑪𝑯𝑶𝑺𝑶 - تـولـيـد الـصـور' },
-      { type: 'divider' },
-      { type: 'info', label: '⚔️ الاستخدام', value: `${usedPrefix}${command} [وصف الصورة]` },
-      { type: 'spacer' },
-      { type: 'info', label: '📝 أمثلة', value: '' },
-      { type: 'line', text: 'قطة لطيفة في حديقة' },
-      { type: 'line', text: 'غروب الشمس على البحر' },
-      { type: 'line', text: 'مدينة مستقبلية' }
-    ]))
+    return m.reply(
+      `╭━━━〔 🎨 *تـولـيـد الـصـور* 〕━━━⬣\n` +
+      `┃ ✦ الاستخدام: ${usedPrefix}${command} [وصف الصورة]\n` +
+      `┃\n` +
+      `┃ 📝 *أمثلة:*\n` +
+      `┃ ✦ ${usedPrefix}${command} قطة لطيفة في حديقة\n` +
+      `┃ ✦ ${usedPrefix}${command} غروب الشمس على البحر\n` +
+      `┃ ✦ ${usedPrefix}${command} مدينة مستقبلية\n` +
+      `╰━━━━━━━━━━━━━━⬣\n\n` +
+      `> ⛩️ SUKUNA BOT ⛩️`
+    )
   }
 
   await react('🎨')
-  await m.reply(theme.build([
-    { type: 'title', text: '🎨 𝑪𝑯𝑶𝑺𝑶 تـولـد الـصـورة...' },
-    { type: 'divider' },
-    { type: 'line', text: '⏳ انتظر قليلاً...' }
-  ]))
+  await m.reply(`⏳ جاري توليد الصورة...\n📝 الوصف: ${text}`)
 
   try {
     // ترجمة للإنجليزية
@@ -50,7 +47,7 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
     const encoded = encodeURIComponent(fullPrompt)
     const imageUrl = `https://image.pollinations.ai/prompt/${encoded}?width=1024&height=1024&nologo=true&enhance=true`
 
-    const filePath = join(tmpdir(), `2b_img_${Date.now()}.jpg`)
+    const filePath = join(tmpdir(), `sukuna_img_${Date.now()}.jpg`)
     const imgRes = await axios({
       method: 'GET',
       url: imageUrl,
@@ -70,14 +67,12 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
 
     await conn.sendMessage(m.chat, {
       image: { url: filePath },
-      caption: theme.build([
-        { type: 'title', text: '✅ 𝑪𝑯𝑶𝑺𝑶 - تـم تـولـيـد الـصـورة' },
-        { type: 'divider' },
-        { type: 'info', label: '📝 الوصف', value: text },
-        { type: 'info', label: '📁 الحجم', value: `${(size / 1024).toFixed(2)} KB` },
-        { type: 'divider' },
-        { type: 'line', text: '🔮 Powered by 𝑪𝑯𝑶𝑺𝑶' }
-      ])
+      caption:
+        `╭━━━〔 ✅ *تـم تـولـيـد الـصـورة* 〕━━━⬣\n` +
+        `┃ 📝 *الوصف:* ${text}\n` +
+        `┃ 📁 *الحجم:* ${(size / 1024).toFixed(2)} KB\n` +
+        `╰━━━━━━━━━━━━━━⬣\n\n` +
+        `> ⛩️ SUKUNA BOT ⛩️`
     }, { quoted: m })
 
     await react('✅')
@@ -85,17 +80,17 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
 
   } catch (err) {
     await react('❌')
-    console.error('[𝑪𝑯𝑶𝑺𝑶-Imagine] Error:', err.message)
-    m.reply(theme.build([
-      { type: 'title', text: '❌ 𝑪𝑯𝑶𝑺𝑶 - فـشـل الـتـولـيـد' },
-      { type: 'error', text: err.message },
-      { type: 'divider' },
-      { type: 'line', text: '💡 جرب وصف مختلف' }
-    ]))
+    console.error('[صورة] Error:', err.message)
+    m.reply(
+      `╭━━━〔 ❌ *فـشـل الـتـولـيـد* 〕━━━⬣\n` +
+      `┃ ⚠️ ${err.message}\n` +
+      `┃ 💡 جرب وصف مختلف\n` +
+      `╰━━━━━━━━━━━━━━⬣`
+    )
   }
 }
 
-handler.help    = ['صورة', 'image']
+handler.help    = ['صورة <الوصف>']
 handler.tags    = ['ai']
 handler.command = /^(صورة|صوره|توليد|imagine|img|imag)$/i
 
