@@ -21,6 +21,7 @@ async function adminInfo(conn, chatId, m) {
   const botIds = idsOf(conn.user?.id, conn.user?.lid, conn.user?.jid)
   const userIds = idsOf(m.sender, m.key?.participant, m.key?.participantAlt)
   return {
+    adminJids: (meta.participants || []).filter(p => p.admin).map(p => p.id || p.phoneNumber).filter(Boolean),
     botAdmin: botIds.some(x => admins.has(x)),
     userAdmin: userIds.some(x => admins.has(x)),
   }
@@ -102,9 +103,11 @@ handler.before = async function (m, { conn, isAdmin, isBotAdmin, isOwner, isROwn
   if (!isGroupLink) return
 
   // فحص الأدمن الحقيقي
+  let adminJids = []
   try {
     const info = await adminInfo(conn, m.chat, m)
     isBotAdmin = info.botAdmin
+    adminJids = info.adminJids
     isAdmin = info.userAdmin
   } catch (e) { console.error('[antilink] فحص الأدمن فشل:', e.message) }
   if (isAdmin) return
@@ -145,23 +148,15 @@ handler.before = async function (m, { conn, isAdmin, isBotAdmin, isOwner, isROwn
     return true
   }
 
-  // 3 إنذارات ➜ طرد
-  if (!isBotAdmin) {
-    await conn.sendMessage(m.chat, {
-      text:     `*「 مضاد الروابط 」*\n\n${user}\n💀 وصلت 3 إنذارات\n${note.trim()}`,
-      mentions: [m.sender]
-    }, opts).catch(() => {})
-    return true
-  }
-
+  // 3 إنذارات ➜ منشن للأدمنز (من غير طرد)
+  const mentions = [m.sender, ...adminJids.filter(j => j !== m.sender)]
+  const adminTags = adminJids.length ? adminJids.map(j => `@${norm(j)}`).join(' ') : '(مفيش أدمنز ظاهرين)'
   await conn.sendMessage(m.chat, {
-    text:     `*「 مضاد الروابط 」*\n\n${user}\n💀 وصلت 3 إنذارات → تم طردك!`,
-    mentions: [m.sender]
-  }).catch(() => {})
+    text:     `*「 مضاد الروابط 」*\n\n${user}\n🚨 وصل *3/3* إنذارات بسبب إرسال الروابط!\n\n👮 *يا أدمنز، اتصرفوا معاه:*\n${adminTags}`,
+    mentions
+  }, opts).catch(() => {})
 
-  await conn.groupParticipantsUpdate(m.chat, [m.sender], 'remove').catch(() => {})
-
-  // إعادة تصفير الإنذارات
+  // نصفّر العداد عشان لو كرر يتنبه الأدمنز تاني بعد 3 جداد
   chat.warnings[m.sender] = 0
   return true
 }
