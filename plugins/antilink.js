@@ -89,39 +89,46 @@ handler.before = async function (m, { conn, isAdmin, isBotAdmin, isOwner, isROwn
     } catch {}
   }
 
-  // نظام الإنذارات
+  // 1) نمسح رسالة اللينك فورًا (محتاج البوت يكون أدمن)
+  let deleted = false
+  if (isBotAdmin) {
+    try {
+      await conn.sendMessage(m.chat, { delete: m.key })
+      deleted = true
+    } catch (e) { console.error('[antilink] فشل مسح الرسالة:', e.message) }
+  }
+
+  // 2) نظام الإنذارات
   if (!chat.warnings)             chat.warnings = {}
   if (!chat.warnings[m.sender])   chat.warnings[m.sender] = 0
   chat.warnings[m.sender]++
 
   const warns = chat.warnings[m.sender]
   const user  = `@${m.sender.split('@')[0]}`
+  const opts  = deleted ? undefined : { quoted: m }   // لو الرسالة اتمسحت منقتبسهاش
+  const note  = isBotAdmin ? '' : `\n\n❌ أنا مش أدمن، فمقدرش أمسح الرسالة أو أطرد`
 
   // أقل من 3 إنذارات
   if (warns < 3) {
     await conn.sendMessage(m.chat, {
-      text:     `*「 مضاد الروابط 」*\n\n${user}\n⚠️ لا ترسل روابط!\nعدد إنذاراتك: *${warns}/3*`,
+      text:     `*「 مضاد الروابط 」*\n\n${user}\n⚠️ لا ترسل روابط!\nعدد إنذاراتك: *${warns}/3*${note}`,
       mentions: [m.sender]
-    }, { quoted: m }).catch(() => {})
+    }, opts).catch(() => {})
     return true
   }
 
   // 3 إنذارات ➜ طرد
-  await conn.sendMessage(m.chat, {
-    text:     `*「 مضاد الروابط 」*\n\n${user}\n💀 وصلت 3 إنذارات → سيتم طردك!`,
-    mentions: [m.sender]
-  }, { quoted: m }).catch(() => {})
-
   if (!isBotAdmin) {
     await conn.sendMessage(m.chat, {
-      text: `❌ أنا مش أدمن علشان أطرد العضو`
-    }).catch(() => {})
+      text:     `*「 مضاد الروابط 」*\n\n${user}\n💀 وصلت 3 إنذارات\n${note.trim()}`,
+      mentions: [m.sender]
+    }, opts).catch(() => {})
     return true
   }
 
-  // حذف الرسالة + طرد
   await conn.sendMessage(m.chat, {
-    delete: { remoteJid: m.chat, fromMe: false, id: m.key.id, participant: m.sender }
+    text:     `*「 مضاد الروابط 」*\n\n${user}\n💀 وصلت 3 إنذارات → تم طردك!`,
+    mentions: [m.sender]
   }).catch(() => {})
 
   await conn.groupParticipantsUpdate(m.chat, [m.sender], 'remove').catch(() => {})
