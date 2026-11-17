@@ -8,6 +8,24 @@ const linkRegex1 = /whatsapp\.com\/channel\/([0-9A-Za-z]{20,24})/i
 // ════════════════════════════════════════════════════════
 // 📌 أمر .antilink on / off
 // ════════════════════════════════════════════════════════
+
+// ── فحص الأدمن الحقيقي (handler.js بيغلط في الـ LID فبيقول البوت مش أدمن) ──
+const norm = j => String(j || '').split('@')[0].split(':')[0]
+const idsOf = (...list) => list.flat().filter(Boolean).map(norm)
+async function adminInfo(conn, chatId, m) {
+  const meta = await conn.groupMetadata(chatId)
+  const admins = new Set()
+  for (const p of meta.participants || []) {
+    if (p.admin) idsOf(p.id, p.lid, p.phoneNumber, p.jid).forEach(x => admins.add(x))
+  }
+  const botIds = idsOf(conn.user?.id, conn.user?.lid, conn.user?.jid)
+  const userIds = idsOf(m.sender, m.key?.participant, m.key?.participantAlt)
+  return {
+    botAdmin: botIds.some(x => admins.has(x)),
+    userAdmin: userIds.some(x => admins.has(x)),
+  }
+}
+
 const handler = async function (m, { conn, args, isAdmin, isROwner }) {
   if (!m.isGroup)
     return m.reply(
@@ -16,6 +34,9 @@ const handler = async function (m, { conn, args, isAdmin, isROwner }) {
       `*╯✯≼══━━﹂⛩️﹁━━══≽✯*`
     )
 
+  if (!isAdmin && !isROwner) {
+    try { isAdmin = (await adminInfo(conn, m.chat, m)).userAdmin } catch {}
+  }
   if (!isAdmin && !isROwner)
     return m.reply(
       `*╮═≼『⛩️┃تنبيه┃⛩️』≽═╭*\n` +
@@ -60,7 +81,6 @@ handler.command  = /^antilink$/i
 handler.help     = ['antilink on/off']
 handler.tags     = ['group']
 handler.group    = true
-handler.admin    = true
 
 // ════════════════════════════════════════════════════════
 // 🔍 before — بيتسجل كـ property على الـ handler
@@ -69,7 +89,7 @@ handler.before = async function (m, { conn, isAdmin, isBotAdmin, isOwner, isROwn
   if (!m.isGroup) return
   if (!m.text)    return
   if (m.fromMe)   return
-  if (isAdmin || isOwner || isROwner) return
+  if (isOwner || isROwner) return
 
   if (!global.db.data.chats[m.chat]) global.db.data.chats[m.chat] = {}
   const chat = global.db.data.chats[m.chat]
@@ -80,6 +100,14 @@ handler.before = async function (m, { conn, isAdmin, isBotAdmin, isOwner, isROwn
   // تحقق من اللينك
   const isGroupLink = linkRegex.test(m.text) || linkRegex1.test(m.text)
   if (!isGroupLink) return
+
+  // فحص الأدمن الحقيقي
+  try {
+    const info = await adminInfo(conn, m.chat, m)
+    isBotAdmin = info.botAdmin
+    isAdmin = info.userAdmin
+  } catch (e) { console.error('[antilink] فحص الأدمن فشل:', e.message) }
+  if (isAdmin) return
 
   // استثناء لينك الجروب نفسه
   if (isBotAdmin) {
