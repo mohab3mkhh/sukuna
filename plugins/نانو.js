@@ -43,9 +43,15 @@ async function resizeIfNeeded(buf, maxSize = 1024) {
     } catch { return buf }
 }
 
-// ━━━ Stability AI v1 — image-to-image (متاح على الـ free tier) ━━━
+// ━━━ Stability AI v1 — image-to-image SDXL 1024 ━━━
 async function stabilityImg2Img(buffer, prompt) {
-    const resized = await resizeIfNeeded(buffer, 512)
+    // SDXL محتاج 1024x1024 بالظبط
+    const sharp = (await import('sharp')).default
+    const resized = await sharp(buffer)
+        .resize(1024, 1024, { fit: 'cover' })
+        .png()
+        .toBuffer()
+
     const form = new FormData()
     form.append('init_image', resized, { filename: 'image.png', contentType: 'image/png' })
     form.append('init_image_mode', 'IMAGE_STRENGTH')
@@ -55,6 +61,8 @@ async function stabilityImg2Img(buffer, prompt) {
     form.append('cfg_scale', '7')
     form.append('samples', '1')
     form.append('steps', '30')
+    form.append('width', '1024')
+    form.append('height', '1024')
 
     const r = await axios.post(
         'https://api.stability.ai/v1/generation/stable-diffusion-xl-1024-v1-0/image-to-image',
@@ -69,38 +77,17 @@ async function stabilityImg2Img(buffer, prompt) {
         }
     )
     const b64 = r.data?.artifacts?.[0]?.base64
-    if (!b64) throw new Error('مفيش صورة في الرد')
+    if (!b64) throw new Error('مفيش صورة في الرد: ' + JSON.stringify(r.data).slice(0, 100))
     return Buffer.from(b64, 'base64')
 }
 
-// ━━━ Stability AI v1 — style (SD v1.6) ━━━
-async function stabilityStyle(buffer, prompt) {
-    const resized = await resizeIfNeeded(buffer, 512)
-    const form = new FormData()
-    form.append('init_image', resized, { filename: 'image.png', contentType: 'image/png' })
-    form.append('init_image_mode', 'IMAGE_STRENGTH')
-    form.append('image_strength', '0.5')
-    form.append('text_prompts[0][text]', prompt)
-    form.append('text_prompts[0][weight]', '1')
-    form.append('cfg_scale', '7')
-    form.append('samples', '1')
-    form.append('steps', '30')
-
-    const r = await axios.post(
-        'https://api.stability.ai/v1/generation/stable-diffusion-v1-6/image-to-image',
-        form,
-        {
-            headers: {
-                ...form.getHeaders(),
-                'Authorization': `Bearer ${STABILITY_KEY}`,
-                'Accept': 'application/json'
-            },
-            timeout: 120000
-        }
-    )
-    const b64 = r.data?.artifacts?.[0]?.base64
-    if (!b64) throw new Error('مفيش صورة في الرد')
-    return Buffer.from(b64, 'base64')
+// ━━━ Stability AI — جلب الموديلات المتاحة ━━━
+async function getAvailableEngines() {
+    const r = await axios.get('https://api.stability.ai/v1/engines/list', {
+        headers: { 'Authorization': `Bearer ${STABILITY_KEY}` },
+        timeout: 15000
+    })
+    return (r.data || []).map(e => e.id)
 }
 
 // ━━━ Stability AI v1 — توليد من نص ━━━
@@ -187,7 +174,7 @@ let handler = async (m, { conn, text }) => {
 
         result = await runChain([
             ['stability-xl-img2img', () => stabilityImg2Img(buffer, prompt)],
-            ['stability-v1-style', () => stabilityStyle(buffer, prompt)],
+            ['pollinations', () => pollinations(prompt)],
         ])
     } else {
         result = await runChain([
