@@ -1,6 +1,6 @@
 // plugins/draw.js
 /**
- * .ارسم / .رسم <وصف>
+ * .رسم <وصف>
  * بيرسم الصورة عن طريق بوت تليجرام @GPT4Telegrambot بحسابك انت (نفس ربط أمر numbers).
  *
  * الخطوات:
@@ -257,7 +257,7 @@ const reply = (conn, m, text) => conn.sendMessage(m.chat, { text }, { quoted: m 
 async function onChoice(m, conn, usedPrefix, text) {
     const [token, action = ''] = text.split(/\s+/)
     const job = global.drawJobs.get(token)
-    if (!job) return reply(conn, m, `⚠️ الطلب ده انتهت صلاحيته، ابعت ${usedPrefix}ارسم <الوصف> من جديد`)
+    if (!job) return reply(conn, m, `⚠️ الطلب ده انتهت صلاحيته، ابعت ${usedPrefix}رسم <الوصف> من جديد`)
     if (job.sender !== m.sender) return reply(conn, m, '⚠️ الأزرار دي لصاحب الطلب بس')
 
     // اختيار النموذج
@@ -345,7 +345,7 @@ let handler = async (m, { conn, text, usedPrefix = '.', command }) => {
     }
 }
 
-handler.help = ['ارسم <وصف>']
+handler.help = ['رسم <وصف>']
 handler.tags = ['ai']
-handler.command = /^|رسم|رسم_خيار)$/i
+handler.command = /^(رسم|رسم_خيار)$/i
 export default handler
