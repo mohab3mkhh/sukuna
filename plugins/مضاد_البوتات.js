@@ -86,6 +86,7 @@ const handler = async (m, { conn, args }) => {
         if (!num) return conn.sendMessage(m.chat, { text: 'اكتب الرقم أو منشن البوت أو رد على رسالته:\n.مضاد_البوتات سماح 2010xxxxxxx' }, { quoted: m })
         const db = store()
         db._allow = (db._allow || []).filter(x => x !== num)
+        if (db._learned) delete db._learned[num]
         if (adding) db._allow.push(num)
         save(db)
         return conn.sendMessage(m.chat, { text: adding ? `✅ البوت ${num} مستثنى من الطرد.\n\n> ⛩️ SUKUNA BOT ⛩️` : `❌ شيلت ${num} من الاستثناء.\n\n> ⛩️ SUKUNA BOT ⛩️` }, { quoted: m })
@@ -141,13 +142,15 @@ const once = id => { if (seen.has(id)) return false; seen.add(id); setTimeout(()
    3) رسالته فيها توقيع بوتك (افتراضي: sukuna bot / sukunabot / mohab، وتتغير بمتغير ANTIBOT_SIGN) في النص/الفوتر/الكابشن */
 const allowList = () => [
     ...(store()._allow || []),
+    ...Object.keys(store()._learned || {}),
     ...(process.env.ANTIBOT_ALLOW || '').split(',').map(x => x.trim()).filter(Boolean),
     ...((Array.isArray(global.conns) ? global.conns : []).map(c => norm(c?.user?.id)).filter(Boolean)),
 ].map(norm)
 
 function strings(o, out = [], d = 0) {
     if (d > 10 || o == null) return out
-    if (typeof o === 'string') { if (o.length < 5000) out.push(o); return out }
+    // الحد كان 5000 فالرسايل الطويلة (زي قايمة الأوامر) كان بيتجاهل التوقيع اللي فيها
+    if (typeof o === 'string') { if (o.length < 300000) out.push(o); return out }
     if (typeof o !== 'object' || Buffer.isBuffer(o) || o instanceof Uint8Array) return out
     for (const k of Object.keys(o)) strings(o[k], out, d + 1)
     return out
@@ -165,21 +168,20 @@ function isMine(m) {
     return null
 }
 
-async function kickIfBot(conn, m) {
+const MEDIA_TYPES = ['audioMessage', 'stickerMessage', 'imageMessage', 'videoMessage', 'documentMessage', 'ptvMessage', 'contactMessage', 'locationMessage', 'reactionMessage']
+const GRACE = (Number(process.env.ANTIBOT_GRACE_SEC ?? 12)) * 1000    // 0 = يطرد فوراً حتى لو الرسالة ميديا
+const graceSet = new Set()
+
+function learn(sender) {
+    const db = store(), n = norm(sender)
+    db._learned = db._learned || {}
+    if (!db._learned[n]) { db._learned[n] = Date.now(); save(db); console.log('[مضاد_البوتات] اتعلّم إنه بوتك:', n) }
+}
+
+async function doKick(conn, chat, sender, why, id) {
     try {
-        const chat = m.chat
-        if (!String(chat || '').endsWith('@g.us') || m.fromMe || !store()[chat]) return
-        const why = botReason(m)
-        if (!why) return
-
-        const sender = m.sender
-        const botNum = norm(conn.user?.id)
-        if (!sender || norm(sender) === botNum || ownerNumbers().includes(norm(sender))) return
-        if (!once(m.id || m.key?.id)) return
-        const mine = isMine(m)
-        if (mine) { console.log('[مضاد_البوتات] بوت بتاعك، تخطي (' + mine + '):', sender); return }
-        console.log('[مضاد_البوتات] اكتشفت بوت:', sender, '| السبب:', why, '| id:', m.id || m.key?.id)
-
+        if (!store()[chat]) return
+        console.log('[مضاد_البوتات] اكتشفت بوت:', sender, '| السبب:', why, '| id:', id)
         const meta = await conn.groupMetadata(chat)
         const bot = findParticipant(meta, conn.user?.id) || findParticipant(meta, conn.user?.lid)
         if (bot && !bot.admin) { console.log('[مضاد_البوتات] البوت مش مشرف، مش هيعرف يطرد'); return }
@@ -199,6 +201,47 @@ async function kickIfBot(conn, m) {
             mentions: [jid],
         })
         console.log('[مضاد_البوتات] اتطرد:', jid, 'في', chat)
+    } catch (e) {
+        console.error('[مضاد_البوتات]', e?.message || e)
+    }
+}
+
+async function kickIfBot(conn, m) {
+    try {
+        const chat = m.chat
+        if (!String(chat || '').endsWith('@g.us') || m.fromMe || !store()[chat]) return
+        const why = botReason(m)
+        if (!why) return
+        // رسالة فويس/صوت: مابتتطردش أبداً (أي بوت)
+        if (innerTypes(m).some(x => x === 'audioMessage')) return
+
+        const sender = m.sender
+        const botNum = norm(conn.user?.id)
+        if (!sender || norm(sender) === botNum || ownerNumbers().includes(norm(sender))) return
+        if (!once(m.id || m.key?.id)) return
+        const mine = isMine(m)
+        if (mine) {
+            // لو التوقيع ظهر في رسالته، نحفظ رقمه كبوت بتاعك (عشان رسايله الجاية من غير توقيع زي الفويس والملصقات ما تتطردش)
+            if (mine === 'توقيع بوتك') learn(sender)
+            console.log('[مضاد_البوتات] بوت بتاعك، تخطي (' + mine + '):', sender)
+            return
+        }
+
+        // رسالة ملهاش نص أصلاً (فويس/ملصق/صورة/ملف): مستحيل يكون فيها توقيع، فنستنى شوية لو بعت رسالة بتوقيعه
+        const textless = innerTypes(m).some(x => MEDIA_TYPES.includes(x)) && !innerTypes(m).some(x => BOT_TYPES.includes(x))
+        if (textless && GRACE > 0) {
+            const key = chat + '|' + norm(sender)
+            if (graceSet.has(key)) return
+            graceSet.add(key)
+            console.log('[مضاد_البوتات] رسالة ميديا من مشتبه فيه، هستنى', GRACE / 1000, 'ث قبل الطرد:', sender)
+            setTimeout(async () => {
+                graceSet.delete(key)
+                if (allowList().includes(norm(sender))) { console.log('[مضاد_البوتات] اتأكد إنه بوتك، تخطي:', sender); return }
+                await doKick(conn, chat, sender, why, m.id || m.key?.id)
+            }, GRACE)
+            return
+        }
+        await doKick(conn, chat, sender, why, m.id || m.key?.id)
     } catch (e) {
         console.error('[مضاد_البوتات]', e?.message || e)
     }
