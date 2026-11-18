@@ -1,7 +1,7 @@
-// plugins/بحث-ساوند.js
+// plugins/ساوند.js
 // 🎧 بحث SoundCloud + أزرار (تحميل / رابط)
-//   .بحث-ساوند <اسم>   → قائمة نتائج → اختار أغنية → زر تحميل + زر رابط
-//   .بحث-ساوند <رابط>  → كارت الأغنية مباشرة
+//   .ساوند <اسم>   → قائمة نتائج → اختار أغنية → زر تحميل + زر رابط
+//   .ساوند <رابط>  → كارت الأغنية مباشرة
 
 import axios from 'axios'
 import { spawn } from 'child_process'
@@ -74,7 +74,7 @@ async function scApi(path, params) {
       validateStatus: () => true
     })
     if (r.status === 200) return r.data
-    console.log(`[بحث-ساوند] ${path} → ${r.status}`)
+    console.log(`[ساوند] ${path} → ${r.status}`)
     if ((r.status === 401 || r.status === 403) && attempt === 0) { cachedClientId = null; continue }
     throw new Error(`SoundCloud رد ${r.status}`)
   }
@@ -130,7 +130,7 @@ function getButtonId(m) {
 async function withImage(imgUrl, send) {
   const buf = await getImageBuffer(imgUrl)
   if (buf) {
-    try { return await send(buf) } catch (e) { console.log('[بحث-ساوند] الإرسال بالصورة فشل:', e.message) }
+    try { return await send(buf) } catch (e) { console.log('[ساوند] الإرسال بالصورة فشل:', e.message) }
   }
   return send(undefined)
 }
@@ -151,9 +151,9 @@ async function sendResults(conn, m, query, tracks, usedPrefix = '.') {
   await withImage(tracks[0]?.artwork, image => sendList(conn, m.chat, {
     text: `${HEADER}\n\n  🔍 ⌈ 𝑸𝒖𝒆𝒓𝒚 ⌋ ⇢ *${query}*\n  🎵 ⌈ 𝑹𝒆𝒔𝒖𝒍𝒕𝒔 ⌋ ⇢ *${tracks.length}*\n\n  ✦ O Human… Choose Your Song ✦\n\n  ⇩ اختر أغنية من القائمة بالأسفل ⇩`,
     footer: SMALL_FOOTER,
-    title: '',
-    buttonText: '🎧 اختر أغنية',
-    sections: [{ title: `نتائج البحث (${tracks.length})`, rows }],
+    title: '🎧 نتائج SoundCloud',          // لازم يكون فيه عنوان: لو فاضي واتساب ممكن مايعرضش الأزرار
+    buttonText: '「 قائمة الأغاني 」',
+    sections: [{ title: `🎧 نتائج البحث (${tracks.length})`, highlight_label: 'SUKUNA BOT', rows }],
     image,
     quoted: m
   }))
@@ -166,6 +166,7 @@ async function sendTrackCard(conn, m, t, usedPrefix = '.') {
   await withImage(t.artwork, image => sendButtons(conn, m.chat, {
     text: `${HEADER}\n\n  🎵 ⌈ 𝑻𝒊𝒕𝒍𝒆 ⌋ ⇢ *${t.title.slice(0, 80)}*\n  👤 ⌈ 𝑨𝒓𝒕𝒊𝒔𝒕 ⌋ ⇢ *${t.user}*\n  ⏱️ ⌈ 𝑫𝒖𝒓𝒂𝒕𝒊𝒐𝒏 ⌋ ⇢ *${msToTime(t.duration)}*\n\n  ✦ O Human… Choose An Action ✦`,
     footer: SMALL_FOOTER,
+    title: '🎧 SoundCloud',
     image,
     buttons: [
       { id: `${usedPrefix}scdl ${t.id}`, text: '⬇️ تحميل الأغنية' },
@@ -338,7 +339,7 @@ ${FOOTER}`)
     }
     await m.react('✅')
   } catch (e) {
-    console.error('[بحث-ساوند]', e.message)
+    console.error('[ساوند]', e.message)
     await m.react('❌')
     await m.reply(`${HEADER}
 
@@ -380,8 +381,8 @@ global.scCleanTimer = setInterval(() => {
 }, 10 * 60 * 1000)
 global.scCleanTimer.unref?.()
 
-handler.help = ['بحث-ساوند <اسم أو رابط>']
+handler.help = ['ساوند <اسم أو رابط>']
 handler.tags = ['search', 'downloader']
-handler.command = /^(بحث-ساوند|بحث_ساوند|scsearch|scsel|scdl)$/i
+handler.command = /^(ساوند|scsearch|scsel|scdl)$/i
 
 export default handler
