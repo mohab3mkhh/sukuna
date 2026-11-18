@@ -41,6 +41,7 @@ function botReason(m) {
     if (id.startsWith('BAE5')) return 'BAE5'                       // Baileys (أي طول)
     if (id.startsWith('NJX-')) return 'NJX-'
     if (id.startsWith('B24E') && id.length === 20) return 'B24E'
+    if (id.startsWith('3EB0') && id.length === 22 && process.env.ANTIBOT_3EB0_22 !== '0') return '3EB0 بطول 22 (نفس قاعدة isBaileys في البوت)'
     if (id.startsWith('3EB0') && id.length >= 30) return '3EB0 طويل (Baileys الجديدة، 40 حرف)'
     if (id.startsWith('SUKUNA') || id.startsWith('MOHAB')) return 'SUKUNA/MOHAB'
     // رسايل الأزرار/القوايم/الإعلانات التفاعلية: البشر مايقدروش يبعتوها
@@ -64,6 +65,7 @@ function ownerNumbers() {
 const handler = async (m, { conn, args }) => {
     if (!(m.isGroup ?? String(m.chat || '').endsWith('@g.us'))) return conn.sendMessage(m.chat, { text: '❌ الأمر ده للجروبات بس.' }, { quoted: m })
 
+    if (!global._antibotL || global._antibotL.conn !== conn) attach(conn)
     const meta = await conn.groupMetadata(m.chat)
     const me = findParticipant(meta, m.sender)
     const allowed = me?.admin || m.fromMe || ownerNumbers().includes(norm(m.sender))
@@ -107,42 +109,72 @@ const handler = async (m, { conn, args }) => {
     }, { quoted: m })
 }
 
-/* ══════ الكشف: بيتنفذ على كل رسالة في الجروبات ══════ */
-handler.before = async function (m, extra = {}) {
-    const conn = extra.conn || this
+/* ══════ الكشف والطرد ══════
+   المهم: الـ handler بتاع البوت غالباً بيتجاهل رسايل البوتات (m.isBaileys) قبل ما يوصّلها للأوامر،
+   عشان كده بنسمع على messages.upsert مباشرة (مستقل عن الـ handler) فنشوف كل رسالة. */
+
+const seen = new Set()
+const once = id => { if (seen.has(id)) return false; seen.add(id); setTimeout(() => seen.delete(id), 120000); return true }
+
+async function kickIfBot(conn, m) {
     try {
-        const isGroup = m.isGroup ?? String(m.chat || '').endsWith('@g.us')
-        if (!isGroup || m.fromMe || !store()[m.chat]) return false
+        const chat = m.chat
+        if (!String(chat || '').endsWith('@g.us') || m.fromMe || !store()[chat]) return
         const why = botReason(m)
-        if (!why) return false
+        if (!why) return
 
         const sender = m.sender
         const botNum = norm(conn.user?.id)
-        if (!sender || norm(sender) === botNum || ownerNumbers().includes(norm(sender))) return false
+        if (!sender || norm(sender) === botNum || ownerNumbers().includes(norm(sender))) return
+        if (!once(m.id || m.key?.id)) return
         console.log('[مضاد_البوتات] اكتشفت بوت:', sender, '| السبب:', why, '| id:', m.id || m.key?.id)
 
-        const meta = await conn.groupMetadata(m.chat)
+        const meta = await conn.groupMetadata(chat)
         const bot = findParticipant(meta, conn.user?.id) || findParticipant(meta, conn.user?.lid)
-        if (bot && !bot.admin) { console.log('[مضاد_البوتات] البوت مش مشرف، مش هيعرف يطرد'); return false }
+        if (bot && !bot.admin) { console.log('[مضاد_البوتات] البوت مش مشرف، مش هيعرف يطرد'); return }
         const target = findParticipant(meta, sender)
-        if (target?.admin === 'superadmin') { console.log('[مضاد_البوتات] صاحب الجروب، تخطي'); return false }
+        if (target?.admin === 'superadmin') { console.log('[مضاد_البوتات] صاحب الجروب، تخطي'); return }
 
         const jid = target?.id || sender
         try {
-            await conn.groupParticipantsUpdate(m.chat, [jid], 'remove')
+            await conn.groupParticipantsUpdate(chat, [jid], 'remove')
         } catch (e1) {
             console.log('[مضاد_البوتات] الطرد المباشر فشل:', e1?.message, '← بجرّب demote')
-            await conn.groupParticipantsUpdate(m.chat, [jid], 'demote')
-            await conn.groupParticipantsUpdate(m.chat, [jid], 'remove')
+            await conn.groupParticipantsUpdate(chat, [jid], 'demote')
+            await conn.groupParticipantsUpdate(chat, [jid], 'remove')
         }
-        await conn.sendMessage(m.chat, {
+        await conn.sendMessage(chat, {
             text: `🤖🚫 *مضاد البوتات*\nتم طرد البوت @${norm(jid)}\n\n> ⛩️ SUKUNA BOT ⛩️`,
             mentions: [jid],
         })
-        console.log('[مضاد_البوتات] اتطرد:', jid, 'في', m.chat)
+        console.log('[مضاد_البوتات] اتطرد:', jid, 'في', chat)
     } catch (e) {
         console.error('[مضاد_البوتات]', e?.message || e)
     }
+}
+
+/* تسجيل المستمع مرة واحدة (ويتبدّل لو الملف اتعمله reload) */
+function attach(conn) {
+    if (!conn?.ev?.on) return
+    if (global._antibotL) { try { global._antibotL.conn.ev.off('messages.upsert', global._antibotL.fn) } catch {} }
+    const fn = ({ messages, type }) => {
+        if (type && type !== 'notify') return
+        for (const msg of messages || []) {
+            const key = msg.key || {}
+            if (key.fromMe || !String(key.remoteJid || '').endsWith('@g.us')) continue
+            const sender = key.participantPn || key.participantAlt || key.participant
+            kickIfBot(conn, { chat: key.remoteJid, sender, id: key.id, key, message: msg.message, fromMe: false })
+        }
+    }
+    conn.ev.on('messages.upsert', fn)
+    global._antibotL = { conn, fn }
+    console.log('[مضاد_البوتات] المستمع اتسجّل')
+}
+if (global.conn) attach(global.conn)
+
+handler.before = async function (m, extra = {}) {
+    const conn = extra.conn || this
+    if (!global._antibotL || global._antibotL.conn !== conn) attach(conn)   // يتسجّل مع أول رسالة عادية
     return false
 }
 
