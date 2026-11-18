@@ -78,6 +78,19 @@ const handler = async (m, { conn, args }) => {
 
     const arg = String(args?.[0] || '').toLowerCase()
 
+    // .مضاد_البوتات سماح <رقم|منشن|رد>  ← يستثني بوت بتاعك  |  .مضاد_البوتات منع <رقم>  ← يشيله من الاستثناء
+    if (['سماح', 'allow', 'منع', 'unallow'].includes(String(args?.[0] || '').toLowerCase())) {
+        const adding = ['سماح', 'allow'].includes(String(args[0]).toLowerCase())
+        const raw = args[1] || m.mentionedJid?.[0] || m.quoted?.sender || ''
+        const num = norm(String(raw).replace(/[^\d@:.a-z]/gi, '')).replace(/\D/g, '')
+        if (!num) return conn.sendMessage(m.chat, { text: 'اكتب الرقم أو منشن البوت أو رد على رسالته:\n.مضاد_البوتات سماح 2010xxxxxxx' }, { quoted: m })
+        const db = store()
+        db._allow = (db._allow || []).filter(x => x !== num)
+        if (adding) db._allow.push(num)
+        save(db)
+        return conn.sendMessage(m.chat, { text: adding ? `✅ البوت ${num} مستثنى من الطرد.\n\n> ⛩️ SUKUNA BOT ⛩️` : `❌ شيلت ${num} من الاستثناء.\n\n> ⛩️ SUKUNA BOT ⛩️` }, { quoted: m })
+    }
+
     // .مضاد_البوتات فحص (بالرد على رسالة) ← يعرض بصمة الرسالة عشان نعرف نكشف البوت ده
     if (['فحص', 'check', 'id'].includes(arg)) {
         const q = m.quoted
@@ -95,7 +108,7 @@ const handler = async (m, { conn, args }) => {
     const db = store()
     if (!on && !off) {
         return conn.sendMessage(m.chat, {
-            text: `🛡️ *مضاد البوتات*\n\nالحالة: ${db[m.chat] ? '✅ شغّال' : '❌ مقفول'}\n\n• .مضاد_البوتات اون\n• .مضاد_البوتات اوف\n• .مضاد_البوتات فحص (بالرد على رسالة)\n\n> ⛩️ SUKUNA BOT ⛩️`,
+            text: `🛡️ *مضاد البوتات*\n\nالحالة: ${db[m.chat] ? '✅ شغّال' : '❌ مقفول'}\n\n• .مضاد_البوتات اون\n• .مضاد_البوتات اوف\n• .مضاد_البوتات سماح <رقم> (استثناء بوتك)\n• .مضاد_البوتات فحص (بالرد على رسالة)\n\n> ⛩️ SUKUNA BOT ⛩️`,
         }, { quoted: m })
     }
 
@@ -121,6 +134,37 @@ const handler = async (m, { conn, args }) => {
 const seen = new Set()
 const once = id => { if (seen.has(id)) return false; seen.add(id); setTimeout(() => seen.delete(id), 120000); return true }
 
+/* ══════ استثناء بوتك (التنصيبات بتاعتك ما تتطردش) ══════
+   بيعدّي لو أي واحدة من دول:
+   1) رقمه في القايمة المسموحة (أمر: .مضاد_البوتات سماح <رقم>، أو متغير ANTIBOT_ALLOW=2010xxx,2011xxx)
+   2) رقمه من البوتات الفرعية المتصلة بنفس السيرفر (global.conns)
+   3) رسالته فيها توقيع بوتك (افتراضي: sukuna bot / sukunabot / mohab، وتتغير بمتغير ANTIBOT_SIGN) في النص/الفوتر/الكابشن */
+const allowList = () => [
+    ...(store()._allow || []),
+    ...(process.env.ANTIBOT_ALLOW || '').split(',').map(x => x.trim()).filter(Boolean),
+    ...((Array.isArray(global.conns) ? global.conns : []).map(c => norm(c?.user?.id)).filter(Boolean)),
+].map(norm)
+
+function strings(o, out = [], d = 0) {
+    if (d > 10 || o == null) return out
+    if (typeof o === 'string') { if (o.length < 5000) out.push(o); return out }
+    if (typeof o !== 'object' || Buffer.isBuffer(o) || o instanceof Uint8Array) return out
+    for (const k of Object.keys(o)) strings(o[k], out, d + 1)
+    return out
+}
+function hasSignature(message) {
+    // التوقيعات المسموحة (بتتغير بمتغير ANTIBOT_SIGN، مفصولة بفاصلة)
+    const sigs = (process.env.ANTIBOT_SIGN || 'sukuna bot,sukunabot,mohab').split(',').map(x => x.trim().toLowerCase()).filter(Boolean)
+    const squash = t => t.toLowerCase().replace(/[\s_\-\u200b-\u200f]+/g, '')
+    const sq = sigs.map(squash)
+    return strings(message).some(t => { const q = squash(t); return sq.some(x => q.includes(x)) })
+}
+function isMine(m) {
+    if (allowList().includes(norm(m.sender))) return 'رقم مسموح'
+    if (m.message && hasSignature(m.message)) return 'توقيع بوتك'
+    return null
+}
+
 async function kickIfBot(conn, m) {
     try {
         const chat = m.chat
@@ -132,6 +176,8 @@ async function kickIfBot(conn, m) {
         const botNum = norm(conn.user?.id)
         if (!sender || norm(sender) === botNum || ownerNumbers().includes(norm(sender))) return
         if (!once(m.id || m.key?.id)) return
+        const mine = isMine(m)
+        if (mine) { console.log('[مضاد_البوتات] بوت بتاعك، تخطي (' + mine + '):', sender); return }
         console.log('[مضاد_البوتات] اكتشفت بوت:', sender, '| السبب:', why, '| id:', m.id || m.key?.id)
 
         const meta = await conn.groupMetadata(chat)
