@@ -1,341 +1,260 @@
+/**
+ * plugins/غنيه.js — .غنيه <اسم/رابط>  → زرارين (صوت / فيديو) → تحميل
+ *   .غنيه mp3 <اسم/رابط>        تحميل صوت مباشرة
+ *   .غنيه mp4 <اسم/رابط>        قايمة الدقة ثم تحميل الفيديو
+ *   .غنيه mp4 <رابط> 360        تحميل فيديو بدقة محددة
+ *
+ * ليه الأمر القديم ساكت:
+ *  • الأزرار كانت بتتبعت relayMessage خام (viewOnce + interactive) وده بيتبلع/مش بيظهر،
+ *    ودلوقتي بنبعتها من lib/buttons.js زي باقي الأوامر.
+ *  • مصدر savetube لوحده بيقع كتير؛ دلوقتي yt-dlp الأول (نفس طريقة أمر شغل) وبعده savetube وytdl-core.
+ *  • أي خطأ بقى بيظهر في الشات.
+ */
+
 import axios from 'axios'
 import crypto from 'crypto'
-import yts from 'yt-search'
-import { generateWAMessageFromContent, prepareWAMessageMedia } from '@whiskeysockets/baileys'
+import fs from 'fs'
+import os from 'os'
+import path from 'path'
+import { execFile } from 'child_process'
+import { promisify } from 'util'
 
-/* إعدادات */
-const VIDEO_QUALITIES = ['144','240','360','480','720','1080']
-const SEND_LIMIT_AUDIO = 70 * 1024 * 1024   // 70MB
-const SEND_LIMIT_VIDEO = 100 * 1024 * 1024  // 100MB
-const AXIOS_TIMEOUT = 60000
+let libButtons = null
+try { libButtons = await import('../lib/buttons.js') } catch (e) { console.error('[غنيه] lib/buttons.js مش متحمّل:', e.message) }
 
-const http = axios.create({
-  timeout: AXIOS_TIMEOUT,
-  maxRedirects: 5,
-  validateStatus: s => s >= 200 && s < 400
-})
-
+const execFileP = promisify(execFile)
+const log = (...a) => console.log('[غنيه]', ...a)
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
+const FOOTER = '⛩️ SUKUNA BOT ⛩️'
+const VIDEO_QUALITIES = ['144', '240', '360', '480', '720', '1080']
+const LIMIT_AUDIO = 70 * 1024 * 1024
+const LIMIT_VIDEO = 100 * 1024 * 1024
 const delay = ms => new Promise(r => setTimeout(r, ms))
 
-/* SaveTube */
-const savetube = {
-  api: {
-    base: 'https://media.savetube.me/api',
-    cdn: '/random-cdn',
-    info: '/v2/info',
-    download: '/download'
-  },
-  headers: {
-    'accept': '*/*',
-    'content-type': 'application/json',
-    'origin': 'https://yt.savetube.me',
-    'referer': 'https://yt.savetube.me/',
-    'user-agent': 'Mozilla/5.0 (Linux) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118 Safari/537.36'
-  },
-  crypto: {
-    hexToBuffer: (hex) => Buffer.from(hex.match(/.{1,2}/g).join(''), 'hex'),
-    decrypt: async (enc) => {
-      const secretKey = 'C5D58EF67A7584E4A29F6C35BBC4EB12'
-      const data = Buffer.from(enc, 'base64')
-      const iv = data.slice(0, 16)
-      const content = data.slice(16)
-      const key = savetube.crypto.hexToBuffer(secretKey)
-      const decipher = crypto.createDecipheriv('aes-128-cbc', key, iv)
-      let decrypted = decipher.update(content)
-      decrypted = Buffer.concat([decrypted, decipher.final()])
-      return JSON.parse(decrypted.toString())
-    }
-  },
-  isUrl: (s) => { try { new URL(s); return true } catch { return false } },
-  youtubeId: (url) => {
-    if (!url) return null
-    const pats = [
-      /youtube\.com\/watch\?v=([a-zA-Z0-9_-]{11})/,
-      /youtube\.com\/embed\/([a-zA-Z0-9_-]{11})/,
-      /youtube\.com\/v\/([a-zA-Z0-9_-]{11})/,
-      /youtube\.com\/shorts\/([a-zA-Z0-9_-]{11})/,
-      /youtu\.be\/([a-zA-Z0-9_-]{11})/
-    ]
-    for (const re of pats) {
-      const m = url.match(re); if (m) return m[1]
-    }
-    return null
-  },
-  request: async (endpoint, data = {}, method = 'post') => {
+const ytId = url => {
+    const m = String(url || '').match(/(?:youtube\.com\/(?:watch\?(?:.*&)?v=|embed\/|v\/|shorts\/|live\/)|youtu\.be\/)([\w-]{11})/)
+    return m ? m[1] : null
+}
+const isUrl = s => { try { new URL(s); return true } catch { return false } }
+const sizeStr = n => { const u = ['B', 'KB', 'MB', 'GB']; let i = 0; while (n >= 1024 && i < 3) { n /= 1024; i++ } return `${n.toFixed(1)} ${u[i]}` }
+
+// ━━━ البحث ━━━
+async function findVideo(query) {
+    const id = isUrl(query) ? ytId(query) : null
     try {
-      const { data: response } = await http({
-        method,
-        url: `${endpoint.startsWith('http') ? '' : savetube.api.base}${endpoint}`,
-        data: method === 'post' ? data : undefined,
-        params: method === 'get' ? data : undefined,
-        headers: savetube.headers
-      })
-      return { status: true, data: response }
+        const mod = await import('yt-search')
+        const yts = mod.default || mod
+        if (id) {
+            const v = await yts({ videoId: id })
+            if (v) return { id, url: `https://www.youtube.com/watch?v=${id}`, title: v.title, thumb: v.thumbnail || v.image }
+        } else {
+            const r = await yts(query)
+            const v = r?.videos?.[0]
+            if (v) return { id: v.videoId, url: v.url, title: v.title, thumb: v.thumbnail }
+        }
+    } catch (e) { log('yt-search:', e.message) }
+    if (id) return { id, url: `https://www.youtube.com/watch?v=${id}`, title: 'YouTube', thumb: `https://i.ytimg.com/vi/${id}/hqdefault.jpg` }
+    try {
+        const r = await axios.get(`https://www.youtube.com/results?search_query=${encodeURIComponent(query)}&hl=en`, { headers: { 'User-Agent': UA }, timeout: 15000 })
+        const html = String(r.data)
+        const mm = html.match(/"videoRenderer":\{"videoId":"([\w-]{11})"/)
+        if (mm) {
+            const vid = mm[1]
+            const tm = html.slice(html.indexOf(vid)).match(/"title":\{"runs":\[\{"text":"(.*?)"\}/)
+            return { id: vid, url: `https://www.youtube.com/watch?v=${vid}`, title: tm ? tm[1] : query, thumb: `https://i.ytimg.com/vi/${vid}/hqdefault.jpg` }
+        }
+    } catch (e) { log('scrape:', e.message) }
+    return null
+}
+
+// ━━━ yt-dlp ━━━
+let ytdlpPath = null
+async function canRun(bin) { try { await execFileP(bin, ['--version'], { timeout: 20000 }); return true } catch { return false } }
+async function ensureYtdlp() {
+    if (ytdlpPath && fs.existsSync(ytdlpPath)) return ytdlpPath
+    const dirs = [...new Set(['/tmp', os.tmpdir(), process.cwd(), '/home'])]
+    const candidates = dirs.map(d => path.join(d, 'yt-dlp-bin'))
+    for (const bin of candidates) {
+        if (fs.existsSync(bin)) { try { fs.chmodSync(bin, 0o755) } catch {} if (await canRun(bin)) return (ytdlpPath = bin) }
+    }
+    log('بنزّل yt-dlp...')
+    const r = await axios.get('https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux', { responseType: 'arraybuffer', timeout: 120000, maxRedirects: 5 })
+    const data = Buffer.from(r.data)
+    if (data.length < 1024 * 1024) throw new Error('yt-dlp: التحميل ناقص')
+    for (const bin of candidates) {
+        try { fs.writeFileSync(bin, data); fs.chmodSync(bin, 0o755); if (await canRun(bin)) return (ytdlpPath = bin) } catch {}
+    }
+    throw new Error('yt-dlp: مفيش مكان يسمح بالتنفيذ')
+}
+function prepareCookies() {
+    const tmp = path.join(os.tmpdir(), `cookies_${process.pid}_${Date.now()}.txt`)
+    if (process.env.YT_COOKIES) { fs.writeFileSync(tmp, process.env.YT_COOKIES); return tmp }
+    const local = path.join(process.cwd(), 'cookies.txt')
+    if (fs.existsSync(local)) { fs.copyFileSync(local, tmp); return tmp }
+    return null
+}
+
+async function viaYtdlp(video, kind, quality) {
+    const bin = await ensureYtdlp()
+    const base = path.join(os.tmpdir(), `gh_${video.id}_${Date.now()}`)
+    const cookies = prepareCookies()
+    const args = kind === 'audio'
+        ? ['-f', 'bestaudio[ext=m4a]/bestaudio', '--max-filesize', '70M']
+        : ['-f', `best[height<=${quality}][ext=mp4]/best[height<=${quality}]/best[ext=mp4]/best`, '--max-filesize', '100M']
+    args.push('--no-playlist', '--no-warnings', '-o', `${base}.%(ext)s`)
+    if (cookies) args.push('--cookies', cookies)
+    if (process.env.YT_PROXY) args.push('--proxy', process.env.YT_PROXY)
+    args.push(video.url)
+    let file
+    try {
+        try { await execFileP(bin, args, { timeout: 170000, maxBuffer: 1 << 24 }) }
+        catch (e) { throw new Error('yt-dlp: ' + String(e.stderr || e.message).trim().split('\n').slice(-2).join(' | ')) }
+        const prefix = path.basename(base)
+        const name = fs.readdirSync(os.tmpdir()).find(f => f.startsWith(prefix))
+        if (!name) throw new Error('yt-dlp: الملف مش موجود')
+        file = path.join(os.tmpdir(), name)
+        const ext = path.extname(file).slice(1).toLowerCase()
+        const buffer = fs.readFileSync(file)
+        const mime = kind === 'audio' ? (ext === 'mp3' ? 'audio/mpeg' : 'audio/mp4') : 'video/mp4'
+        return { name: 'yt-dlp', buffer, mimetype: mime, ext }
+    } finally {
+        if (file) try { fs.unlinkSync(file) } catch {}
+        if (cookies) try { fs.unlinkSync(cookies) } catch {}
+    }
+}
+
+// ━━━ savetube (احتياطي) ━━━
+const ST = { base: 'https://media.savetube.me/api', key: 'C5D58EF67A7584E4A29F6C35BBC4EB12',
+    headers: { accept: '*/*', 'content-type': 'application/json', origin: 'https://yt.savetube.me', referer: 'https://yt.savetube.me/', 'user-agent': UA } }
+const stDecrypt = enc => {
+    const data = Buffer.from(enc, 'base64')
+    const d = crypto.createDecipheriv('aes-128-cbc', Buffer.from(ST.key, 'hex'), data.subarray(0, 16))
+    return JSON.parse(Buffer.concat([d.update(data.subarray(16)), d.final()]).toString())
+}
+async function viaSavetube(video, kind, quality) {
+    const cdn = (await axios.get(`${ST.base}/random-cdn`, { headers: ST.headers, timeout: 20000 })).data?.cdn
+    if (!cdn) throw new Error('savetube: مفيش CDN')
+    const info = await axios.post(`https://${cdn}/v2/info`, { url: video.url }, { headers: ST.headers, timeout: 30000 })
+    const dec = stDecrypt(info.data.data)
+    const dl = await axios.post(`https://${cdn}/download`, { id: video.id, downloadType: kind, quality: kind === 'audio' ? '128' : quality, key: dec.key }, { headers: ST.headers, timeout: 60000 })
+    const url = dl.data?.data?.downloadUrl
+    if (!url) throw new Error('savetube: مفيش رابط')
+    return { name: 'savetube', url, mimetype: kind === 'audio' ? 'audio/mpeg' : 'video/mp4', ext: kind === 'audio' ? 'mp3' : 'mp4' }
+}
+
+// ━━━ ytdl-core (احتياطي) ━━━
+async function viaYtdlCore(video, kind) {
+    const mod = await import('@distube/ytdl-core')
+    const ytdl = mod.default || mod
+    const stream = ytdl(video.url, kind === 'audio' ? { filter: 'audioonly', quality: 'highestaudio', highWaterMark: 1 << 25 } : { quality: 'highest', filter: f => f.hasVideo && f.hasAudio, highWaterMark: 1 << 25 })
+    const chunks = []; let size = 0
+    for await (const c of stream) { size += c.length; if (size > LIMIT_VIDEO) throw new Error('الملف كبير'); chunks.push(c) }
+    return { name: 'ytdl-core', buffer: Buffer.concat(chunks), mimetype: kind === 'audio' ? 'audio/mp4' : 'video/mp4', ext: kind === 'audio' ? 'm4a' : 'mp4' }
+}
+
+async function download(video, kind, quality) {
+    const errors = []
+    const chain = [['yt-dlp', () => viaYtdlp(video, kind, quality)], ['savetube', () => viaSavetube(video, kind, quality)], ['ytdl-core', () => viaYtdlCore(video, kind)]]
+    for (const [name, fn] of chain) {
+        try {
+            const res = await fn()
+            let buffer = res.buffer
+            if (!buffer) {
+                const r = await axios.get(res.url, { responseType: 'arraybuffer', timeout: 120000, maxContentLength: LIMIT_VIDEO, headers: { 'User-Agent': UA } })
+                buffer = Buffer.from(r.data)
+            }
+            if (buffer.length < 20 * 1024) throw new Error('الملف صغير/غير صالح')
+            const limit = kind === 'audio' ? LIMIT_AUDIO : LIMIT_VIDEO
+            if (buffer.length > limit) throw new Error(`الملف كبير (${sizeStr(buffer.length)}) — جرّب دقة أقل`)
+            log(`✅ ${res.name} (${sizeStr(buffer.length)})`)
+            return { buffer, mimetype: res.mimetype, ext: res.ext }
+        } catch (e) { errors.push(`${name}: ${String(e.message).slice(0, 120)}`); log(`❌ ${name}: ${e.message}`) }
+    }
+    throw new Error(errors.join('\n'))
+}
+
+// ━━━ الواجهة ━━━
+async function sendChoice(conn, m, video, usedPrefix) {
+    const text = `🎵 *${video.title}*\n\nاختار الصيغة 👇`
+    try {
+        if (!libButtons?.sendButtons || !libButtons?.btn) throw new Error('no buttons lib')
+        const { sendButtons, btn } = libButtons
+        await sendButtons(conn, m.chat, {
+            text, footer: FOOTER, image: video.thumb,
+            buttons: [btn.reply('🎵 صوت', `${usedPrefix}غنيه mp3 ${video.url}`), btn.reply('🎬 فيديو', `${usedPrefix}غنيه mp4 ${video.url}`)],
+        }, m)
     } catch (e) {
-      return { status: false, error: e.message, code: e.response?.status || 500 }
+        log('الأزرار فشلت:', e.message)
+        await conn.sendMessage(m.chat, { text: `${text}\n\n• ${usedPrefix}غنيه mp3 ${video.url}\n• ${usedPrefix}غنيه mp4 ${video.url}` }, { quoted: m })
     }
-  },
-  getCDN: async (retries = 3) => {
-    for (let i=0;i<retries;i++){
-      const r = await savetube.request(savetube.api.cdn, {}, 'get')
-      if (r.status && r?.data?.cdn) return { status: true, cdn: r.data.cdn }
-      await delay(400*(i+1))
-    }
-    return { status: false, error: 'تعذّر اختيار CDN' }
-  },
-  getDownload: async (url, format) => {
-    const id = savetube.youtubeId(url)
-    if (!id) return { status: false, error: 'تعذر استخراج معرف الفيديو.' }
-
-    const pickCdn = await savetube.getCDN()
-    if (!pickCdn.status) return pickCdn
-    const cdn = pickCdn.cdn
-
-    const info = await savetube.request(`https://${cdn}${savetube.api.info}`, { url: `https://www.youtube.com/watch?v=${id}` })
-    if (!info.status) return info
-
-    const decrypted = await savetube.crypto.decrypt(info.data.data)
-    const payload = {
-      id,
-      downloadType: format === 'mp3' ? 'audio' : 'video',
-      quality: format === 'mp3' ? '128' : format,
-      key: decrypted.key
-    }
-
-    let dl = await savetube.request(`https://${cdn}${savetube.api.download}`, payload)
-    if (!dl.status || !dl?.data?.data?.downloadUrl) {
-      // إعادة محاولة مع CDN آخر
-      const pick2 = await savetube.getCDN()
-      if (!pick2.status) return { status: false, error: 'تعذر التحميل من CDN' }
-      dl = await savetube.request(`https://${pick2.cdn}${savetube.api.download}`, payload)
-      if (!dl.status || !dl?.data?.data?.downloadUrl) return { status: false, error: 'الرابط غير متاح حالياً' }
-    }
-
-    return {
-      status: true,
-      result: {
-        title: decrypted.title || 'غير معروف',
-        type: format === 'mp3' ? 'audio' : 'video',
-        format,
-        thumbnail: decrypted.thumbnail || `https://i.ytimg.com/vi/${id}/hqdefault.jpg`,
-        download: dl.data.data.downloadUrl,
-        id,
-        duration: decrypted.duration || '-',
-        quality: payload.quality
-      }
-    }
-  }
 }
 
-/* أدوات */
-const headInfo = async (url) => {
-  try {
-    const r = await http.head(url)
-    return { ok: r.status >= 200 && r.status < 400, size: Number(r.headers['content-length']||0), type: r.headers['content-type']||'' }
-  } catch { return { ok:false, size:0, type:'' } }
-}
-const sizeStr = n => {
-  if (!Number.isFinite(n)) return '-'
-  const u=['B','KB','MB','GB']; let i=0
-  while(n>=1024 && i<u.length-1){ n/=1024; i++ }
-  return `${n.toFixed(1)} ${u[i]}`
-}
-
-/* === واجهة المستخدم === */
-async function sendFormatPicker(conn, m, { title, url, thumb, usedPrefix }) {
-  // هيدر بصورة
-  let header = { hasMediaAttachment: false }
-  try {
-    const media = await prepareWAMessageMedia({ image: { url: thumb } }, { upload: conn.waUploadToServer })
-    header = { hasMediaAttachment: true, imageMessage: media.imageMessage }
-  } catch {}
-
-  // زرّين: MP3 أو MP4
-  const buttons = [
-    { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: '🎵 MP3', id: `${usedPrefix}غنيه mp3 ${url}` }) },
-    { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: '🎬 MP4', id: `${usedPrefix}غنيه mp4 ${url}` }) }
-  ]
-
-  const card = {
-    body: { text: `🎵 *${title}*\n\nاختر الصيغة المطلوبة:` },
-    footer: { text: '⛩️ *SUKUNA ⚡️ BOT* ⛩️' },
-    header,
-    nativeFlowMessage: { buttons, messageParamsJson: '' }
-  }
-
-  const msg = generateWAMessageFromContent(m.chat, { viewOnceMessage: { message: { interactiveMessage: card } } }, { quoted: m, userJid: conn.user.jid })
-  await conn.relayMessage(m.chat, msg.message, { messageId: msg.key.id })
+async function sendQualities(conn, m, video, usedPrefix) {
+    const text = `🎬 *${video.title}*\n\nاختار دقة الفيديو 👇`
+    try {
+        if (!libButtons?.sendButtons || !libButtons?.btn?.list) throw new Error('no list')
+        const { sendButtons, btn } = libButtons
+        await sendButtons(conn, m.chat, {
+            text, footer: FOOTER, image: video.thumb,
+            buttons: [btn.list('❲ اختار الدقة ❳', [{ title: '🎬 الدقة', rows: VIDEO_QUALITIES.map(q => ({ title: `${q}p`, description: q === '360' ? 'الأضمن' : '', id: `${usedPrefix}غنيه mp4 ${video.url} ${q}` })) }])],
+        }, m)
+    } catch (e) {
+        log('قايمة الدقة فشلت:', e.message)
+        await conn.sendMessage(m.chat, { text: `${text}\n\n` + VIDEO_QUALITIES.map(q => `• ${usedPrefix}غنيه mp4 ${video.url} ${q}`).join('\n') }, { quoted: m })
+    }
 }
 
-async function sendQualityPicker(conn, m, { title, url, thumb, usedPrefix }) {
-  let header = { hasMediaAttachment: false }
-  try {
-    const media = await prepareWAMessageMedia({ image: { url: thumb } }, { upload: conn.waUploadToServer })
-    header = { hasMediaAttachment: true, imageMessage: media.imageMessage }
-  } catch {}
+const handler = async (m, { conn, args, usedPrefix = '.', command }) => {
+    const say = t => conn.sendMessage(m.chat, { text: t }, { quoted: m })
+    const react = async e => { try { await conn.sendMessage(m.chat, { react: { text: e, key: m.key } }) } catch {} }
 
-  // أزرار دقّات سريعة
-  const quick = VIDEO_QUALITIES.map(q => ({
-    name: 'quick_reply',
-    buttonParamsJson: JSON.stringify({ display_text: `${q}p`, id: `${usedPrefix}غنيه mp4 ${url} ${q}` })
-  }))
+    if (!args.length) {
+        return say(`🧞 *الاستخدام:*\n• *${usedPrefix + command} <اسم/رابط>* ← اختيار صوت/فيديو\n• *${usedPrefix + command} mp3 <اسم/رابط>* ← صوت\n• *${usedPrefix + command} mp4 <اسم/رابط>* ← فيديو`)
+    }
 
-  const card = {
-    body: { text: `🎬 *${title}*\n\nاختر دقّة الفيديو:` },
-    footer: { text: '⛩️ *SUKUNA ⚡️ BOT* ⛩️' },
-    header,
-    nativeFlowMessage: { buttons: quick, messageParamsJson: '' }
-  }
+    let mode = null
+    let query = args.join(' ')
+    const first = args[0].toLowerCase()
+    if (['mp3', 'mp4', 'صوت', 'فيديو'].includes(first)) {
+        mode = (first === 'mp3' || first === 'صوت') ? 'audio' : 'video'
+        query = args.slice(1).join(' ')
+    }
 
-  const msg = generateWAMessageFromContent(m.chat, { viewOnceMessage: { message: { interactiveMessage: card } } }, { quoted: m, userJid: conn.user.jid })
-  await conn.relayMessage(m.chat, msg.message, { messageId: msg.key.id })
+    let quality = null
+    if (mode === 'video') {
+        const parts = query.trim().split(/\s+/)
+        if (/^\d{3,4}$/.test(parts[parts.length - 1])) { quality = parts.pop(); query = parts.join(' ') }
+    }
+    if (!query.trim()) return say('⚠️ اكتب اسم الأغنية أو الرابط')
+
+    try {
+        await react('🕒')
+        const video = await findVideo(query.trim())
+        if (!video) { await react('✖️'); return say('❌ لم يتم العثور على نتائج.') }
+
+        if (!mode) { await sendChoice(conn, m, video, usedPrefix); return }
+        if (mode === 'video' && !quality) { await sendQualities(conn, m, video, usedPrefix); return }
+        if (quality && !VIDEO_QUALITIES.includes(quality)) return say(`❌ دقة غير مدعومة. المتاح: ${VIDEO_QUALITIES.join(', ')}`)
+
+        await say(`⏳ جاري تحميل ${mode === 'audio' ? 'الصوت' : `الفيديو (${quality}p)`}...\n🎵 ${video.title}`)
+        const file = await download(video, mode, quality)
+        const safe = String(video.title).replace(/[\\/:*?"<>|]/g, '').slice(0, 100) || 'file'
+
+        if (mode === 'audio') {
+            await conn.sendMessage(m.chat, { audio: file.buffer, mimetype: file.mimetype, fileName: `${safe}.${file.ext}` }, { quoted: m })
+        } else {
+            await conn.sendMessage(m.chat, { video: file.buffer, mimetype: 'video/mp4', caption: `🎬 ${video.title}\nالجودة: ${quality}p` }, { quoted: m })
+        }
+        await react('✅')
+    } catch (e) {
+        console.error('[غنيه]', e)
+        await react('✖️')
+        await say(`❌ فشل التنزيل:\n${String(e.message).slice(0, 600)}`)
+    }
 }
 
-/* === الأمر الرئيسي === */
-const handler = async (m, { conn, args, usedPrefix, command }) => {
-  // حالات:
-  // 1) .غنيه <اسم/رابط>  → يبحث ويعرض اختيار MP3/MP4
-  // 2) .غنيه mp3 <رابط/اسم> → تنزيل MP3 مباشرة
-  // 3) .غنيه mp4 <رابط/اسم> → يعرض اختيار الدقّة
-  // 4) .غنيه mp4 <رابط> <دقة> → تنزيل فيديو بالدقّة
-
-  if (!args.length) {
-    return m.reply(
-`🧞 الاستخدام:
-• *${usedPrefix + command} <اسم/رابط>* ← يعرض اختيار MP3/MP4
-• *${usedPrefix + command} mp3 <اسم/رابط>* ← تحميل صوت
-• *${usedPrefix + command} mp4 <اسم/رابط>* ← اختيار الدقّة للفيديو`)
-  }
-
-  let mode = null
-  let query = args.join(' ')
-
-  if (['mp3','mp4','صوت','فيديو'].includes(args[0].toLowerCase())) {
-    const t = args[0].toLowerCase()
-    mode = (t === 'mp3' || t === 'صوت') ? 'audio' : 'video'
-    query = args.slice(1).join(' ')
-  }
-
-  // لو ما حددت نوع: اعرض اختيار MP3/MP4
-  if (!mode) {
-    await conn.sendMessage(m.chat, { react: { text: '🕒', key: m.key } })
-    let url = savetube.isUrl(query) ? query : null
-    let meta = null
-    if (!url) {
-      const r = await yts(query).catch(() => null)
-      if (!r?.videos?.length) {
-        await conn.sendMessage(m.chat, { react: { text: '✖️', key: m.key } })
-        return m.reply('❌ لم يتم العثور على نتائج.')
-      }
-      const v = r.videos[0]
-      url = v.url
-      meta = { title: v.title, thumb: v.thumbnail }
-    }
-    await sendFormatPicker(conn, m, { title: meta?.title || 'YouTube', url, thumb: meta?.thumb || `https://i.ytimg.com/vi/${savetube.youtubeId(url)}/hqdefault.jpg`, usedPrefix })
-    return
-  }
-
-  // نوع محدد
-  if (mode === 'audio') {
-    // تنزيل MP3 مباشرة
-    await conn.sendMessage(m.chat, { react: { text: '🕒', key: m.key } })
-    let url = savetube.isUrl(query) ? query : null
-    if (!url) {
-      const r = await yts(query).catch(() => null)
-      if (!r?.videos?.length) {
-        await conn.sendMessage(m.chat, { react: { text: '✖️', key: m.key } })
-        return m.reply('❌ لم يتم العثور على نتائج.')
-      }
-      url = r.videos[0].url
-    }
-
-    const res = await savetube.getDownload(url, 'mp3')
-    if (!res.status) {
-      await conn.sendMessage(m.chat, { react: { text: '✖️', key: m.key } })
-      return m.reply(`❌ فشل التنزيل:\n${res.error || 'غير معروف'}`)
-    }
-
-    const { title, download } = res.result
-    const head = await headInfo(download)
-    if (!head.ok) {
-      await conn.sendMessage(m.chat, { react: { text: '✖️', key: m.key } })
-      return m.reply('❌ الرابط غير متاح حالياً.')
-    }
-    if (head.size > SEND_LIMIT_AUDIO) {
-      await conn.sendMessage(m.chat, { text: `⚠️ الملف كبير (${sizeStr(head.size)}). رابط مباشر:\n${download}` }, { quoted: m })
-      return
-    }
-    await conn.sendMessage(m.chat, {
-      audio: { url: download },
-      mimetype: 'audio/mpeg',
-      fileName: `${title}.mp3`
-    }, { quoted: m })
-    await conn.sendMessage(m.chat, { react: { text: '✅', key: m.key } })
-    return
-  }
-
-  // mode === 'video'
-  // هل تم تحديد دقّة؟
-  const parts = query.trim().split(/\s+/)
-  let quality = null
-  if (/^\d{3,4}$/.test(parts[parts.length - 1])) {
-    quality = parts.pop()
-    query = parts.join(' ')
-  }
-
-  let url = savetube.isUrl(query) ? query : null
-  let meta = null
-  if (!url) {
-    const r = await yts(query).catch(() => null)
-    if (!r?.videos?.length) {
-      await conn.sendMessage(m.chat, { react: { text: '✖️', key: m.key } })
-      return m.reply('❌ لم يتم العثور على نتائج.')
-    }
-    const v = r.videos[0]
-    url = v.url
-    meta = { title: v.title, thumb: v.thumbnail }
-  }
-
-  if (!quality) {
-    // اعرض اختيار الدقّة
-    await sendQualityPicker(conn, m, {
-      title: meta?.title || 'YouTube',
-      url,
-      thumb: meta?.thumb || `https://i.ytimg.com/vi/${savetube.youtubeId(url)}/hqdefault.jpg`,
-      usedPrefix
-    })
-    return
-  }
-
-  if (!VIDEO_QUALITIES.includes(quality)) {
-    return m.reply(`❌ دقّة غير مدعومة. الدقات المتاحة: ${VIDEO_QUALITIES.join(', ')}`)
-  }
-
-  await conn.sendMessage(m.chat, { react: { text: '🕒', key: m.key } })
-
-  const res = await savetube.getDownload(url, quality)
-  if (!res.status) {
-    await conn.sendMessage(m.chat, { react: { text: '✖️', key: m.key } })
-    return m.reply(`❌ فشل التنزيل:\n${res.error || 'غير معروف'}`)
-  }
-
-  const { title, download, duration } = res.result
-  const head = await headInfo(download)
-  if (!head.ok) {
-    await conn.sendMessage(m.chat, { react: { text: '✖️', key: m.key } })
-    return m.reply('❌ الرابط غير متاح حالياً.')
-  }
-  if (head.size > SEND_LIMIT_VIDEO) {
-    await conn.sendMessage(m.chat, { text: `⚠️ الملف كبير (${sizeStr(head.size)}). رابط مباشر:\n${download}` }, { quoted: m })
-    return
-  }
-
-  await conn.sendMessage(m.chat, {
-    video: { url: download },
-    caption: `${title}\nالجودة: ${quality}p\nالمدة: ${duration || '-'}`
-  }, { quoted: m })
-  await conn.sendMessage(m.chat, { react: { text: '✅', key: m.key } })
-}
-
+handler.help = ['غنيه <اسم/رابط>']
+handler.tags = ['downloader']
 handler.command = /^(غنيه|اغنيه|اغنية)$/i
+
 export default handler
