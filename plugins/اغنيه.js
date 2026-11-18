@@ -173,78 +173,27 @@ async function download(video, kind, quality) {
     throw new Error(errors.join('\n'))
 }
 
-// ━━━ الواجهة ━━━
-async function sendChoice(conn, m, video, usedPrefix) {
-    const text = `🎵 *${video.title}*\n\nاختار الصيغة 👇`
-    try {
-        if (!libButtons?.sendButtons || !libButtons?.btn) throw new Error('no buttons lib')
-        const { sendButtons, btn } = libButtons
-        await sendButtons(conn, m.chat, {
-            text, footer: FOOTER, image: video.thumb,
-            buttons: [btn.reply('🎵 صوت', `${usedPrefix}غنيه mp3 ${video.url}`), btn.reply('🎬 فيديو', `${usedPrefix}غنيه mp4 ${video.url}`)],
-        }, m)
-    } catch (e) {
-        log('الأزرار فشلت:', e.message)
-        await conn.sendMessage(m.chat, { text: `${text}\n\n• ${usedPrefix}غنيه mp3 ${video.url}\n• ${usedPrefix}غنيه mp4 ${video.url}` }, { quoted: m })
-    }
-}
-
-async function sendQualities(conn, m, video, usedPrefix) {
-    const text = `🎬 *${video.title}*\n\nاختار دقة الفيديو 👇`
-    try {
-        if (!libButtons?.sendButtons || !libButtons?.btn?.list) throw new Error('no list')
-        const { sendButtons, btn } = libButtons
-        await sendButtons(conn, m.chat, {
-            text, footer: FOOTER, image: video.thumb,
-            buttons: [btn.list('❲ اختار الدقة ❳', [{ title: '🎬 الدقة', rows: VIDEO_QUALITIES.map(q => ({ title: `${q}p`, description: q === '360' ? 'الأضمن' : '', id: `${usedPrefix}غنيه mp4 ${video.url} ${q}` })) }])],
-        }, m)
-    } catch (e) {
-        log('قايمة الدقة فشلت:', e.message)
-        await conn.sendMessage(m.chat, { text: `${text}\n\n` + VIDEO_QUALITIES.map(q => `• ${usedPrefix}غنيه mp4 ${video.url} ${q}`).join('\n') }, { quoted: m })
-    }
-}
-
 const handler = async (m, { conn, args, usedPrefix = '.', command }) => {
     const say = t => conn.sendMessage(m.chat, { text: t }, { quoted: m })
     const react = async e => { try { await conn.sendMessage(m.chat, { react: { text: e, key: m.key } }) } catch {} }
 
-    if (!args.length) {
-        return say(`🧞 *الاستخدام:*\n• *${usedPrefix + command} <اسم/رابط>* ← اختيار صوت/فيديو\n• *${usedPrefix + command} mp3 <اسم/رابط>* ← صوت\n• *${usedPrefix + command} mp4 <اسم/رابط>* ← فيديو`)
-    }
+    // لو حد كتب mp3/صوت قبل الاسم نتجاهلها
+    let list = [...args]
+    if (['mp3', 'mp4', 'صوت', 'فيديو'].includes((list[0] || '').toLowerCase())) list.shift()
+    const query = list.join(' ').trim()
 
-    let mode = null
-    let query = args.join(' ')
-    const first = args[0].toLowerCase()
-    if (['mp3', 'mp4', 'صوت', 'فيديو'].includes(first)) {
-        mode = (first === 'mp3' || first === 'صوت') ? 'audio' : 'video'
-        query = args.slice(1).join(' ')
-    }
-
-    let quality = null
-    if (mode === 'video') {
-        const parts = query.trim().split(/\s+/)
-        if (/^\d{3,4}$/.test(parts[parts.length - 1])) { quality = parts.pop(); query = parts.join(' ') }
-    }
-    if (!query.trim()) return say('⚠️ اكتب اسم الأغنية أو الرابط')
+    if (!query) return say(`🎵 *الاستخدام:*\n*${usedPrefix + command} <اسم الأغنية أو رابط يوتيوب>*\n\nمثال: ${usedPrefix + command} mockingbird`)
 
     try {
         await react('🕒')
-        const video = await findVideo(query.trim())
+        const video = await findVideo(query)
         if (!video) { await react('✖️'); return say('❌ لم يتم العثور على نتائج.') }
 
-        if (!mode) { await sendChoice(conn, m, video, usedPrefix); return }
-        if (mode === 'video' && !quality) { await sendQualities(conn, m, video, usedPrefix); return }
-        if (quality && !VIDEO_QUALITIES.includes(quality)) return say(`❌ دقة غير مدعومة. المتاح: ${VIDEO_QUALITIES.join(', ')}`)
+        await say(`⏳ جاري تحميل الأغنية...\n🎵 ${video.title}`)
+        const file = await download(video, 'audio')
+        const safe = String(video.title).replace(/[\\/:*?"<>|]/g, '').slice(0, 100) || 'song'
 
-        await say(`⏳ جاري تحميل ${mode === 'audio' ? 'الصوت' : `الفيديو (${quality}p)`}...\n🎵 ${video.title}`)
-        const file = await download(video, mode, quality)
-        const safe = String(video.title).replace(/[\\/:*?"<>|]/g, '').slice(0, 100) || 'file'
-
-        if (mode === 'audio') {
-            await conn.sendMessage(m.chat, { audio: file.buffer, mimetype: file.mimetype, fileName: `${safe}.${file.ext}` }, { quoted: m })
-        } else {
-            await conn.sendMessage(m.chat, { video: file.buffer, mimetype: 'video/mp4', caption: `🎬 ${video.title}\nالجودة: ${quality}p` }, { quoted: m })
-        }
+        await conn.sendMessage(m.chat, { audio: file.buffer, mimetype: file.mimetype, fileName: `${safe}.${file.ext}` }, { quoted: m })
         await react('✅')
     } catch (e) {
         console.error('[غنيه]', e)
@@ -253,7 +202,7 @@ const handler = async (m, { conn, args, usedPrefix = '.', command }) => {
     }
 }
 
-handler.help = ['غنيه <اسم/رابط>']
+handler.help = ['غنيه <اسم الأغنية>']
 handler.tags = ['downloader']
 handler.command = /^(غنيه|اغنيه|اغنية)$/i
 
