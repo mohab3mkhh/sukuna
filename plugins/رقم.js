@@ -13,7 +13,7 @@
 import { TelegramClient } from 'telegram'
 import { StringSession } from 'telegram/sessions/index.js'
 
-const BOT = 'MJNumbersBot'
+const BOT = 'MJnumbers_bot'
 const GET_NUMBER_TEXT = 'Get Number'
 const CODE_WAIT = 300 * 1000
 const STEP_TIMEOUT = 25000
