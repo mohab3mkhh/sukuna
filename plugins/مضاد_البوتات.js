@@ -17,7 +17,10 @@ const store = () => global._antibot
 
 /* ── كشف البوت من شكل id الرسالة ──
    رسايل مكتبات البوتات (Baileys وأخواتها) ليها بصمة مختلفة عن واتساب الرسمي (أندرويد/آيفون = 32 حرف) */
-const BOT_TYPES = ['interactiveMessage', 'buttonsMessage', 'listMessage', 'templateMessage', 'buttonsResponseMessage', 'templateButtonReplyMessage', 'highlyStructuredMessage']
+// رسايل الأزرار/القوايم "المرسَلة" بس. ردود الضغط على الأزرار (buttonsResponseMessage / listResponseMessage /
+// templateButtonReplyMessage / interactiveResponseMessage) بيبعتها البشر لما يدوسوا زرار، فمش بنعتبرها بوت أبداً.
+const BOT_TYPES = ['interactiveMessage', 'buttonsMessage', 'listMessage', 'templateMessage', 'highlyStructuredMessage']
+const HUMAN_TYPES = ['buttonsResponseMessage', 'listResponseMessage', 'templateButtonReplyMessage', 'interactiveResponseMessage']
 
 function innerTypes(m) {
     const out = []
@@ -34,6 +37,8 @@ function innerTypes(m) {
 }
 
 function botReason(m) {
+    // ضغطة زرار من إنسان ← مش بوت (حتى لو الـ id شبه بصمة بوت)
+    if (innerTypes(m).some(x => HUMAN_TYPES.includes(x))) return null
     if (m.isBaileys) return 'isBaileys'
     const id = String(m.id || m.key?.id || '')
     const extra = (process.env.ANTIBOT_PREFIXES || '').split(',').map(x => x.trim()).filter(Boolean)
