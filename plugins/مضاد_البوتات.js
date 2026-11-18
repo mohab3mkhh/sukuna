@@ -1,166 +1,118 @@
-import fs from 'fs';
+// plugins/مضاد_البوتات.js
+// .مضاد_البوتات اون  → يطرد أي بوت من أول رسالة يبعتها في الجروب
+// .مضاد_البوتات اوف  → يوقف الطرد
+// (الأمر للمشرفين/المالك بس، والبوت لازم يكون مشرف عشان يطرد)
 
-const detectedBots = {};
-const antibotPath = './data/antibot.json';
+import fs from 'fs'
+import path from 'path'
 
-// 🔥 الروابط الجديدة (MP4 و MP3)
-const MEDIA_URLS = {
-    video: 'https://file.garden/aauvg01sjleV_ic1/VID-20260511-WA0128.mp4',
-    audio: 'https://file.garden/aauvg01sjleV_ic1/VID-20260511-WA0128.mp3'
-};
+const FILE = path.join(process.cwd(), 'antibot.json')
+const norm = j => String(j || '').split('@')[0].split(':')[0]
 
-// التأكد من وجود مجلد data
-if (!fs.existsSync('./data')) fs.mkdirSync('./data', { recursive: true });
-if (!fs.existsSync(antibotPath)) fs.writeFileSync(antibotPath, JSON.stringify({}, null, 2));
+/* ── التخزين: بيتحفظ في ملف عشان يفضل بعد الريستارت (على Railway ده بيفضل لحد الـ redeploy) ── */
+function load() { try { return JSON.parse(fs.readFileSync(FILE, 'utf8')) } catch { return {} } }
+function save(d) { try { fs.writeFileSync(FILE, JSON.stringify(d)) } catch (e) { console.error('[مضاد_البوتات] حفظ:', e.message) } }
+if (!global._antibot) global._antibot = load()
+const store = () => global._antibot
 
-let handler = async (m, { conn, args, usedPrefix, command, isOwner, isAdmin }) => {
-    // التحقق من أن الأمر في جروب
-    if (!m.isGroup) return global.dfail('group', m, conn);
-    
-    // الصلاحيات: المطور أو المشرف فقط
-    if (!isOwner && !isAdmin) return global.dfail('admin', m, conn);
+/* ── كشف البوت من شكل id الرسالة ──
+   رسايل مكتبات البوتات (Baileys وأخواتها) ليها بصمة مختلفة عن واتساب الرسمي (أندرويد/آيفون = 32 حرف) */
+function isBotMessage(m) {
+    if (m.isBaileys) return true
+    const id = String(m.id || m.key?.id || '')
+    if (!id) return false
+    if (id.startsWith('BAE5') && id.length === 16) return true   // Baileys القديمة
+    if (id.startsWith('NJX-')) return true
+    if (id.startsWith('B24E') && id.length === 20) return true
+    if (id.startsWith('SUKUNA') || id.startsWith('MOHAB')) return true
+    if (id.startsWith('3EB0') && id.length === 22) return true   // Baileys الجديدة (مش واتساب ويب)
+    return false
+}
 
-    let chatId = m.chat;
-    let antibott = {};
-    try { 
-        antibott = JSON.parse(fs.readFileSync(antibotPath)); 
-    } catch { 
-        antibott = {}; 
+function findParticipant(meta, jid) {
+    const n = norm(jid)
+    return meta.participants.find(p => [p.id, p.lid, p.jid, p.phoneNumber].some(x => x && norm(x) === n))
+}
+
+function ownerNumbers() {
+    const o = global.owner || []
+    return o.map(x => norm(Array.isArray(x) ? x[0] : x))
+}
+
+/* ══════ الأمر ══════ */
+const handler = async (m, { conn, args }) => {
+    if (!m.isGroup) return conn.sendMessage(m.chat, { text: '❌ الأمر ده للجروبات بس.' }, { quoted: m })
+
+    const meta = await conn.groupMetadata(m.chat)
+    const me = findParticipant(meta, m.sender)
+    const allowed = me?.admin || m.fromMe || ownerNumbers().includes(norm(m.sender))
+    if (!allowed) return conn.sendMessage(m.chat, { text: '⛔ الأمر ده للمشرفين بس.' }, { quoted: m })
+
+    const arg = String(args?.[0] || '').toLowerCase()
+    const on = ['اون', 'on', 'تشغيل', 'فعل'].includes(arg)
+    const off = ['اوف', 'off', 'ايقاف', 'إيقاف', 'وقف'].includes(arg)
+
+    const db = store()
+    if (!on && !off) {
+        return conn.sendMessage(m.chat, {
+            text: `🛡️ *مضاد البوتات*\n\nالحالة: ${db[m.chat] ? '✅ شغّال' : '❌ مقفول'}\n\n• .مضاد_البوتات اون\n• .مضاد_البوتات اوف\n\n> ⛩️ SUKUNA BOT ⛩️`,
+        }, { quoted: m })
     }
-    let antibot = antibott[chatId] === true;
 
-    // تفعيل مضاد البوتات
-    if (args[0] === "اون" || args[0] === "on" || args[0] === "تشغيل") {
-        if (antibot) return m.reply("🛡️ مضاد البوتات مفعل بالفعل!");
-        antibott[chatId] = true;
-        fs.writeFileSync(antibotPath, JSON.stringify(antibott, null, 2));
-        return m.reply("✅ تم تفعيل مضاد البوتات بنجاح!");
-    } 
-    // تعطيل مضاد البوتات
-    else if (args[0] === "اوف" || args[0] === "off" || args[0] === "ايقاف") {
-        if (!antibot) return m.reply("❌ مضاد البوتات معطل بالفعل!");
-        delete antibott[chatId];
-        fs.writeFileSync(antibotPath, JSON.stringify(antibott, null, 2));
-        return m.reply("❌ تم تعطيل مضاد البوتات!");
-    }
-    // عرض الحالة
-    else {
-        let status = antibot ? '🟢 مفعل' : '🔴 معطل';
-        return m.reply(`🛡️ *مضاد البوتات*\nالحالة: ${status}\n\nلاستخدامه:\n${usedPrefix + command} اون\n${usedPrefix + command} اوف`);
-    }
-};
+    if (on) db[m.chat] = true; else delete db[m.chat]
+    save(db)
 
-handler.before = async function (m, { conn }) {
+    let warn = ''
+    if (on) {
+        const bot = findParticipant(meta, conn.user?.id) || findParticipant(meta, conn.user?.lid)
+        if (!bot?.admin) warn = '\n\n⚠️ البوت مش مشرف في الجروب، اعمله مشرف عشان يقدر يطرد.'
+    }
+    return conn.sendMessage(m.chat, {
+        text: on
+            ? `✅ *تم تشغيل مضاد البوتات*\nأي بوت هيبعت رسالة هيتطرد علطول.${warn}\n\n> ⛩️ SUKUNA BOT ⛩️`
+            : `❌ *تم إيقاف مضاد البوتات*\nمحدش هيتطرد.\n\n> ⛩️ SUKUNA BOT ⛩️`,
+    }, { quoted: m })
+}
+
+/* ══════ الكشف: بيتنفذ على كل رسالة في الجروبات ══════ */
+handler.before = async function (m, extra = {}) {
+    const conn = extra.conn || this
     try {
-        // 1. التأكد إنها رسالة في جروب
-        if (!m.isGroup) return false;
+        if (!m.isGroup || m.fromMe || !store()[m.chat]) return false
+        if (!isBotMessage(m)) return false
 
-        // 2. جلب إعدادات الجروب
-        let chatId = m.chat;
-        let antibott = {};
-        try { 
-            antibott = JSON.parse(fs.readFileSync(antibotPath)); 
-        } catch { 
-            return false; 
-        }
-        
-        // 3. هل مضاد البوتات مفعل في هذا الجروب؟
-        if (antibott[chatId] !== true) return false;
+        const sender = m.sender
+        const botNum = norm(conn.user?.id)
+        if (!sender || norm(sender) === botNum || ownerNumbers().includes(norm(sender))) return false
 
-        // 4. منع طرد البوت نفسه أو رسائل النظام
-        if (m.key.fromMe) return false;
-        
-        // 5. كشف البوتات بناءً على بصمة الرسالة
-        let msgId = m.key?.id || m.id || '';
-        let isBot = false;
-        let botType = '';
+        const meta = await conn.groupMetadata(m.chat)
+        const bot = findParticipant(meta, conn.user?.id) || findParticipant(meta, conn.user?.lid)
+        if (!bot?.admin) return false                       // مش مشرف، مش هيعرف يطرد
+        const target = findParticipant(meta, sender)
+        if (!target || target.admin === 'superadmin') return false  // صاحب الجروب مايتطردش
 
-        if (msgId && msgId.length > 0) {
-            if (msgId.startsWith('3EB0') && msgId.length < 25) { isBot = true; botType = 'Baileys'; }
-            else if (msgId.startsWith('BAE5') && msgId.length === 16) { isBot = true; botType = 'Baileys v2'; }
-            else if (msgId.startsWith('B24E') && msgId.length === 20) { isBot = true; botType = 'Baileys v3'; }
-            else if (msgId.startsWith('8SCO') && msgId.length === 20) { isBot = true; botType = 'Baileys v4'; }
-            else if (msgId.startsWith('NJX-')) { isBot = true; botType = 'NJX Bot'; }
-        }
-
-        if (!isBot) return false;
-
-        // 6. فك تشفير الـ JID
-        let senderId = m.sender;
-        if (typeof conn.decodeJid === 'function') {
-            senderId = conn.decodeJid(senderId);
-        }
-        
-        let senderNum = senderId.split('@')[0];
-
-        // 7. منع التكرار لنفس البوت
-        if (detectedBots[chatId]?.includes(senderId)) return false;
-        if (!detectedBots[chatId]) detectedBots[chatId] = [];
-        detectedBots[chatId].push(senderId);
-
-        // 8. إرسال الفيديو والصوت من الروابط
+        const jid = target.id || sender
         try {
-            let fixedChatId = chatId;
-            if (typeof conn.decodeJid === 'function') {
-                fixedChatId = conn.decodeJid(chatId);
-            }
-            
-            // إرسال الفيديو كـ GIF
-            await conn.sendMessage(fixedChatId, {
-                video: { url: MEDIA_URLS.video },
-                gifPlayback: true,
-                caption: `🚨 *تم اكتشاف بوت!*\n👤 *الرقم:* ${senderNum}\n🔍 *النوع:* ${botType}`,
-                mentions: [senderId]
-            });
-            
-            // إرسال الصوت (MP3 - عادي مش بصمة)
-            await conn.sendMessage(fixedChatId, {
-                audio: { url: MEDIA_URLS.audio },
-                mimetype: 'audio/mpeg',
-                ptt: false
-            });
-            
-        } catch (mediaErr) {
-            console.error('خطأ في إرسال الميديا:', mediaErr);
-            await conn.sendMessage(chatId, { 
-                text: `🚨 *تم اكتشاف بوت!*\n📞 الرقم: ${senderNum}\n🏷️ النوع: ${botType}`, 
-                mentions: [senderId] 
-            });
+            await conn.groupParticipantsUpdate(m.chat, [jid], 'remove')
+        } catch {
+            // لو هو مشرف: نشيل إشرافه الأول وبعدين نطرده
+            await conn.groupParticipantsUpdate(m.chat, [jid], 'demote')
+            await conn.groupParticipantsUpdate(m.chat, [jid], 'remove')
         }
-
-        // 9. محاولة طرد البوت
-        try {
-            await conn.groupParticipantsUpdate(chatId, [senderId], "remove");
-            await conn.sendMessage(chatId, { 
-                text: `✅ *تم طرد البوت بنجاح!*\n📞 الرقم: ${senderNum}`,
-                mentions: [senderId] 
-            });
-        } catch (err) {
-            await conn.sendMessage(chatId, { 
-                text: `⚠️ *فشل الطرد!*\n📞 الرقم: ${senderNum}\n🔧 يرجى جعل البوت أدمن أولاً`,
-                mentions: [senderId] 
-            });
-        }
-
-        // 10. إزالة من القائمة بعد 10 ثواني
-        setTimeout(() => {
-            if (detectedBots[chatId]) {
-                const index = detectedBots[chatId].indexOf(senderId);
-                if (index > -1) detectedBots[chatId].splice(index, 1);
-            }
-        }, 10000);
-
-        return false;
-        
+        await conn.sendMessage(m.chat, {
+            text: `🤖🚫 *مضاد البوتات*\nتم طرد البوت @${norm(jid)}\n\n> ⛩️ SUKUNA BOT ⛩️`,
+            mentions: [jid],
+        })
+        console.log('[مضاد_البوتات] اتطرد:', jid, 'في', m.chat)
     } catch (e) {
-        console.error('❌ خطأ في مضاد البوتات:', e);
-        return false;
+        console.error('[مضاد_البوتات]', e?.message || e)
     }
-};
+    return false
+}
 
-handler.command = /^(مضاد_البوتات|antibot|نوبوت|مضاد)$/i;
-handler.tags = ['group'];
-handler.group = true;
-handler.botAdmin = true;
+handler.command = /^(مضاد_البوتات|مضاد-البوتات|antibot)$/i
+handler.group = true
+handler.tags = ['group']
+handler.help = ['مضاد_البوتات اون', 'مضاد_البوتات اوف']
 
-export default handler;
+export default handler
