@@ -129,7 +129,7 @@ async function run(client, { onNumbers, onCode }) {
     let menuMsg = await waitFor(newestInline, { timeout: 15000, every: 800 })
     if (!menuMsg) throw tgErr('NO_LIST', await visible())
 
-    // 2) اختيار خدمة WhatsApp (بعد Get Number بيظهر WhatsApp / Facebook)
+    // 2) اختيار خدمة WhatsApp
     const menuBtns = inlineOf(menuMsg)
     const hasCountriesAlready = menuBtns.some(b => COUNTRY_RE.test(b.text) || /next|»/i.test(b.text))
 
@@ -177,7 +177,7 @@ async function run(client, { onNumbers, onCode }) {
     log('الضغط على زر الدولة:', hit.btn.text)
     await clickBtn(hit.msg, hit.btn)
 
-    // 4) التقاط الأرقام المصرية من نص الرسالة ومن نصوص الأزرار
+    // 4) التقاط الأرقام المصرية
     const phones = []
     const grab = async () => {
         const msgs = (await recent()).filter(fresh)
