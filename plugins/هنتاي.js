@@ -1,5 +1,3 @@
-import fetch from "node-fetch"; // أو استخدام الـ fetch المدمج في Node الحديث
-
 const API_URL = "https://nekobot.xyz/api/image";
 const REQUEST_TIMEOUT_MS = 15000;
 
@@ -33,7 +31,10 @@ async function fetchAnimeImage(type) {
     }
 }
 
-let handler = async (m, { conn }) => {
+let handler = async (m, { conn, isROwner, isOwner }) => {
+    // للمطور فقط
+    if (!isROwner && !isOwner) return conn.reply(m.chat, '❌ هذا الأمر للمطور فقط.', m);
+
     try {
         // 1. التفاعل على رسالة المستخدم فوراً بإيموجي
         await conn.sendMessage(m.chat, { 
@@ -91,5 +92,6 @@ let handler = async (m, { conn }) => {
 handler.help = ['hentai', 'nsfwhentai'];
 handler.tags = ['18plus'];
 handler.command = /^(hentai|هنتاي|nsfwhentai)$/i;
+handler.owner = true;   // للمطور فقط
 
 export default handler;
