@@ -1,12 +1,11 @@
 //امر يصيد يوزرات 
 //كدا (.صيد-يوزر 3 يجيب لك يوزر ثلاثي، و اذا غيرت رقم 3 إلا 4 يجيبلك رباعي ايزي) 
-//𝑁𝑜𝑢𝑟 𝑑𝑒𝑣 💤🖤
+// ⛩️ SUKUNA BOT — by Mohab
 import fetch from 'node-fetch'
 import fs from 'fs'
 import path from 'path'
 
-const _0xW = [10, 62, 32, 119873, 119900, 119906, 119903, 32, 119889, 119890, 119907, 32, 128164, 128420]
-const FOOTER = String.fromCodePoint(..._0xW)
+const FOOTER = '\n> ⛩️ SUKUNA BOT • by Mohab ⛩️'
 
 const sessions = new Map()
 const SAVE_FILE = './database/username_hunt.json'
@@ -122,7 +121,10 @@ function saveFoundUsernames(usernames, analysisData = []) {
   }
 }
 
-let handler = async (m, { conn, text, command, usedPrefix }) => {
+let handler = async (m, { conn, text, command, usedPrefix, isROwner, isOwner }) => {
+  // للمطور فقط
+  if (!isROwner && !isOwner) return conn.reply(m.chat, '❌ هذا الأمر للمطور فقط.', m)
+
   const client = conn
   const isPrefix = usedPrefix || '.'
 
@@ -291,8 +293,8 @@ let handler = async (m, { conn, text, command, usedPrefix }) => {
   }
 }
 
-handler.help = ['N O U R']
-handler.tags = ['N O U R']
+handler.help = ['صيد-يوزر <الطول>', 'يوزر-جرب <يوزر>', 'تحليل-يوزر <يوزر>', 'وقف-صيد']
+handler.tags = ['owner']
 handler.command = /^(صيد-يوزر|صيد-يوزرات|وقف-صيد|تحليل-يوزر|يوزر-جرب)$/i
 handler.owner = true
 handler.group = false
