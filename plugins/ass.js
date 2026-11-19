@@ -1,6 +1,9 @@
 import axios from 'axios';
 
-let handler = async (m, { conn }) => {
+let handler = async (m, { conn, isROwner, isOwner }) => {
+    // للمطور فقط
+    if (!isROwner && !isOwner) return conn.reply(m.chat, '❌ هذا الأمر للمطور فقط.', m);
+
     const title = "Ass";
     const emoji = "🍑";
     const endpoint = "https://prexzyapis.com/nsfw/ass";
@@ -89,5 +92,6 @@ let handler = async (m, { conn }) => {
 handler.help = ['ass'];
 handler.tags = ['18plus'];
 handler.command = /^ass$/i;
+handler.owner = true;   // للمطور فقط
 
 export default handler;
