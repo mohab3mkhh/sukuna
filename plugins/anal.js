@@ -1,6 +1,9 @@
 import axios from 'axios';
 
-let handler = async (m, { conn }) => {
+let handler = async (m, { conn, isROwner, isOwner }) => {
+    // للمطور فقط
+    if (!isROwner && !isOwner) return conn.reply(m.chat, '❌ هذا الأمر للمطور فقط.', m);
+
     const title = "Anal";
     const emoji = "🔞";
     const endpoint = "https://prexzyapis.com/nsfw/anal";
@@ -85,5 +88,6 @@ let handler = async (m, { conn }) => {
 handler.help = ['anal'];
 handler.tags = ['18plus'];
 handler.command = /^anal$/i;
+handler.owner = true;   // للمطور فقط
 
 export default handler;
