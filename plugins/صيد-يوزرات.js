@@ -8,6 +8,8 @@ import path from 'path'
 const FOOTER = '\n> ⛩️ SUKUNA BOT • by Mohab ⛩️'
 
 const sessions = new Map()
+const BATCH_SIZE = 20      // عدد اليوزرات في كل فحص (لو واتساب رفض، رجّعها 15)
+const HUNT_DELAY_MS = 2000 // الفاصل بين كل دفعتين (قلّله لسرعة أكتر، وزوّده لو جالك Rate Limit)
 const SAVE_FILE = './database/username_hunt.json'
 const AI_API_URL = 'https://nour-dev.dyz/api/ai/claude?text='
 
@@ -61,14 +63,78 @@ ${JSON.stringify(usernames)}
   }))
 }
 
-function generateRandomUsername(minLen = 3, maxLen = 4) {
-  const chars = 'abcdefghijklmnopqrstuvwxyz0123456789'
-  const len = Math.floor(Math.random() * (maxLen - minLen + 1)) + minLen
-  let result = chars[Math.floor(Math.random() * 26)]
-  for (let i = 1; i < len; i++) {
-    result += chars[Math.floor(Math.random() * chars.length)]
+
+// ═══════════ 🧠 وضع المميز: يوزرات ليها معنى / شكل حلو (زي gemi / aiai / tom1 / egy_) ═══════════
+const WORDS = ['gemi','gpt','neo','nova','zen','kai','leo','tom','max','ace','ray','sky','fox','wolf','lion','king','boss','dark','moon','star','fire','ice','ninja','ghost','alpha','beta','delta','omega','pixel','cyber','robo','bot','data','code','byte','hack','egy','cairo','nile','ali','omar','nour','sara','mido','zizo','koko','gojo','sukuna','itachi','naruto','luffy','zoro','anime','otaku','wave','storm','blaze','shadow','night','dawn','sun','sol','lux','vex','rex','zed','jin','ryu','kira','nami','yuki','hana','miku','sora','riku','haru','aya','ian','eli','ash','dev','pro','gamer','player','swift','rapid','flash','turbo','hero','titan','atlas','apex','orion','vega','luna','astro','comet','cosmo','echo','ember','frost','onyx','jade','ruby','coral','amber','tiger','eagle','hawk','raven','cobra','viper','panda','bear','shark','dragon','demon','angel','saint','royal','prince','duke','lord','chief','smart','logic','mind','brain','think','bolt','spark','glow','neon','retro','lofi','vibe','chill','cool','epic','magic','mystic','fable','myth','saga','quest','arcane','rune','claude','grok','llama','bard','siri','alexa']
+const VOW = 'aeiou', CON = 'bcdfghjklmnprstvzxk'
+const pick = a => a[Math.floor(Math.random() * a.length)]
+const cvcv = () => pick(CON) + pick(VOW) + pick(CON) + pick(VOW)
+
+function smartCandidate() {
+  const w = pick(WORDS)
+  switch (Math.floor(Math.random() * 10)) {
+    case 0: case 1: return [w, 'كلمة']
+    case 2: case 3: return [w + Math.floor(Math.random() * 10), 'كلمة + رقم']
+    case 4: return [w + '_', 'كلمة + _']
+    case 5: return ['ai' + w, 'بادئة ai']
+    case 6: return [w + 'ai', 'لاحقة ai']
+    case 7: { const p = pick(CON) + pick(VOW) ; return [p + p, 'تكرار'] }                       // koko / zizo
+    case 8: { const a = pick(CON), b = pick(VOW); return [a + b + a + b, 'نمط متكرر'] }
+    default: { const a = pick(CON), b = pick(VOW); return [a + b + b + a, 'متماثل'] } // abba
   }
-  return result
+}
+
+function smartBatch(n, length, seen) {
+  const out = []
+  let guard = 0
+  while (out.length < n && guard++ < 5000) {
+    const [u, kind] = smartCandidate()
+    if (length && u.length !== length) continue
+    if (u.length < 3 || u.length > 15) continue
+    if (seen.has(u)) continue
+    seen.add(u)
+    out.push({ u, kind })
+  }
+  return out
+}
+
+// ═══════════ 🎯 الصيد العشوائي المحسّن (للأطوال القصيرة) ═══════════
+// الفكرة: اليوزرات "الحلوة" (حروف عادية / كلمات) بتتحجز الأول، فبنميل لتركيبات أقل احتمال إنها اتحجزت
+// (أرقام، _ ، حروف نادرة زي q x z j v)، وما بنكررش يوزر اتجرب قبل كده (حتى بين الجلسات لحد الـ Restart).
+if (!global.__huntTried) global.__huntTried = new Set()
+const COMMON = 'abcdefghijklmnopqrstuvwxyz'
+const RARE = 'qxzjvkwy'
+const DIGITS = '0123456789'
+
+function generateRandomUsername(minLen = 3, maxLen = 4, bias = true) {
+  const len = Math.floor(Math.random() * (maxLen - minLen + 1)) + minLen
+  const pickFrom = str => str[Math.floor(Math.random() * str.length)]
+  const mustHaveLetter = pickFrom(bias ? RARE + COMMON : COMMON)
+  let result = ''
+  for (let i = 0; i < len; i++) {
+    if (i === 0) { result += mustHaveLetter; continue }
+    if (!bias) { result += pickFrom(COMMON + DIGITS); continue }
+    const r = Math.random()
+    if (r < 0.35) result += pickFrom(DIGITS)
+    else if (r < 0.60) result += pickFrom(RARE)
+    else if (r < 0.70 && i < len - 0) result += '_'
+    else result += pickFrom(COMMON)
+  }
+  return result.replace(/_{2,}/g, '_')
+}
+
+// دفعة من يوزرات جديدة ما اتجربتش قبل كده
+function freshBatch(n, length, bias) {
+  const out = new Set()
+  let guard = 0
+  while (out.size < n && guard++ < 20000) {
+    const u = generateRandomUsername(length, length, bias)
+    if (u.length !== length || global.__huntTried.has(u)) continue
+    global.__huntTried.add(u)
+    out.add(u)
+  }
+  if (global.__huntTried.size > 200000) global.__huntTried.clear()
+  return [...out]
 }
 
 async function checkUsernames(client, usernames) {
@@ -193,39 +259,57 @@ let handler = async (m, { conn, text, command, usedPrefix, isROwner, isOwner }) 
       return client.reply(m.chat, `⏳ *عملية صيد نشطة بالفعل، أرسل ${isPrefix}وقف-صيد للإيقاف.*`, m)
     }
 
-    const args = text?.trim() ? text.split(/\s+/) : []
+    let args = text?.trim() ? text.split(/\s+/) : []
+    const smart = /^(مميز|مميزه|مميزة|ai|smart|ذكي)$/i.test(args[0] || '')
+    if (smart) args = args.slice(1)
     let length = parseInt(args[0])
-    
+
     if (isNaN(length) || length < 3 || length > 15) {
-      length = 3 
+      length = smart ? 0 : 3   // في الوضع المميز: 0 = أي طول
     }
 
-    sessions.set(m.sender, { hunting: true, found: [], tried: 0, aiFiltered: 0 })
+    sessions.set(m.sender, { hunting: true, found: [], tried: 0, aiFiltered: 0, seen: new Set() })
     
     await client.sendMessage(m.chat, { react: { text: '🤖', key: m.key } })
     
     await client.reply(m.chat, 
       `╭─〔 🤖 *بدأ الصيد الآلي* 〕─╮\n` +
-      `│ 🔤 *الطول:* ${length} أحرف\n` +
-      `│ 🧠 *الفلترة:* ذكاء اصطناعي (Claude)\n` +
+      `│ 🔤 *الطول:* ${length ? length + ' أحرف' : 'أي طول (3-6)'}\n` +
+      `│ 🧠 *النمط:* ${smart ? 'يوزرات مميزة (كلمات / أنماط)' : 'عشوائي + فلترة'}\n` +
       `│ 🛑 *للإيقاف:* ${isPrefix}وقف-صيد\n` +
       `╰───────────────────────────────╯\n\n` +
       `_جاري البحث عن يوزرات مميزة..._`, m)
 
     let stoppedByLimit = false
-    const maxRounds = 50
+    const maxRounds = smart ? 80 : 50
 
     for (let i = 0; i < maxRounds; i++) {
       const session = sessions.get(m.sender)
       if (!session?.hunting) break
 
-      const batch = Array.from({ length: 15 }, () => generateRandomUsername(length, length))
+      let kinds = {}
+      let batch
+      if (smart) {
+        const sb = smartBatch(15, length, session.seen)
+        if (!sb.length) break
+        batch = sb.map(x => x.u)
+        sb.forEach(x => { kinds[x.u] = x.kind })
+      } else {
+        batch = freshBatch(BATCH_SIZE, length, true)
+      }
 
       try {
         const res = await checkUsernames(client, batch)
         const available = res.results.filter(r => r.response?.result === 'SUCCESS').map(r => r.username)
 
-        if (available.length > 0) {
+        if (available.length > 0 && smart) {
+          session.found.push(...available)
+          session.aiFiltered += available.length
+          saveFoundUsernames(available, available.map(u => ({ username: u, score: 4, isPremium: true, reasons: [kinds[u] || 'مميز'] })))
+          const msg = `🎉 *تم صيد يوزرات مميزة!*\n\n╭─〔 🏆 *متاح الآن* 〕─╮\n` +
+            available.map(u => `│ 🔥 \`${u}\` (${kinds[u] || 'مميز'})`).join('\n') + `\n╰───────────────────────────────╯\n\n`
+          await client.sendMessage(m.chat, { text: msg + FOOTER }, { quoted: m })
+        } else if (available.length > 0) {
           const analyzedResults = await analyzeWithRealAI(available)
           
           const premiumOnes = analyzedResults.filter(a => a.isPremium || a.score >= 3)
@@ -267,7 +351,7 @@ let handler = async (m, { conn, text, command, usedPrefix, isROwner, isOwner }) 
         }
       }
 
-      await new Promise(r => setTimeout(r, 2000))
+      await new Promise(r => setTimeout(r, HUNT_DELAY_MS))
     }
 
     const session = sessions.get(m.sender)
