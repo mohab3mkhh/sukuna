@@ -3,6 +3,7 @@
 //    بنفس اتقان وقوة النظام الاحترافي + تحسينات الأداء
 // ════════════════════════════════════════════════════════
 import { smsg }         from './lib/simple.js'
+import { getButtonId } from './lib/buttons.js'
 import { format }       from 'util'
 import { fileURLToPath } from 'url'
 import path, { join }   from 'path'
@@ -11,7 +12,7 @@ import { pathToFileURL } from 'url'
 import chalk            from 'chalk'
 import ws               from 'ws'
 
-const _baileys = await import('angularsockets')
+const _baileys = await import('@whiskeysockets/baileys')
 const proto    = _baileys?.proto || _baileys?.default?.proto || {}
 
 const isNumber = x  => typeof x === 'number' && !isNaN(x)
@@ -20,9 +21,19 @@ const delay    = ms => isNumber(ms) && new Promise(resolve => setTimeout(functio
 }, ms))
 
 // ════════════════════════════════════════════════════════
+// 🔕 منع الخاص: لو مفعّل البوت مايردش خالص على الرسائل الخاصة (ما عدا المالك)
+//    التشغيل/الإيقاف بأمر  .منع_الخاص اون / اوف  (plugins/منع_الخاص.js)
+// ════════════════════════════════════════════════════════
+const PRIVATE_BLOCK_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'database', 'privateblock.json')
+if (!global.privateBlock) {
+  try { global.privateBlock = { enabled: JSON.parse(fs.readFileSync(PRIVATE_BLOCK_FILE, 'utf8')).enabled === true } }
+  catch { global.privateBlock = { enabled: false } }
+}
+
+// ════════════════════════════════════════════════════════
 // 👑 أرقام المالك المحمية (رقم عادي + LID)
 // ════════════════════════════════════════════════════════
-const ownerNumbers  = ['201036547166', '201016855501']
+const ownerNumbers  = ['201036547166', '201515640916']
 const ownerLids     = ['54160242270370', '20477758198374620', '204775819837462']
 
 // ✅ دالة موحدة تتحقق من المالك بأي صيغة
@@ -352,10 +363,17 @@ export async function handler(conn, rawMsg) {
 
   if (!m || !m.sender || !m.chat) return
 
-  // 🔇 تجاهل الخاص: أي حد غير المالك يبعت للبوت في الخاص يتجاهله تماماً (مفيش رد ولا بلوك)
-  if (!m.isGroup && !isFromMe && !m.fromMe) {
-    const _ownerNums = (Array.isArray(global.owners) ? global.owners : (global.owner || [])).map(n => String(n).replace(/\D/g, ''))
-    if (!isOwnerJid(m.sender) && !_ownerNums.includes(numOf(m.sender))) return
+  // ✅ منع استغلال اليوزرنيم المزيف
+  // لو fromMe=true بس المرسل مش البوت نفسه → تجاهل
+  {
+    const botNum    = numOf(conn.user?.jid || '')
+    const senderNum = numOf(m.sender)
+    const isRealFromMe = isFromMe && (
+      senderNum === botNum ||
+      m.sender === conn.user?.jid ||
+      rawMsg.key?.participant // رسايل الجروب اللي البوت بعتها
+    )
+    if (isFromMe && !isRealFromMe) return
   }
 
   m.exp = 0
@@ -404,6 +422,12 @@ title: '', lastclaim: 0, lastweekly: 0
 
   if (typeof m.text !== 'string') m.text = ''
 
+  // 🔘 الضغط على زرار/قائمة تفاعلية يتحول لأمر مكتوب
+  {
+    const _btnId = getButtonId(rawMsg)
+    if (_btnId) m.text = String(_btnId)
+  }
+
   if (m.pushName && m.pushName !== user.name) user.name = m.pushName
 
   const owners    = Array.isArray(global.owners) ? global.owners : (global.owner || [])
@@ -411,9 +435,24 @@ title: '', lastclaim: 0, lastweekly: 0
   const ownersJid = owners.map(n => String(n).replace(/\D/g, '') + '@s.whatsapp.net')
   const premsJid  = prems.map(n  => String(n).replace(/\D/g, '') + '@s.whatsapp.net')
 
-  const isROwner = ownersJid.includes(m.sender) || (isFromMe && ownersJid.some(o => o.split('@')[0] === conn.user?.jid?.split('@')[0]?.split(':')[0]))
+  const botJid   = conn.user?.jid?.split(':')[0] + '@s.whatsapp.net'
+
+  // ✅ حل مشكلة اليوزرنيم — resolve الـ LID للـ sender
+  const _globalLidMap = conn?.isLid || {}
+  const _resolvedSender = _globalLidMap[m.sender] ||
+                          _globalLidMap[String(m.sender).replace(/:[0-9]+@/, '@')] ||
+                          m.sender
+  const _senderNum = numOf(_resolvedSender)
+
+  const isROwner = ownersJid.includes(_resolvedSender) ||
+                   isOwnerJid(_resolvedSender) ||
+                   ownerNumbers.includes(_senderNum) ||
+                   (isFromMe && (m.sender === botJid || m.sender === conn.user?.jid))
   const isOwner  = isROwner
   const isPrems  = isROwner || premsJid.includes(m.sender) || user.premium === true
+
+  // 🔕 منع الخاص: تجاهل كامل (من غير رد ولا تحذير ولا تشغيل أي أمر) — المالك مستثنى
+  if (!m.isGroup && global.privateBlock?.enabled && !isROwner) return
 
   if (global.autoRead) await conn.readMessages([rawMsg.key]).catch(() => {})
 
@@ -430,7 +469,7 @@ title: '', lastclaim: 0, lastweekly: 0
   let isRAdmin      = false
   let isBotAdmin    = false
 
-  const isRealOwner = isOwnerJid(m.sender)
+  const isRealOwner = isOwnerJid(_resolvedSender) || isOwnerJid(m.sender)
 
   if (m.isGroup) {
     try {
@@ -468,7 +507,12 @@ title: '', lastclaim: 0, lastweekly: 0
       }
     }
 
-    const userNum  = numOf(m.sender)
+    // ✅ استخدم الـ resolved sender في isAdmin
+    const _lidMapLocal = conn?.isLid || {}
+    const _senderResolved = _lidMapLocal[m.sender] ||
+                            _lidMapLocal[String(m.sender).replace(/:[0-9]+@/, '@')] ||
+                            m.sender
+    const userNum  = numOf(_senderResolved)
     const botNum   = numOf(conn.user?.jid || '')
     const userPart = partMap.get(userNum) || {}
     const botPart  = partMap.get(botNum)  || {}
@@ -781,4 +825,4 @@ export async function callUpdate(conn, call) {
   } catch (e) {
     console.error('[callUpdate]', e.message)
   }
-}
+                                                                                                 }
