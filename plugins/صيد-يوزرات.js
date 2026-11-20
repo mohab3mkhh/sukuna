@@ -8,8 +8,11 @@ import path from 'path'
 const FOOTER = '\n> ⛩️ SUKUNA BOT • by Mohab ⛩️'
 
 const sessions = new Map()
-const BATCH_SIZE = 20      // عدد اليوزرات في كل فحص (لو واتساب رفض، رجّعها 15)
-const HUNT_DELAY_MS = 2000 // الفاصل بين كل دفعتين (قلّله لسرعة أكتر، وزوّده لو جالك Rate Limit)
+const BATCH_SIZE = 15      // عدد اليوزرات في كل فحص
+const RATE_RETRIES = 3                // كام مرة نستنى ونكمّل لما واتساب يحدد السرعة قبل ما نقف
+const RATE_BACKOFF_S = [60, 180, 420]  // مدة الانتظار بالثواني في كل مرة
+const COOLDOWN_MS = 30 * 60 * 1000     // بعد الإيقاف بسبب الحد، الأمر بيرفض يبدأ قبل 30 دقيقة
+const HUNT_DELAY_MS = 4000 // الفاصل بين كل دفعتين (قلّله لسرعة أكتر، وزوّده لو جالك Rate Limit)
 const SAVE_FILE = './database/username_hunt.json'
 const AI_API_URL = 'https://nour-dev.dyz/api/ai/claude?text='
 
@@ -255,6 +258,8 @@ let handler = async (m, { conn, text, command, usedPrefix, isROwner, isOwner }) 
   }
 
   if (command === 'صيد-يوزر' || command === 'صيد-يوزرات') {
+    const cd = (global.__huntCooldownUntil || 0) - Date.now()
+    if (cd > 0) return client.reply(m.chat, `🛡️ *واتساب لسه حاطط حد على الطلبات.*\n> استنى ${Math.ceil(cd / 60000)} دقيقة قبل ما تصيد تاني، عشان رقم البوت ميتحظرش.`, m)
     if (sessions.get(m.sender)?.hunting) {
       return client.reply(m.chat, `⏳ *عملية صيد نشطة بالفعل، أرسل ${isPrefix}وقف-صيد للإيقاف.*`, m)
     }
@@ -343,11 +348,21 @@ let handler = async (m, { conn, text, command, usedPrefix, isROwner, isOwner }) 
         session.tried += batch.length
         
       } catch (e) {
-        console.error('Hunt Error:', e.message)
-        if (e.message?.includes('rate') || e.message?.includes('limit') || e.statusCode === 429) {
-          stoppedByLimit = true
-          session.hunting = false
-          break
+        console.error('Hunt Error:', e.message, e.statusCode || '')
+        session.lastError = e.message
+        const rl = /rate|limit|overlimit|too.?many|429|463/i.test(String(e.message)) || e.statusCode === 429
+        if (rl) {
+          session.rateHits = (session.rateHits || 0) + 1
+          if (session.rateHits > RATE_RETRIES) {
+            stoppedByLimit = true
+            session.hunting = false
+            global.__huntCooldownUntil = Date.now() + COOLDOWN_MS
+            break
+          }
+          const wait = RATE_BACKOFF_S[Math.min(session.rateHits - 1, RATE_BACKOFF_S.length - 1)]
+          await client.sendMessage(m.chat, { text: `⏳ واتساب حدّد السرعة (${session.rateHits}/${RATE_RETRIES}). هستنى ${wait} ثانية وأكمل...\n> ${String(e.message).slice(0, 80)}` }, { quoted: m })
+          for (let w = 0; w < wait && sessions.get(m.sender)?.hunting; w++) await new Promise(r => setTimeout(r, 1000))
+          continue
         }
       }
 
@@ -360,7 +375,7 @@ let handler = async (m, { conn, text, command, usedPrefix, isROwner, isOwner }) 
     await client.sendMessage(m.chat, { react: { text: stoppedByLimit ? '⚠️' : '✅', key: m.key } })
     
     let finalMsg = stoppedByLimit
-      ? `╭─〔 ⚠️ *تم إيقاف الصيد (حد واتساب)* 〕─╮\n│ 📡 *السبب:* وصل البوت للحد الأقصى من الطلبات (Rate Limit).\n│ 🛡️ *يرجى الانتظار ساعة قبل المحاولة مجدداً.*\n├───────────────────────────────\n`
+      ? `╭─〔 ⚠️ *تم إيقاف الصيد (حد واتساب)* 〕─╮\n│ 📡 *السبب:* وصل البوت للحد الأقصى من الطلبات (Rate Limit).\n│ ⚠️ *رد واتساب:* ${String(session?.lastError || '-').slice(0, 80)}\n│ 🛡️ *استنى 30 دقيقة على الأقل قبل المحاولة.*\n├───────────────────────────────\n`
       : `╭─〔 ✅ *انتهى الصيد بنجاح* 〕─╮\n`
 
     finalMsg += `│ 🔍 *تمت تجربة:* ${session?.tried || 0} يوزر\n` +
