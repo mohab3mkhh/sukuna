@@ -1,5 +1,5 @@
 // plugins/سكرين.js
-// 📸 لقطة شاشة لأي موقع عن طريق Prexzy API (screenshotLayer)
+// 📸 لقطة شاشة لأي موقع عن طريق Prexzy API (webss)
 //   .سكرين <الرابط>      (أو .ssweb / .screenshot)
 //
 // شكل الرد من الـ API مش معروف بالظبط، فالكود بيتعامل مع كل الحالات:
@@ -7,7 +7,7 @@
 
 import axios from 'axios'
 
-const API = 'https://prexzyapis.com/ssweb/screenshotLayer'
+const API = 'https://prexzyapis.com/ssweb/webss'
 const FOOTER = '⛩️ SUKUNA BOT ⛩️'
 
 const isUrl = s => { try { return /^https?:$/.test(new URL(s).protocol) } catch { return false } }
