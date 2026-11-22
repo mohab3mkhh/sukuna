@@ -22,32 +22,17 @@ const __dirname  = path.dirname(__filename)
 const SUKUNA_IMG = 'https://i.ibb.co/M5gwTyJJ/upload-1774680667350.jpg'
 const PAIRING_CODE      = 'SUKUNAAA'   // لازم 8 حروف/أرقام بالظبط — اكتب null للكود العشوائي
 const JADI_FOLDER       = path.join('Sessions', 'SubBot')
-// ملفات البيانات بقت جوه Sessions/ (جنب جلسات البوتات الفرعية) عشان لو عندك Railway Volume على Sessions
-// كل حاجة تفضل بعد الـ deploy. الملفات القديمة اللي كانت جوه plugins/ بتتنقل تلقائياً.
-const DATA_DIR = path.join(process.cwd(), 'Sessions')
-function dataFile(name) {
-  const np = path.join(DATA_DIR, name)
-  try {
-    fs.mkdirSync(DATA_DIR, { recursive: true })
-    const old = path.join(__dirname, name)
-    if (!fs.existsSync(np) && fs.existsSync(old)) fs.copyFileSync(old, np)
-  } catch {}
-  return np
-}
-const INSTALLS_FILE     = dataFile('yuki_installs.json')
-const STATUS_FILE       = dataFile('jadibot_status.json')
-const LIMIT_FILE        = dataFile('max_installs.json')
-const BANNED_CHATS_FILE = dataFile('banned_chats.json')
+const INSTALLS_FILE     = path.join(__dirname, 'yuki_installs.json')
+const STATUS_FILE       = path.join(__dirname, 'jadibot_status.json')
+const LIMIT_FILE        = path.join(__dirname, 'max_installs.json')
+const BANNED_CHATS_FILE = path.join(__dirname, 'banned_chats.json')
 
-const DEFAULT_MAX_INSTALLS = 6
+const DEFAULT_MAX_INSTALLS = 2   // الخطة 512MB: كل بوت فرعي بياكل ذاكرة (لو plugins/max_installs.json موجود عدّل الرقم فيه)
 const SESSION_TIMEOUT_MS   = 180_000
 const MAX_RECONNECT        = 5
 const RECONNECT_BASE_DELAY = 3_000
-const HANDLER_CACHE_TTL    = 15 * 60_000   // كان دقيقة: كان بيعمل import جديد للـ handler لكل بوت فرعي كل دقيقة (تسريب ذاكرة)
+const HANDLER_CACHE_TTL    = 60_000
 const COOLDOWN_MS          = 120_000
-const RECONNECT_MAX_DELAY  = 60_000        // أقصى انتظار بين محاولات إعادة الربط (للبوتات المنصّبة: بتحاول للأبد)
-const SUPERVISOR_EVERY     = 120_000       // كل دقيقتين نتأكد إن كل بوت منصّب شغّال، ونشغّل اللي واقع
-const TARGET_COOLDOWN_MS   = 10 * 60_000   // نفس الرقم مايتطلبش له كود أكتر من مرة كل 10 دقايق (لغير المالك)
 
 const LOCKS              = new Map()
 const ACTIVE_SESSIONS    = new Map()
@@ -56,9 +41,7 @@ const SESSION_TIMERS     = new Map()
 const SOCKET_STATES      = new Map()
 const WATCHDOG_TIMERS    = new Map()
 const PENDING            = new Map()   // سوكتات لسه بتستنى الربط
-const CURRENT_SOCK       = new Map()   // userId → السوكت الحالي (عشان الـ watchdog القديم مايشتغلش على سوكت قديم)
-const SUP_HOLD           = new Map()   // userId → وقت لحد ما المراقب مايحاولش يربطه (بعد 440 مثلاً)
-const TARGET_LAST        = new Map()   // رقم → آخر وقت اتطلب له كود
+const RECONNECT_PENDING  = new Set()   // بوتات إعادة الاتصال بتاعتها مجدولة
 
 if (!Array.isArray(global.conns)) global.conns = []
 
@@ -132,37 +115,13 @@ function isRegistered(sessionPath) {
   } catch { return false }
 }
 
-// creds.json ساعات بيتلف لو الـ container وقع وهو بيكتب → الجلسة بتتحسب "خرجت". بنحتفظ بنسخة احتياطية.
-function restoreCredsIfBroken(sessionPath) {
-  try {
-    const fp = path.join(sessionPath, 'creds.json'), bak = fp + '.bak'
-    let ok = false
-    try { JSON.parse(fs.readFileSync(fp, 'utf8')); ok = true } catch {}
-    if (!ok && fs.existsSync(bak)) {
-      JSON.parse(fs.readFileSync(bak, 'utf8'))      // لازم النسخة سليمة
-      fs.copyFileSync(bak, fp)
-      console.warn(chalk.yellow(`[JADIBOT] ♻️ creds تالف، اتسترجع من النسخة الاحتياطية: ${sessionPath}`))
-    }
-  } catch {}
-}
-const backupTimers = new Map()
-function backupCredsSoon(sessionPath) {
-  clearTimeout(backupTimers.get(sessionPath))
-  backupTimers.set(sessionPath, setTimeout(() => {
-    try {
-      const fp = path.join(sessionPath, 'creds.json')
-      JSON.parse(fs.readFileSync(fp, 'utf8'))       // ننسخ بس لو سليم
-      fs.copyFileSync(fp, fp + '.bak')
-    } catch {}
-  }, 5_000))
-}
-
 function cancelSessionTimer(userId) {
   const t = SESSION_TIMERS.get(userId)
   if (t) { clearTimeout(t); SESSION_TIMERS.delete(userId) }
 }
 
 function cleanupSession(userId, deleteDisk = false) {
+  RECONNECT_PENDING.delete(userId)
   cancelSessionTimer(userId)
   const wt = WATCHDOG_TIMERS.get(userId)
   if (wt) { clearInterval(wt); WATCHDOG_TIMERS.delete(userId) }
@@ -175,7 +134,6 @@ function cleanupSession(userId, deleteDisk = false) {
   ACTIVE_SESSIONS.delete(userId)
   RECONNECT_ATTEMPTS.delete(userId)
   SOCKET_STATES.delete(userId)
-  CURRENT_SOCK.delete(userId)
   LOCKS.delete(`${userId}_lock`)
   if (deleteDisk) {
     const sp = path.join(process.cwd(), JADI_FOLDER, userId)
@@ -197,18 +155,18 @@ function removeConnSocket(userId) {
   }
 }
 
-// ✅ كل بوت فرعي عنده handler منفصل
+// ✅ handler واحد مشترك لكل البوتات الفرعية (بيتحمّل مرة واحدة بس — قبل كده كان بيتحمّل من جديد كل دقيقة فالذاكرة بتتملي)
 const subHandlerCache = new Map()
-async function getSubHandler(userId) {
+let sharedHandlerMod = null
+async function getSubHandler() {
+  if (sharedHandlerMod) return sharedHandlerMod
   try {
-    const now = Date.now()
-    const cached = subHandlerCache.get(userId)
-    if (cached && now - cached.time < HANDLER_CACHE_TTL) return cached.mod
-
-    const mod = await import(`../handler.js?sub=${userId}&t=${Math.floor(now / HANDLER_CACHE_TTL)}`)
-    subHandlerCache.set(userId, { mod, time: now })
-    return mod
-  } catch { return null }
+    sharedHandlerMod = await import('../handler.js?sub=shared')
+    return sharedHandlerMod
+  } catch (e) {
+    console.error('[JADIBOT] تعذّر تحميل handler:', e.message)
+    return null
+  }
 }
 
 function getCooldownLeft(sender) {
@@ -342,33 +300,7 @@ async function sendConnectedMessage(conn, m) {
   }, { quoted: m }).catch(() => {})
 }
 
-// ✅ مراقب: كل دقيقتين يلاقي أي بوت فرعي منصّب وواقع (بعد انقطاع طويل مثلاً) ويشغّله تاني
-function ensureSupervisor(conn) {
-  if (!conn) return
-  global.__jadiSupConn = conn
-  if (global.__jadiSup) return
-  global.__jadiSup = setInterval(async () => {
-    const c = global.__jadiSupConn
-    if (!c) return
-    for (const uid of [...loadInstalls()]) {
-      try {
-        if (isBotConnected(uid) || ACTIVE_SESSIONS.has(uid)) continue
-        if ((SUP_HOLD.get(uid) || 0) > Date.now()) continue
-        const sp = path.join(process.cwd(), JADI_FOLDER, uid)
-        if (!isRegistered(sp)) continue
-        console.log(chalk.cyan(`[JADIBOT] 🛠️ المراقب: بشغّل البوت الواقع (+${uid})`))
-        removeConnSocket(uid)
-        cleanupSession(uid, false)
-        await yukiJadiBot({ sessionPath: sp, m: null, conn: c, userId: uid, mode: 'code' })
-        await sleep(2_000)
-      } catch (e) { console.error('[JADIBOT] supervisor:', e.message) }
-    }
-  }, SUPERVISOR_EVERY)
-  global.__jadiSup.unref?.()
-}
-
 export async function initSubBots(conn) {
-  ensureSupervisor(conn)
   const installed = loadInstalls()
   if (!installed.length) return
 
@@ -400,7 +332,6 @@ export async function initSubBots(conn) {
 
 const handler = async (m, { conn, args, isOwner }) => {
   try {
-    ensureSupervisor(conn)
     const principalJid = global.conn?.user?.jid
     const currentJid   = conn.user.jid
     const isSubBot     = principalJid && !areJidsSameUser(principalJid, currentJid)
@@ -449,8 +380,18 @@ const handler = async (m, { conn, args, isOwner }) => {
           `╔═══━━━─── • ───━━━═══╗\n   『 𝙎 𝙐 𝙆 𝙐 𝙉 𝘼 』\n╚═══━━━─── • ───━━━═══╝\n⟡ انتظر ${msToTime(left)} قبل إعادة الاستخدام`, m)
     }
 
-    // ✅ .تنصيب 201016855501 → تنصيب على الرقم المكتوب (متاح للكل)
-    const numArg = args.map(a => String(a).replace(/\D/g, '')).find(a => a.length >= 8 && a.length <= 15)
+    // ✅ .تنصيب 201016855501 → تنصيب على الرقم المكتوب (للمالك فقط)
+    // يقبل الرقم بأي شكل: 201099583372 / 01099583372 / 1099583372 / +20 109 958 3372
+    const normNum = raw => {
+      let d = String(raw).replace(/\D/g, '')
+      if (d.startsWith('00')) d = d.slice(2)
+      if (/^01[0125]\d{8}$/.test(d)) d = '2' + d      // 01099583372 → 201099583372
+      else if (/^1[0125]\d{8}$/.test(d)) d = '20' + d // 1099583372  → 201099583372
+      return d
+    }
+    const numArg = args.map(normNum).find(a => a.length >= 8 && a.length <= 15)
+    if (numArg && !isOwner)
+      return conn.reply(m.chat, '⟡ التنصيب على رقم آخر للمالك فقط، اكتب الأمر من غير رقم عشان تنصّب على رقمك', m)
 
     let userId
     if (numArg) {
@@ -459,24 +400,10 @@ const handler = async (m, { conn, args, isOwner }) => {
       const who = m.mentionedJid?.[0] || (m.fromMe ? conn.user.jid : m.sender)
       if (!who) return
       if (String(who).endsWith('@lid'))
-        return conn.reply(m.chat, '⟡ رقمك ظاهر بصيغة مخفية (LID) فمينفعش يتربط بيه.\nاكتب: .تنصيب 20XXXXXXXXXX (برقمك الحقيقي)', m)
+        return conn.reply(m.chat, '⟡ رقمك ظاهر بصيغة مخفية (LID) فمينفعش يتربط بيه.\nاكتب: .تنصيب 20XXXXXXXXXX (برقمك الحقيقي، للمالك)', m)
       userId = who.split('@')[0]
     }
     if (!userId) return
-
-    // حماية لغير المالك لما الرقم مش رقمه هو
-    const senderNum = String(m.sender || '').endsWith('@s.whatsapp.net') ? String(m.sender).split('@')[0].split(':')[0] : ''
-    const isSelf = userId === senderNum
-    if (!isOwner && !isSelf) {
-      if (isStop)
-        return conn.reply(m.chat, '⟡ مينفعش توقف بوت رقم تاني. الإيقاف لصاحب الرقم نفسه أو المالك.', m)
-      if (isBotConnected(userId))
-        return conn.reply(m.chat, '⟡ الرقم ده منصّب وشغّال بالفعل.', m)
-      const lastT = TARGET_LAST.get(userId) || 0
-      const leftT = lastT + TARGET_COOLDOWN_MS - Date.now()
-      if (leftT > 0)
-        return conn.reply(m.chat, `⟡ اتطلب كود للرقم ده من شوية، استنى ${msToTime(leftT)} قبل طلب جديد.`, m)
-    }
 
     const liveCount = global.conns.filter(s => s?.user && s?.ws?.readyState === 1).length
     if (liveCount >= getMax() && !isInstalled(userId)) {
@@ -514,7 +441,6 @@ const handler = async (m, { conn, args, isOwner }) => {
     // ملحوظة: التسجيل في yuki_installs.json بيحصل بس بعد ما الربط ينجح (في connection === 'open')
 
     setCooldown(m.sender)
-    if (!isOwner && !isSelf) TARGET_LAST.set(userId, Date.now())
     if (mode === 'code' && !isRegistered(sessionPath))
       await conn.reply(m.chat, `⏳ جاري تجهيز كود الربط للرقم +${userId}\nاستنى ثواني ومتكتبش الأمر تاني.`, m).catch(() => {})
     await yukiJadiBot({ sessionPath, m, conn, userId, mode })
@@ -527,14 +453,17 @@ const handler = async (m, { conn, args, isOwner }) => {
 handler.command = /^(qr|تنصيب|reconnect)$/i
 export default handler
 
-export async function yukiJadiBot({ sessionPath, m, conn, userId, mode = 'code', codeSent = false }) {
-  if (!userId) return
+export async function yukiJadiBot({ sessionPath, pathYukiJadiBot, m, conn, userId, mode = 'code', codeSent = false, _scheduled = false }) {
+  sessionPath = sessionPath || pathYukiJadiBot
+  userId = userId || (sessionPath ? path.basename(sessionPath) : '')
+  if (!userId || !sessionPath) return
+  // إعادة اتصال مجدولة اتلغت؟ / فيه واحدة مجدولة والطلب ده من برا؟
+  if (_scheduled) { if (!RECONNECT_PENDING.delete(userId)) return }
+  else if (RECONNECT_PENDING.has(userId)) return
   const lockKey = `${userId}_lock`
 
   try {
     if (ACTIVE_SESSIONS.has(userId)) return
-    // ✅ لو فيه سوكت حي للرقم ده بالفعل، ماننشئش واحد تاني (التكرار = "connectionReplaced" وخروج الجلسة)
-    if (global.conns.some(s => (s?.user?.jid || '').split('@')[0].split(':')[0] === userId && s?.ws?.readyState === 1)) return
     try { await acquireLock(lockKey) } catch { return }
     if (ACTIVE_SESSIONS.has(userId)) return
 
@@ -549,7 +478,6 @@ export async function yukiJadiBot({ sessionPath, m, conn, userId, mode = 'code',
     }, SESSION_TIMEOUT_MS)
     SESSION_TIMERS.set(userId, autoClean)
 
-    restoreCredsIfBroken(sessionPath)
     const { state, saveCreds } = await useMultiFileAuthState(sessionPath)
     const { version }          = await fetchLatestWaWebVersion().catch(() => ({ version: [2, 3000, 0] }))
     const msgRetryCache        = new NodeCache({ stdTTL: 0, checkperiod: 0 })
@@ -601,14 +529,8 @@ export async function yukiJadiBot({ sessionPath, m, conn, userId, mode = 'code',
     sock.isInit = false
     let isInit  = true
     PENDING.set(userId, sock)
-    CURRENT_SOCK.set(userId, sock)
-
-    // ✅ أي watchdog قديم لنفس الرقم يتلغي الأول (كان بيفضل شغّال ويعمل سوكت مكرر → الجلسة تتفصل)
-    const oldWd = WATCHDOG_TIMERS.get(userId)
-    if (oldWd) { clearInterval(oldWd); WATCHDOG_TIMERS.delete(userId) }
 
     const watchdogTimer = setInterval(() => {
-      if (CURRENT_SOCK.get(userId) !== sock) { clearInterval(watchdogTimer); return }   // سوكت قديم
       if (ACTIVE_SESSIONS.has(userId)) return   // لسه بتستنى الربط
       const wsState = sock?.ws?.readyState
       if (!sock?.user || wsState === 3) {
@@ -620,8 +542,9 @@ export async function yukiJadiBot({ sessionPath, m, conn, userId, mode = 'code',
         const i = global.conns.indexOf(sock)
         if (i >= 0) global.conns.splice(i, 1)
         if (isInstalled(userId)) {
+          RECONNECT_PENDING.add(userId)
           setTimeout(() => {
-            yukiJadiBot({ sessionPath, m: null, conn, userId, mode }).catch(() => {})
+            yukiJadiBot({ sessionPath, m: null, conn, userId, mode, _scheduled: true }).catch(() => {})
           }, RECONNECT_BASE_DELAY * 2)
         }
       }
@@ -637,7 +560,6 @@ export async function yukiJadiBot({ sessionPath, m, conn, userId, mode = 'code',
         sock.isInit = false
         isInit = true
         PENDING.set(userId, sock)
-        CURRENT_SOCK.set(userId, sock)
       }
 
       if (!isInit) {
@@ -667,7 +589,7 @@ export async function yukiJadiBot({ sessionPath, m, conn, userId, mode = 'code',
       }
 
       sock._connHandler  = connectionUpdate.bind(sock)
-      sock._credsHandler = async () => { await saveCreds(); backupCredsSoon(sessionPath) }
+      sock._credsHandler = saveCreds
 
       sock._partsHandler = async (upd) => {
         try {
@@ -748,20 +670,13 @@ export async function yukiJadiBot({ sessionPath, m, conn, userId, mode = 'code',
         st.wasOpen = true
 
         sock.isInit = true
-        // سوكتات قديمة مقفولة لنفس الرقم كانت بتمنع تسجيل السوكت الجديد (فيتحسب البوت "واقع" ويتكرر)
-        for (let i = global.conns.length - 1; i >= 0; i--) {
-          const s = global.conns[i]
+        const exists = global.conns.some(s => {
           const n = (s?.user?.jid || '').split('@')[0].split(':')[0]
-          if (n === userId && s !== sock && s?.ws?.readyState !== 1) {
-            try { s.ev?.removeAllListeners?.(); s.ws?.terminate?.() } catch {}
-            global.conns.splice(i, 1)
-          }
-        }
-        const exists = global.conns.some(s => s === sock)
+          return n === userId
+        })
         if (!exists && sock?.user) {
           global.conns.push(sock)
           if (!isInstalled(userId)) addInstall(userId)
-          SUP_HOLD.delete(userId)
           if (m && !st.connectedSent) {
             st.connectedSent = true
             await sendConnectedMessage(conn, m)
@@ -778,8 +693,8 @@ export async function yukiJadiBot({ sessionPath, m, conn, userId, mode = 'code',
       }
 
       if (connection === 'close') {
-        // 🚫 خروج حقيقي (الجهاز اتشال من واتساب): نهائي
-        if ([DisconnectReason.loggedOut, 401].includes(reason)) {
+        // ✅ شلت 405 من الحذف النهائي (بيحصل أحياناً بسبب نسخة واتساب مش بسبب الجلسة)
+        if ([DisconnectReason.loggedOut, 401, 403].includes(reason)) {
           console.warn(chalk.red(`[JADIBOT] 🚫 جلسة (+${userId}) أُغلقت نهائياً — كود: ${reason}`))
           if (registeredAtStart || st.wasOpen) {
             try {
@@ -794,41 +709,29 @@ export async function yukiJadiBot({ sessionPath, m, conn, userId, mode = 'code',
           return
         }
 
-        // 403 (حظر مؤقت/تقييد): ما نمسحش الجلسة، نجرّب تاني بعد شوية
-        if (reason === 403) {
-          console.warn(chalk.yellow(`[JADIBOT] ⚠️ (+${userId}) كود 403 — هجرّب تاني بعد 10 دقايق من غير ما أمسح الجلسة`))
-          removeConnSocket(userId)
-          cleanupSession(userId, false)
-          SUP_HOLD.set(userId, Date.now() + 10 * 60_000)
-          return
-        }
-
-        // 440 (الجلسة اتفتحت من مكان تاني، غالباً نسختين من البوت شغالين مع بعض): نوقف شوية وبعدين المراقب يرجّعه
         if (reason === 440) {
-          console.warn(chalk.yellow(`[JADIBOT] ⚠️ جلسة (+${userId}) استُبدلت (440) — هستنى 3 دقايق وأرجّعها`))
-          removeConnSocket(userId)
-          cleanupSession(userId, false)
-          SUP_HOLD.set(userId, Date.now() + 3 * 60_000)
+          console.warn(chalk.yellow(`[JADIBOT] ⚠️ جلسة (+${userId}) استُبدلت بجهاز آخر`))
+          try {
+            await conn.sendMessage(`${userId}@s.whatsapp.net`,
+              { text: '⚠️ تم اكتشاف جلسة جديدة. احذف الجلسة القديمة وأعد الربط.' })
+          } catch {}
           return
         }
 
-        // باقي الأسباب (انقطاع نت، 408، 428، 515 restart...): نعيد الربط
-        const installed = isInstalled(userId)
         const attempts = (RECONNECT_ATTEMPTS.get(userId) || 0) + 1
-        // البوت المنصّب: محاولات للأبد (بتأخير متزايد لحد دقيقة). التنصيب اللي لسه مخلصش: 5 محاولات بس.
-        if (installed || attempts <= MAX_RECONNECT) {
+        if (attempts <= MAX_RECONNECT) {
           RECONNECT_ATTEMPTS.set(userId, attempts)
           ACTIVE_SESSIONS.delete(userId)
-          const delay = Math.min(RECONNECT_BASE_DELAY * 2 ** Math.min(attempts - 1, 6), RECONNECT_MAX_DELAY)
-          console.log(chalk.magenta(`[JADIBOT] 🔄 إعادة ربط (+${userId}) — محاولة ${attempts}${installed ? '' : '/' + MAX_RECONNECT} بعد ${delay}ms (السبب: ${reason ?? '؟'})`))
+          const delay = RECONNECT_BASE_DELAY * attempts
+          console.log(chalk.magenta(`[JADIBOT] 🔄 إعادة ربط (+${userId}) — محاولة ${attempts}/${MAX_RECONNECT} بعد ${delay}ms`))
           // السوكت القديم المقفول يتشال من القايمة عشان الجديد يتسجّل صح
           const oi = global.conns.indexOf(sock)
           if (oi >= 0) global.conns.splice(oi, 1)
-          try { sock.ev?.removeAllListeners?.() } catch {}
           const keepM = st.connectedSent ? null : m   // ✅ نكمّل الكود/رسالة "اتصلت" لو لسه ما اتبعتوش
           const wasCodeSent = false   // لو السوكت وقع قبل الربط، الكود القديم يبطل — نطلب كود جديد
+          RECONNECT_PENDING.add(userId)
           setTimeout(() => {
-            yukiJadiBot({ sessionPath, m: keepM, conn, userId, mode, codeSent: wasCodeSent }).catch(() => {})
+            yukiJadiBot({ sessionPath, m: keepM, conn, userId, mode, codeSent: wasCodeSent, _scheduled: true }).catch(() => {})
           }, delay)
         } else {
           console.warn(chalk.red(`[JADIBOT] ☠️ تجاوز الحد الأقصى (+${userId}) — تم الاستسلام`))
@@ -858,3 +761,6 @@ async function joinChannels(sock) {
     }
   } catch {}
 }
+
+// ✅ الملف الرئيسي (sukuna.js) بيدوّر على global.yukiJadiBot لإعادة تشغيل البوتات الفرعية
+global.yukiJadiBot = yukiJadiBot
