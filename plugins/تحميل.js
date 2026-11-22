@@ -21,6 +21,7 @@ const AS_VIDEO_MB = 50    // أكبر من كده يتبعت كـ document
 const MAX_IMAGES = 10
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36'
 const PREXZY_TIKTOK = 'https://prexzyapis.com/download/tiktokv2'
+const PREXZY_IG     = 'https://prexzyapis.com/download/instagram'
 
 const URL_RE = /https?:\/\/[^\s<>"']+/i
 const AUDIO_RE = /(^|\s)(mp3|audio)(\s|$)|صوت|اغني|أغني|اغاني|أغاني|موسيق/i
@@ -102,7 +103,7 @@ async function downloadBuffer(url, extraHeaders = {}, retries = 1) {
             const r = await axios.get(url, {
                 headers: { 'User-Agent': UA, Accept: '*/*', ...extraHeaders },
                 responseType: 'arraybuffer', timeout: 600000, maxRedirects: 8,
-                maxContentLength: MAX_MB * 1024 * 1024, // ✅ 500 ميجا
+                maxContentLength: MAX_MB * 1024 * 1024,
                 validateStatus: () => true
             })
             if (r.status === 200 && r.data?.length) return Buffer.from(r.data)
@@ -113,7 +114,7 @@ async function downloadBuffer(url, extraHeaders = {}, retries = 1) {
     throw lastErr || new Error('تحميل فاشل')
 }
 
-// ━━━━━━━━ yt-dlp (نفس طريقة أمر يوتيوب) ━━━━━━━━
+// ━━━━━━━━ yt-dlp ━━━━━━━━
 let ytdlpPath = null
 async function canRun(bin) {
     try { await execFileP(bin, ['--version'], { timeout: 20000 }); return true } catch { return false }
@@ -148,7 +149,7 @@ async function viaYtdlp(url, mode) {
     const stem = `dl_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
     const args = [
         '-f', mode === 'audio' ? 'ba[ext=m4a]/ba/b' : 'best[ext=mp4][height<=720]/best[ext=mp4]/best',
-        '--no-playlist', '--no-warnings', '--max-filesize', `${MAX_MB}M`, // ✅ 500 ميجا
+        '--no-playlist', '--no-warnings', '--max-filesize', `${MAX_MB}M`,
         '-o', path.join(tmpDir, `${stem}.%(ext)s`)
     ]
     let cookieFile = null
@@ -180,7 +181,7 @@ async function viaYtdlp(url, mode) {
     }
 }
 
-// ━━━━━━━━ يوتيوب عن طريق cnv.cx (من غير كوكيز) ━━━━━━━━
+// ━━━━━━━━ يوتيوب عن طريق cnv.cx ━━━━━━━━
 const CNV_HEADERS = {
     'User-Agent': UA,
     'Origin': 'https://iframe.y2meta-uk.com',
@@ -236,6 +237,18 @@ async function viaPrexzy(url) {
     return ex
 }
 
+// ━━━━━━━━ Prexzy للإنستجرام ━━━━━━━━
+async function viaPrexzyIG(url) {
+    const r = await axios.get(PREXZY_IG, { params: { url }, timeout: 30000, validateStatus: () => true })
+    const d = r.data
+    log('[prexzy-ig] status:', r.status, '| response:', snip(d))
+    if (d?.data?.name === 'AxiosError' || d?.data?.stack) throw new Error('Prexzy-IG: ' + snip(d.data.message || 'خطأ داخلي'))
+    if (d?.status === false) throw new Error('Prexzy-IG: ' + snip(d.message || d))
+    const ex = extractMedia(d?.data ?? d)
+    if (!ex.links.length) throw new Error('Prexzy-IG: مفيش روابط ' + snip(d))
+    return ex
+}
+
 const viaPackage = (pkg, fnName, extra) => async (url) => {
     let mod
     try { mod = await import(pkg) } catch { throw new Error(`${pkg} مش متثبتة`) }
@@ -248,23 +261,24 @@ const viaPackage = (pkg, fnName, extra) => async (url) => {
 }
 
 const P = {
-    prexzy:  { name: 'prexzy',  run: viaPrexzy },
-    btchTT:  { name: 'btch',    run: viaPackage('btch-downloader', 'ttdl') },
-    btchIG:  { name: 'btch',    run: viaPackage('btch-downloader', 'igdl') },
-    btchFB:  { name: 'btch',    run: viaPackage('btch-downloader', 'fbdown') },
-    btchTW:  { name: 'btch',    run: viaPackage('btch-downloader', 'twitter') },
-    igUrl:   { name: 'instagram-url-direct', run: viaPackage('instagram-url-direct', 'instagramGetUrl', m => m.default) },
-    tobyTT:  { name: 'tiktok-api-dl', run: viaPackage('@tobyg74/tiktok-api-dl', 'Downloader', m => m.default?.Downloader ? ((u) => m.default.Downloader(u, { version: 'v3' })) : null) },
-    cnv:     { name: 'cnv',     run: viaCnv },
-    ytdlp:   { name: 'yt-dlp',  run: viaYtdlp }
+    prexzy:    { name: 'prexzy',    run: viaPrexzy },
+    prexzyIG:  { name: 'prexzy-ig', run: viaPrexzyIG },
+    btchTT:    { name: 'btch',      run: viaPackage('btch-downloader', 'ttdl') },
+    btchIG:    { name: 'btch',      run: viaPackage('btch-downloader', 'igdl') },
+    btchFB:    { name: 'btch',      run: viaPackage('btch-downloader', 'fbdown') },
+    btchTW:    { name: 'btch',      run: viaPackage('btch-downloader', 'twitter') },
+    igUrl:     { name: 'instagram-url-direct', run: viaPackage('instagram-url-direct', 'instagramGetUrl', m => m.default) },
+    tobyTT:    { name: 'tiktok-api-dl', run: viaPackage('@tobyg74/tiktok-api-dl', 'Downloader', m => m.default?.Downloader ? ((u) => m.default.Downloader(u, { version: 'v3' })) : null) },
+    cnv:       { name: 'cnv',       run: viaCnv },
+    ytdlp:     { name: 'yt-dlp',   run: viaYtdlp }
 }
 
 function chainFor(host) {
-    if (/tiktok\.com$/.test(host)) return [P.prexzy, P.tobyTT, P.btchTT, P.ytdlp]
-    if (/youtube\.com$|youtu\.be$/.test(host)) return process.env.YT_COOKIES ? [P.cnv, P.ytdlp] : [P.cnv]
-    if (/instagram\.com$/.test(host)) return [P.ytdlp, P.igUrl, P.btchIG]
+    if (/tiktok\.com$/.test(host))              return [P.prexzy, P.tobyTT, P.btchTT, P.ytdlp]
+    if (/youtube\.com$|youtu\.be$/.test(host))  return process.env.YT_COOKIES ? [P.cnv, P.ytdlp] : [P.cnv]
+    if (/instagram\.com$/.test(host))           return [P.prexzyIG, P.ytdlp, P.igUrl, P.btchIG]  // ✅ Prexzy أول
     if (/facebook\.com$|fb\.watch$/.test(host)) return [P.btchFB, P.ytdlp]
-    if (/twitter\.com$|x\.com$/.test(host)) return [P.btchTW, P.ytdlp]
+    if (/twitter\.com$|x\.com$/.test(host))     return [P.btchTW, P.ytdlp]
     return [P.ytdlp]
 }
 
