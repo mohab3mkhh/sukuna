@@ -1,6 +1,6 @@
 /**
  * plugins/applemusic.js
- * بحث Apple Music + إصلاح إرسال صورة الغلاف + محاولة تحميل الصوت عبر /download/soundcloud
+ * بحث Apple Music + إرسال الصورة بأسلوب مباشر + تحميل الصوت عبر /download/soundcloud
  */
 
 import axios from 'axios'
@@ -18,27 +18,10 @@ function genId() {
     return Math.random().toString(36).slice(2, 10)
 }
 
-// تنظيف اسم الفنان من أي نص زائد ملتصق به مثل "Lyrics: ..."
 function cleanArtist(rawArtist) {
     let s = String(rawArtist || 'غير معروف').trim()
     s = s.replace(/Lyrics\s*:.*$/i, '').trim()
     return s || 'غير معروف'
-}
-
-// تحسين رابط صورة Apple Music (مثلاً تكبير المقاس أو تجربة jpg)
-function buildImageCandidates(rawUrl) {
-    const u = String(rawUrl || '').trim()
-    if (!/^https?:\/\//i.test(u)) return []
-
-    const list = [u]
-    // أحياناً تغيير 110x110bb.webp إلى 600x600bb.jpg يعطي صورة أوضح وأسهل في الإرسال
-    const upscaledJpg = u.replace(/\/\d+x\d+([a-z]{2})\.webp$/i, '/600x600$1.jpg')
-    if (upscaledJpg !== u) list.unshift(upscaledJpg)
-
-    const upscaledWebp = u.replace(/\/\d+x\d+([a-z]{2})\.webp$/i, '/600x600$1.webp')
-    if (upscaledWebp !== u && !list.includes(upscaledWebp)) list.unshift(upscaledWebp)
-
-    return list
 }
 
 function normalizeTrack(raw, index) {
@@ -82,7 +65,6 @@ async function searchAppleMusic(query) {
     return list.slice(0, MAX_ITEMS).map((item, i) => normalizeTrack(item, i))
 }
 
-// استخراج رابط صوتي مباشر أو Buffer من /download/soundcloud
 function extractAudioUrlFromJson(payload) {
     if (!payload || typeof payload !== 'object') return null
 
@@ -93,14 +75,17 @@ function extractAudioUrlFromJson(payload) {
         payload.audio,
         payload.audioUrl,
         payload.stream,
+        payload.media,
         payload.result?.url,
         payload.result?.download,
         payload.result?.downloadUrl,
         payload.result?.audio,
+        payload.result?.audioUrl,
         payload.data?.url,
         payload.data?.download,
         payload.data?.downloadUrl,
-        payload.data?.audio
+        payload.data?.audio,
+        payload.data?.audioUrl
     ]
 
     for (const c of candidates) {
@@ -120,16 +105,15 @@ async function fetchSoundCloudAudio(track) {
         .replace(/^(Song|Artist|Album|Playlist)\s*[·•\-–]?\s*/i, '')
         .trim()
 
-    const searchTerm = [cleanTitle, cleanArtistName].filter(Boolean).join(' ')
-    if (!searchTerm) return null
+    const queryText = [cleanTitle, cleanArtistName].filter(Boolean).join(' ').trim() || track.title
 
-    // نجرب تمرير q أولاً (لأن /download/soundcloud في هذا الـ API قد يقبل q أو url)
-    const paramVariants = [
-        { q: searchTerm },
-        ...(track.link ? [{ url: track.link }] : [])
+    // نجرب تمرير q بالاسم ثم بالرابط كاحتياط، ونطبع أي خطأ في الكونسول للفهم
+    const attempts = [
+        { q: queryText },
+        ...(track.link && /soundcloud\.com/i.test(track.link) ? [{ url: track.link }] : [])
     ]
 
-    for (const params of paramVariants) {
+    for (const params of attempts) {
         try {
             const res = await axios.get(SC_DL_ENDPOINT, {
                 params,
@@ -142,23 +126,26 @@ async function fetchSoundCloudAudio(track) {
                 validateStatus: () => true
             })
 
-            if (res.status >= 400 || !res.data) continue
-
-            const buf = Buffer.from(res.data)
+            const buf = Buffer.from(res.data || [])
             const contentType = String(res.headers['content-type'] || '').toLowerCase()
 
-            // لو الـ API رجّع ملف صوتي مباشرة
-            if (contentType.includes('audio/') || (buf.length > 50000 && !contentType.includes('application/json'))) {
+            if (res.status >= 400) {
+                console.log('[soundcloud dl status]:', res.status, buf.toString('utf8').slice(0, 200))
+                continue
+            }
+
+            if (contentType.includes('audio/') || (buf.length > 50000 && !contentType.includes('application/json') && buf[0] !== 0x7b)) {
                 return {
                     buffer: buf,
                     mimetype: contentType.includes('audio/') ? contentType.split(';')[0] : 'audio/mpeg'
                 }
             }
 
-            // لو الـ API رجّع JSON يحتوي على رابط تحميل صوتي
             if (contentType.includes('application/json') || buf[0] === 0x7b) {
+                const rawText = buf.toString('utf8')
+                console.log('[soundcloud dl json]:', rawText.slice(0, 250))
                 try {
-                    const json = JSON.parse(buf.toString('utf8'))
+                    const json = JSON.parse(rawText)
                     const audioUrl = extractAudioUrlFromJson(json)
                     if (audioUrl) {
                         const audioRes = await axios.get(audioUrl, {
@@ -180,54 +167,34 @@ async function fetchSoundCloudAudio(track) {
                     }
                 } catch {}
             }
-        } catch {}
+        } catch (err) {
+            console.log('[soundcloud dl err]:', err.message)
+        }
     }
 
     return null
 }
 
-// إرسال صورة بأمان مع معالجة webp وتحميلها كـ Buffer لتفادي فشل رابط الصورة في واتساب
-async function sendTrackImageSafely(conn, m, rawImageUrl, caption) {
-    const candidates = buildImageCandidates(rawImageUrl)
-
-    for (const imgUrl of candidates) {
-        try {
-            const imgRes = await axios.get(imgUrl, {
-                responseType: 'arraybuffer',
-                timeout: 20000,
-                headers: {
-                    'User-Agent': UA,
-                    'Accept': 'image/*,*/*;q=0.8'
-                },
-                validateStatus: () => true
-            })
-
-            if (imgRes.status >= 400 || !imgRes.data) continue
-
-            const buf = Buffer.from(imgRes.data)
-            if (buf.length < 500) continue
-
-            const mime = String(imgRes.headers['content-type'] || '').toLowerCase()
-            const mimetype = mime.includes('png')
-                ? 'image/png'
-                : mime.includes('webp')
-                    ? 'image/webp'
-                    : 'image/jpeg'
-
-            await conn.sendMessage(
-                m.chat,
-                {
-                    image: buf,
-                    mimetype,
-                    caption
-                },
-                { quoted: m }
-            )
-            return true
-        } catch {}
+// إرسال الصورة بأسلوب مباشر قريب من neko.js مع fallback للنص لو الصورة لم تفتح
+async function sendTrackImage(conn, m, imageUrl, caption) {
+    if (!imageUrl || !/^https?:\/\//i.test(imageUrl)) {
+        await conn.sendMessage(m.chat, { text: caption }, { quoted: m })
+        return
     }
 
-    return false
+    try {
+        await conn.sendMessage(
+            m.chat,
+            {
+                image: { url: imageUrl },
+                caption
+            },
+            { quoted: m }
+        )
+    } catch (imgErr) {
+        console.log('[applemusic image err]:', imgErr.message)
+        await conn.sendMessage(m.chat, { text: caption }, { quoted: m })
+    }
 }
 
 async function sendTracksMenu(conn, m, query, tracks) {
@@ -246,16 +213,14 @@ async function sendTracksMenu(conn, m, query, tracks) {
         }
     })
 
-    const coverCandidates = tracks
-        .map(t => buildImageCandidates(t.image)[0])
-        .find(Boolean)
+    const coverImage = tracks.find(t => /^https?:\/\//i.test(t.image))?.image
 
     await sendButtons(conn, m.chat, {
         title: '🎵 Apple Music Search',
         subtitle: query,
         text: `🔍 *بحث عن:* ${query}\n🎶 *النتائج:* ${tracks.length}\n\n👇 اختر أغنية لعرض التفاصيل ومحاولة تحميل الصوت:`,
         footer: '🎵 Apple Music + SoundCloud',
-        ...(coverCandidates ? { image: coverCandidates } : {}),
+        ...(coverImage ? { image: coverImage } : {}),
         buttons: [
             btn.list('🎧 اختر نتيجة', [
                 {
@@ -284,23 +249,18 @@ let before = async (m, { conn }) => {
 
         const audioResult = await fetchSoundCloudAudio(track)
 
-        const captionLines = [
+        const caption = [
             `🎵 *العنوان:* ${track.title}`,
             `🎤 *الفنان/النوع:* ${track.artist}`,
             track.link ? `🔗 *الرابط:* ${track.link}` : '',
             audioResult
                 ? `🎧 *الصوت:* تم التحميل من SoundCloud`
-                : `⚠️ *الصوت:* لم يتوفر مقطع مباشر على SoundCloud`
-        ].filter(Boolean)
-
-        const caption = captionLines.join('\n')
+                : `⚠️ *الصوت:* لم يتم إرجاع مقطع صوتي من /download/soundcloud`
+        ].filter(Boolean).join('\n')
 
         try { await conn.sendMessage(m.chat, { delete: waitMsg.key }) } catch {}
 
-        const imageSent = await sendTrackImageSafely(conn, m, track.image, caption)
-        if (!imageSent) {
-            await conn.sendMessage(m.chat, { text: caption }, { quoted: m })
-        }
+        await sendTrackImage(conn, m, track.image, caption)
 
         if (audioResult?.buffer) {
             try {
