@@ -42,20 +42,36 @@ function formatDuration(val) {
     return String(val).trim()
 }
 
+function extractStringField(val) {
+    if (!val) return ''
+    if (typeof val === 'string' || typeof val === 'number') return String(val).trim()
+    if (typeof val === 'object') {
+        return String(
+            val.name ||
+            val.username ||
+            val.title ||
+            val.full_name ||
+            val.display_name ||
+            ''
+        ).trim()
+    }
+    return ''
+}
+
 function normalizeTrack(raw, index) {
     const title = String(
-        raw?.title ||
-        raw?.name ||
-        raw?.trackName ||
-        raw?.song ||
+        extractStringField(raw?.title) ||
+        extractStringField(raw?.name) ||
+        extractStringField(raw?.trackName) ||
+        extractStringField(raw?.song) ||
         `مقطع ${index + 1}`
     ).trim()
 
     const artist = String(
-        raw?.artist ||
-        raw?.user?.username ||
-        raw?.author ||
-        raw?.uploader ||
+        extractStringField(raw?.artist) ||
+        extractStringField(raw?.user) ||
+        extractStringField(raw?.author) ||
+        extractStringField(raw?.uploader) ||
         'غير معروف'
     ).trim()
 
@@ -132,36 +148,38 @@ async function searchSoundCloud(query) {
     return list.slice(0, MAX_ITEMS).map((item, i) => normalizeTrack(item, i))
 }
 
-function extractAudioUrl(payload) {
-    if (!payload || typeof payload !== 'object') return null
-
-    const candidates = [
-        payload.url,
-        payload.download,
-        payload.downloadUrl,
-        payload.audio,
-        payload.audioUrl,
-        payload.stream,
-        payload.streamUrl,
-        payload.media,
-        payload.link,
-        payload.result?.url,
-        payload.result?.download,
-        payload.result?.downloadUrl,
-        payload.result?.audio,
-        payload.result?.audioUrl,
-        payload.result?.stream,
-        payload.data?.url,
-        payload.data?.download,
-        payload.data?.downloadUrl,
-        payload.data?.audio,
-        payload.data?.audioUrl,
-        payload.data?.stream
-    ]
-
-    for (const c of candidates) {
-        if (typeof c === 'string' && /^https?:\/\//i.test(c.trim())) {
-            return c.trim()
+function findUrlRecursive(obj, depth = 0) {
+    if (!obj || depth > 4) return null
+    if (typeof obj === 'string') {
+        const s = obj.trim()
+        if (/^https?:\/\//i.test(s) && !/soundcloud\.com\/[^/]+\/[^/]+$/i.test(s)) {
+            return s
+        }
+        return null
+    }
+    if (Array.isArray(obj)) {
+        for (const item of obj) {
+            const found = findUrlRecursive(item, depth + 1)
+            if (found) return found
+        }
+        return null
+    }
+    if (typeof obj === 'object') {
+        const priorityKeys = [
+            'download', 'downloadUrl', 'download_url',
+            'audio', 'audioUrl', 'audio_url',
+            'stream', 'streamUrl', 'stream_url',
+            'media', 'file', 'mp3', 'url', 'link'
+        ]
+        for (const k of priorityKeys) {
+            if (k in obj) {
+                const found = findUrlRecursive(obj[k], depth + 1)
+                if (found) return found
+            }
+        }
+        for (const v of Object.values(obj)) {
+            const found = findUrlRecursive(v, depth + 1)
+            if (found) return found
         }
     }
     return null
@@ -224,9 +242,11 @@ async function downloadStreamToFile(audioUrl, referer, outFilePath) {
 
 async function downloadSoundCloudTrack(track, outFilePath) {
     const paramAttempts = [
-        ...(track.url ? [{ url: track.url }] : []),
-        { q: `${track.title} ${track.artist}`.trim() }
+        ...(track.url ? [{ url: track.url }, { link: track.url }] : []),
+        { q: track.title }
     ]
+
+    let lastApiError = ''
 
     for (const params of paramAttempts) {
         try {
@@ -241,7 +261,10 @@ async function downloadSoundCloudTrack(track, outFilePath) {
                 validateStatus: () => true
             })
 
-            if (res.status >= 400 || !res.data) continue
+            if (res.status >= 400 || !res.data) {
+                lastApiError = `HTTP ${res.status}`
+                continue
+            }
 
             const buf = Buffer.from(res.data)
             const contentType = String(res.headers['content-type'] || '').toLowerCase()
@@ -258,14 +281,27 @@ async function downloadSoundCloudTrack(track, outFilePath) {
             }
 
             if (contentType.includes('application/json') || buf[0] === 0x7b) {
-                const json = JSON.parse(buf.toString('utf8'))
-                const audioUrl = extractAudioUrl(json)
+                const rawJson = buf.toString('utf8')
+                let json = null
+                try {
+                    json = JSON.parse(rawJson)
+                } catch {
+                    continue
+                }
+
+                if (json && json.status === false) {
+                    lastApiError = json.error || json.message || `statusCode ${json.statusCode || 400}`
+                    continue
+                }
+
+                const audioUrl = findUrlRecursive(json)
                 if (audioUrl) {
                     return await downloadStreamToFile(audioUrl, track.url || 'https://soundcloud.com/', outFilePath)
                 }
             }
         } catch (err) {
             if (err.message.includes('تجاوز')) throw err
+            lastApiError = err.message
         }
     }
 
@@ -273,7 +309,7 @@ async function downloadSoundCloudTrack(track, outFilePath) {
         return await downloadStreamToFile(track.directAudio, track.url || 'https://soundcloud.com/', outFilePath)
     }
 
-    throw new Error('تعذر جلب ملف الصوت من /download/soundcloud')
+    throw new Error(lastApiError || 'تعذر جلب ملف الصوت من /download/soundcloud')
 }
 
 async function sendTracksMenu(conn, m, query, tracks) {
