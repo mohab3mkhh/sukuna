@@ -18,47 +18,46 @@ let handler = async (m, { conn, isROwner, isOwner }) => {
     try {
         await m.react('⏳');
 
-        // الـ API بيرجع JSON فيه رابط رغم إن content-type بيقول image/gif
+        // الـ API بيرجع binary مباشرة (JPEG/GIF)
         const res = await axios.get(endpoint, {
             timeout: 20000,
-            // بدون responseType عشان axios يفسره كـ JSON تلقائياً
+            responseType: 'arraybuffer',
             headers: {
                 'User-Agent': 'Mozilla/5.0',
-                'Accept': 'application/json, */*'
+                'Accept': '*/*'
             },
             validateStatus: () => true
         });
 
         if (res.status >= 400) throw new Error(`HTTP ${res.status}`);
 
-        const data = res.data;
-        console.log('[boobs] data:', JSON.stringify(data)?.slice(0, 300));
+        const buffer = Buffer.from(res.data);
+        if (buffer.length < 500) throw new Error('الملف فارغ');
 
-        // طلّع الرابط من الـ JSON
-        const mediaUrl =
-            data?.url        ||
-            data?.result     ||
-            data?.image      ||
-            data?.video      ||
-            data?.link       ||
-            data?.data?.url  ||
-            (typeof data === 'string' && data.startsWith('http') ? data : null);
+        // اكتشف النوع من أول bytes (magic bytes)
+        const magic = buffer.slice(0, 4).toString('hex');
+        const isGif  = magic.startsWith('47494638')  // GIF8
+        const isJpeg = magic.startsWith('ffd8ff')    // JPEG
+        const isPng  = magic.startsWith('89504e47')  // PNG
+        const isMp4  = magic.startsWith('00000018') || magic.startsWith('00000020')
 
-        if (!mediaUrl) throw new Error('مش لاقي رابط — JSON: ' + JSON.stringify(data)?.slice(0, 100));
+        let mimetype = 'image/jpeg'
+        if (isGif)  mimetype = 'image/gif'
+        if (isPng)  mimetype = 'image/png'
+        if (isMp4)  mimetype = 'video/mp4'
 
-        console.log('[boobs] mediaUrl:', mediaUrl);
+        console.log('[boobs] magic:', magic, '| mimetype:', mimetype, '| size:', buffer.length)
 
-        const isVideo = /\.(mp4|webm|mov)(\?|$)/i.test(mediaUrl);
-
-        if (isVideo) {
+        if (isMp4) {
             await conn.sendMessage(m.chat, {
-                video: { url: mediaUrl },
+                video: buffer,
                 mimetype: 'video/mp4',
                 caption
             }, { quoted: m });
         } else {
             await conn.sendMessage(m.chat, {
-                image: { url: mediaUrl },
+                image: buffer,
+                mimetype,
                 caption
             }, { quoted: m });
         }
