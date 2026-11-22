@@ -55,24 +55,40 @@ let handler = async (m, { conn }) => {
   const mentions = [m.sender, target].filter(Boolean)
 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kiss-'))
+  let step = 'api'
+  let url = null
   try {
-    const url = await getGifUrl()
-    const gif = await axios.get(url, { headers: { 'User-Agent': UA }, responseType: 'arraybuffer', timeout: 30000 })
+    url = await getGifUrl()
 
+    step = 'download'
+    const gif = await axios.get(url, { headers: { 'User-Agent': UA }, responseType: 'arraybuffer', timeout: 30000 })
     const gifPath = path.join(dir, 'k.gif')
     const mp4Path = path.join(dir, 'k.mp4')
     fs.writeFileSync(gifPath, Buffer.from(gif.data))
-    await gifToMp4(gifPath, mp4Path)
 
-    await conn.sendMessage(m.chat, {
-      video: fs.readFileSync(mp4Path),
-      gifPlayback: true,
-      caption,
-      mentions,
-    }, { quoted: m })
+    try {
+      step = 'ffmpeg'
+      await gifToMp4(gifPath, mp4Path)
+      step = 'send'
+      await conn.sendMessage(m.chat, {
+        video: fs.readFileSync(mp4Path), gifPlayback: true, caption, mentions,
+      }, { quoted: m })
+    } catch (e1) {
+      // لو ffmpeg مش شغال: نجرّب نبعت الـ GIF مباشرة كفيديو، وبعدين كصورة
+      console.error(`[بوسة] ${step} فشل:`, e1?.message || e1, '← بجرّب الإرسال المباشر')
+      try {
+        await conn.sendMessage(m.chat, {
+          video: { url }, gifPlayback: true, caption, mentions,
+        }, { quoted: m })
+      } catch (e2) {
+        console.error('[بوسة] الإرسال المباشر فشل:', e2?.message || e2)
+        step = 'send-image'
+        await conn.sendMessage(m.chat, { image: Buffer.from(gif.data), caption, mentions }, { quoted: m })
+      }
+    }
   } catch (e) {
-    console.error('[بوسة]', e?.message || e)
-    m.reply('❌ مقدرتش أجيب الكليب دلوقتي، جرب بعد شوية')
+    console.error(`[بوسة] فشل عند (${step}):`, e?.message || e)
+    m.reply(`❌ فشل الكليب عند: ${step}\n${String(e?.message || e).slice(0, 150)}`)
   } finally {
     try { fs.rmSync(dir, { recursive: true, force: true }) } catch {}
   }
