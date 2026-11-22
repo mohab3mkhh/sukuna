@@ -1,5 +1,5 @@
 // plugins/تيكتوك_بحث.js
-// 🎵 بحث تيك توك: Prexzy API أولاً، ولو فشل (زي 403 من tikwm) بيجرّب tikwm مباشرة
+// 🎵 بحث تيك توك: Prexzy API أولاً، ولو فشل بيجرّب tikwm
 //   .تيك <كلمة البحث>   (أو .ttsearch / .tiktoksearch)
 //   → قائمة فيديوهات → تختار → البوت يبعتلك الفيديو
 
@@ -7,7 +7,7 @@ import axios from 'axios'
 import { sendList } from '../lib/buttons.js'
 
 const PREXZY = 'https://prexzyapis.com/search/tiktoksearch'
-const TIKWM = 'https://tikwm.com/api/feed/search'
+const TIKWM_HOSTS = ['https://tikwm.com', 'https://www.tikwm.com']
 const FOOTER = '⛩️ SUKUNA BOT ⛩️'
 const MAX_RESULTS = 10
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36'
@@ -16,11 +16,14 @@ if (!global.ttCache) global.ttCache = new Map()
 
 const abs = u => (typeof u === 'string' && u.startsWith('/') ? 'https://tikwm.com' + u : u)
 const isHttp = v => typeof v === 'string' && /^https?:\/\//i.test(v)
+const isObj = x => x !== null && typeof x === 'object'
+const snip = d => { try { return (typeof d === 'string' ? d : JSON.stringify(d)).replace(/\s+/g, ' ').slice(0, 160) } catch { return '' } }
 
+// يدور على أول array فيها كائنات حقيقية (بيتجاهل null)
 function findArray(o, depth = 0) {
   if (!o || depth > 4) return null
-  if (Array.isArray(o)) return o.length && typeof o[0] === 'object' ? o : null
-  if (typeof o === 'object') {
+  if (Array.isArray(o)) return o.some(isObj) ? o.filter(isObj) : null
+  if (isObj(o)) {
     for (const k of ['videos', 'results', 'result', 'data', 'items']) {
       if (k in o) { const r = findArray(o[k], depth + 1); if (r) return r }
     }
@@ -30,7 +33,11 @@ function findArray(o, depth = 0) {
 }
 
 function normalize(v) {
-  const video = abs(v.play || v.nowm || v.no_watermark || v.video || v.videoUrl || v.video_url || v.download || v.wmplay || v.url)
+  if (!isObj(v)) return null   // ✅ ده كان سبب خطأ "reading 'play'"
+  const nested = isObj(v.video)
+    ? (v.video.play_addr?.url_list?.[0] || v.video.playAddr || v.video.downloadAddr || v.video.download_addr?.url_list?.[0])
+    : null
+  const video = abs(v.play || v.nowm || v.no_watermark || (typeof v.video === 'string' ? v.video : null) || nested || v.videoUrl || v.video_url || v.download || v.wmplay || v.url)
   if (!isHttp(video)) return null
   const author = v.author?.unique_id || v.author?.nickname || v.author?.username || (typeof v.author === 'string' ? v.author : '') || v.username || ''
   return {
@@ -45,23 +52,45 @@ function normalize(v) {
 
 async function viaPrexzy(q) {
   const r = await axios.get(PREXZY, { params: { q }, timeout: 25000, validateStatus: () => true })
-  const items = (findArray(r.data?.data?.videos ? r.data.data : r.data) || []).map(normalize).filter(Boolean)
-  if (!items.length) { console.log('[تيك] Prexzy:', JSON.stringify(r.data?.data?.message || r.data).slice(0, 200)); throw new Error(r.data?.data?.message || 'مفيش نتائج') }
+  const arr = findArray(r.data?.data?.videos ? r.data.data : r.data) || []
+  const items = arr.map(normalize).filter(Boolean)
+  if (!items.length) {
+    console.log('[تيك] Prexzy رد بدون فيديوهات صالحة:', snip(r.data))
+    throw new Error(`Prexzy: ${snip(r.data?.data?.message || r.data?.message || 'مفيش نتائج')}`)
+  }
   return items
 }
 
 async function viaTikwm(q) {
-  const body = new URLSearchParams({ keywords: q, count: '12', cursor: '0', HD: '1' })
-  const r = await axios.post(TIKWM, body.toString(), { headers: { 'User-Agent': UA, 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' }, timeout: 25000, validateStatus: () => true })
-  const items = (r.data?.data?.videos || []).map(normalize).filter(Boolean)
-  if (!items.length) throw new Error(r.data?.msg || `tikwm HTTP ${r.status}`)
-  return items
+  const body = new URLSearchParams({ keywords: q, count: '12', cursor: '0', HD: '1' }).toString()
+  let lastStatus = 0
+  for (const host of TIKWM_HOSTS) {
+    const r = await axios.post(`${host}/api/feed/search`, body, {
+      headers: {
+        'User-Agent': UA,
+        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+        'Accept': 'application/json, text/javascript, */*; q=0.01',
+        'Origin': host,
+        'Referer': host + '/',
+        'X-Requested-With': 'XMLHttpRequest'
+      },
+      timeout: 25000,
+      validateStatus: () => true
+    }).catch(e => ({ status: 0, data: { msg: e.message } }))
+    lastStatus = r.status
+    const items = (Array.isArray(r.data?.data?.videos) ? r.data.data.videos : []).map(normalize).filter(Boolean)
+    if (items.length) return items
+  }
+  throw new Error(lastStatus === 403 ? 'tikwm: 403 (الموقع حاظر IP السيرفر)' : `tikwm: HTTP ${lastStatus}`)
 }
+
+// لو لقيت مزوّد تاني شغّال ضيفه هنا (لازم يرجّع array من normalize)
+const PROVIDERS = [viaPrexzy, viaTikwm]
 
 async function search(q) {
   const errs = []
-  for (const fn of [viaPrexzy, viaTikwm]) {
-    try { return await fn(q) } catch (e) { errs.push(e.message) }
+  for (const fn of PROVIDERS) {
+    try { return await fn(q) } catch (e) { errs.push(e.message); console.log('[تيك]', e.message) }
   }
   throw new Error(errs.join(' | '))
 }
@@ -111,7 +140,7 @@ const handler = async (m, { conn, args, text, usedPrefix = '.', command }) => {
       buttonText: '「 قائمة الفيديوهات 」',
       sections: [{ title: `نتائج (${items.length})`, highlight_label: 'SUKUNA BOT', rows }],
       quoted: m
-    })
+    }, m)
     try { await m.react?.('✅') } catch {}
   } catch (e) {
     try { await m.react?.('❌') } catch {}
