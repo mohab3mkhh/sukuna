@@ -16,7 +16,7 @@ import { promisify } from 'util'
 const execFileP = promisify(execFile)
 
 const FOOTER = '⛩️ SUKUNA BOT ⛩️'
-const MAX_MB = 100        // أكبر حجم مسموح
+const MAX_MB = 400        // أكبر حجم مسموح
 const AS_VIDEO_MB = 50    // أكبر من كده يتبعت كـ document
 const MAX_IMAGES = 10
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36'
