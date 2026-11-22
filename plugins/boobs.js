@@ -48,11 +48,10 @@ let handler = async (m, { conn, isROwner, isOwner }) => {
                 caption
             }, { quoted: m });
         } else if (isGif) {
-            // GIF نبعته كـ video عشان يتحرك في واتساب
+            // GIF نبعته كـ image/gif مباشرة
             await conn.sendMessage(m.chat, {
-                video: buffer,
-                mimetype: 'video/mp4',
-                gifPlayback: true,
+                image: buffer,
+                mimetype: 'image/gif',
                 caption
             }, { quoted: m });
         } else {
