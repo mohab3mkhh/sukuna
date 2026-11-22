@@ -18,16 +18,29 @@ if (!global.kissLast) global.kissLast = new Map()
 
 const tag = jid => '@' + String(jid || '').split('@')[0].split(':')[0]
 
-// رابط GIF: nekos.best أولاً، وwaifu.pics احتياطي
+// رابط GIF: بنجرّب أكتر من مصدر، وبنسجّل سبب فشل كل واحد
+const SOURCES = [
+  { name: 'nekos.best', url: 'https://nekos.best/api/v2/kiss', pick: d => d?.results?.[0]?.url },
+  { name: 'purrbot',    url: 'https://api.purrbot.site/v2/img/sfw/kiss/gif', pick: d => d?.link },
+  { name: 'otakugifs',  url: 'https://api.otakugifs.xyz/gif?reaction=kiss', pick: d => d?.url },
+  { name: 'waifu.pics', url: 'https://api.waifu.pics/sfw/kiss', pick: d => d?.url },
+]
+
 async function getGifUrl() {
-  try {
-    const r = await axios.get('https://nekos.best/api/v2/kiss', { headers: { 'User-Agent': UA }, timeout: 15000 })
-    const url = r.data?.results?.[0]?.url
-    if (url) return url
-  } catch {}
-  const r = await axios.get('https://api.waifu.pics/sfw/kiss', { headers: { 'User-Agent': UA }, timeout: 15000 })
-  if (!r.data?.url) throw new Error('no gif url')
-  return r.data.url
+  const errors = []
+  for (const src of SOURCES) {
+    try {
+      const r = await axios.get(src.url, { headers: { 'User-Agent': UA, Accept: 'application/json' }, timeout: 15000 })
+      const url = src.pick(r.data)
+      if (url) return url
+      errors.push(`${src.name}: رد بدون رابط`)
+    } catch (e) {
+      const why = e?.response ? `HTTP ${e.response.status}` : (e?.code || e?.message)
+      errors.push(`${src.name}: ${why}`)
+    }
+  }
+  console.error('[بوسة] كل المصادر فشلت →', errors.join(' | '))
+  throw new Error(errors.join(' | '))
 }
 
 // واتساب بيعرض الـ GIF كفيديو mp4 بس
@@ -88,7 +101,7 @@ let handler = async (m, { conn }) => {
     }
   } catch (e) {
     console.error(`[بوسة] فشل عند (${step}):`, e?.message || e)
-    m.reply(`❌ فشل الكليب عند: ${step}\n${String(e?.message || e).slice(0, 150)}`)
+    m.reply(`❌ فشل الكليب عند: ${step}\n${String(e?.message || e).slice(0, 400)}`)
   } finally {
     try { fs.rmSync(dir, { recursive: true, force: true }) } catch {}
   }
