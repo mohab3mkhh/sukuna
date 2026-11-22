@@ -1,6 +1,6 @@
 /**
  * plugins/applemusic.js
- * بحث Apple Music + إرسال الصورة بأسلوب مباشر + تحميل الصوت عبر /download/soundcloud
+ * بحث Apple Music + إرسال التفاصيل والصوت عبر /download/soundcloud
  */
 
 import axios from 'axios'
@@ -107,7 +107,6 @@ async function fetchSoundCloudAudio(track) {
 
     const queryText = [cleanTitle, cleanArtistName].filter(Boolean).join(' ').trim() || track.title
 
-    // نجرب تمرير q بالاسم ثم بالرابط كاحتياط، ونطبع أي خطأ في الكونسول للفهم
     const attempts = [
         { q: queryText },
         ...(track.link && /soundcloud\.com/i.test(track.link) ? [{ url: track.link }] : [])
@@ -175,28 +174,6 @@ async function fetchSoundCloudAudio(track) {
     return null
 }
 
-// إرسال الصورة بأسلوب مباشر قريب من neko.js مع fallback للنص لو الصورة لم تفتح
-async function sendTrackImage(conn, m, imageUrl, caption) {
-    if (!imageUrl || !/^https?:\/\//i.test(imageUrl)) {
-        await conn.sendMessage(m.chat, { text: caption }, { quoted: m })
-        return
-    }
-
-    try {
-        await conn.sendMessage(
-            m.chat,
-            {
-                image: { url: imageUrl },
-                caption
-            },
-            { quoted: m }
-        )
-    } catch (imgErr) {
-        console.log('[applemusic image err]:', imgErr.message)
-        await conn.sendMessage(m.chat, { text: caption }, { quoted: m })
-    }
-}
-
 async function sendTracksMenu(conn, m, query, tracks) {
     const rows = tracks.map((track) => {
         const key = genId()
@@ -213,14 +190,11 @@ async function sendTracksMenu(conn, m, query, tracks) {
         }
     })
 
-    const coverImage = tracks.find(t => /^https?:\/\//i.test(t.image))?.image
-
     await sendButtons(conn, m.chat, {
         title: '🎵 Apple Music Search',
         subtitle: query,
         text: `🔍 *بحث عن:* ${query}\n🎶 *النتائج:* ${tracks.length}\n\n👇 اختر أغنية لعرض التفاصيل ومحاولة تحميل الصوت:`,
         footer: '🎵 Apple Music + SoundCloud',
-        ...(coverImage ? { image: coverImage } : {}),
         buttons: [
             btn.list('🎧 اختر نتيجة', [
                 {
@@ -230,6 +204,35 @@ async function sendTracksMenu(conn, m, query, tracks) {
             ])
         ]
     }, m)
+}
+
+async function sendTrackDetails(conn, m, track, audioResult) {
+    const caption = [
+        `🎵 *العنوان:* ${track.title}`,
+        `🎤 *الفنان/النوع:* ${track.artist}`,
+        track.link ? `🔗 *الرابط:* ${track.link}` : '',
+        audioResult
+            ? `🎧 *الصوت:* تم التحميل من SoundCloud`
+            : `⚠️ *الصوت:* لم يتم إرجاع مقطع صوتي من /download/soundcloud`
+    ].filter(Boolean).join('\n')
+
+    await conn.sendMessage(m.chat, { text: caption }, { quoted: m })
+
+    if (audioResult?.buffer) {
+        try {
+            await conn.sendMessage(
+                m.chat,
+                {
+                    audio: audioResult.buffer,
+                    mimetype: audioResult.mimetype || 'audio/mpeg',
+                    ptt: false
+                },
+                { quoted: m }
+            )
+        } catch (audioErr) {
+            console.log('[applemusic send audio err]:', audioErr.message)
+        }
+    }
 }
 
 let before = async (m, { conn }) => {
@@ -249,34 +252,9 @@ let before = async (m, { conn }) => {
 
         const audioResult = await fetchSoundCloudAudio(track)
 
-        const caption = [
-            `🎵 *العنوان:* ${track.title}`,
-            `🎤 *الفنان/النوع:* ${track.artist}`,
-            track.link ? `🔗 *الرابط:* ${track.link}` : '',
-            audioResult
-                ? `🎧 *الصوت:* تم التحميل من SoundCloud`
-                : `⚠️ *الصوت:* لم يتم إرجاع مقطع صوتي من /download/soundcloud`
-        ].filter(Boolean).join('\n')
-
         try { await conn.sendMessage(m.chat, { delete: waitMsg.key }) } catch {}
 
-        await sendTrackImage(conn, m, track.image, caption)
-
-        if (audioResult?.buffer) {
-            try {
-                await conn.sendMessage(
-                    m.chat,
-                    {
-                        audio: audioResult.buffer,
-                        mimetype: audioResult.mimetype || 'audio/mpeg',
-                        ptt: false
-                    },
-                    { quoted: m }
-                )
-            } catch (audioErr) {
-                console.log('[applemusic send audio err]:', audioErr.message)
-            }
-        }
+        await sendTrackDetails(conn, m, track, audioResult)
 
         await m.react('✅').catch(() => {})
         return true
