@@ -25,10 +25,14 @@ function genId() {
 }
 
 function sanitizeFileName(name) {
-    return String(name || 'track')
-        .replace(/[\\/:*?"<>|]+/g, '_')
+    const cleaned = String(name || 'track')
+        .replace(/[^\x20-\x7E]+/g, '_')
+        .replace(/[\\/:*?"<>|;]+/g, '_')
         .replace(/\s+/g, '_')
-        .slice(0, 60)
+        .replace(/_+/g, '_')
+        .replace(/^_+|_+$/g, '')
+        .slice(0, 50)
+    return cleaned || 'soundcloud_track'
 }
 
 function formatDuration(val) {
@@ -332,16 +336,28 @@ let before = async (m, { conn }) => {
 
             try { await conn.sendMessage(m.chat, { delete: waitMsg.key }) } catch {}
 
-            await conn.sendMessage(
-                m.chat,
-                {
-                    audio: { url: tmpFile },
-                    mimetype,
-                    ptt: false,
-                    fileName
-                },
-                { quoted: m }
-            )
+            try {
+                await conn.sendMessage(
+                    m.chat,
+                    {
+                        audio: { url: tmpFile },
+                        mimetype,
+                        ptt: false,
+                        fileName
+                    },
+                    { quoted: m }
+                )
+            } catch {
+                await conn.sendMessage(
+                    m.chat,
+                    {
+                        audio: { url: tmpFile },
+                        mimetype,
+                        ptt: false
+                    },
+                    { quoted: m }
+                )
+            }
 
             await conn.sendMessage(
                 m.chat,
