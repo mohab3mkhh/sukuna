@@ -16,7 +16,7 @@ import { promisify } from 'util'
 const execFileP = promisify(execFile)
 
 const FOOTER = '⛩️ SUKUNA BOT ⛩️'
-const MAX_MB = 100        // أكبر حجم مسموح
+const MAX_MB = 500        // ✅ أكبر حجم مسموح (تم التعديل من 100 لـ 500)
 const AS_VIDEO_MB = 50    // أكبر من كده يتبعت كـ document
 const MAX_IMAGES = 10
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36'
@@ -95,13 +95,22 @@ function sniff(b) {
     return null
 }
 
-async function downloadBuffer(url) {
-    const r = await axios.get(url, {
-        headers: { 'User-Agent': UA, Accept: '*/*' },
-        responseType: 'arraybuffer', timeout: 120000, maxRedirects: 8,
-        maxContentLength: MAX_MB * 1024 * 1024
-    })
-    return Buffer.from(r.data)
+async function downloadBuffer(url, extraHeaders = {}, retries = 1) {
+    let lastErr = null
+    for (let i = 0; i < retries; i++) {
+        try {
+            const r = await axios.get(url, {
+                headers: { 'User-Agent': UA, Accept: '*/*', ...extraHeaders },
+                responseType: 'arraybuffer', timeout: 600000, maxRedirects: 8,
+                maxContentLength: MAX_MB * 1024 * 1024, // ✅ 500 ميجا
+                validateStatus: () => true
+            })
+            if (r.status === 200 && r.data?.length) return Buffer.from(r.data)
+            lastErr = new Error('HTTP ' + r.status)
+        } catch (e) { lastErr = e }
+        if (i < retries - 1) await new Promise(r => setTimeout(r, 2000))
+    }
+    throw lastErr || new Error('تحميل فاشل')
 }
 
 // ━━━━━━━━ yt-dlp (نفس طريقة أمر يوتيوب) ━━━━━━━━
@@ -139,7 +148,7 @@ async function viaYtdlp(url, mode) {
     const stem = `dl_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
     const args = [
         '-f', mode === 'audio' ? 'ba[ext=m4a]/ba/b' : 'best[ext=mp4][height<=720]/best[ext=mp4]/best',
-        '--no-playlist', '--no-warnings', '--max-filesize', `${MAX_MB}M`,
+        '--no-playlist', '--no-warnings', '--max-filesize', `${MAX_MB}M`, // ✅ 500 ميجا
         '-o', path.join(tmpDir, `${stem}.%(ext)s`)
     ]
     let cookieFile = null
@@ -171,11 +180,55 @@ async function viaYtdlp(url, mode) {
     }
 }
 
+// ━━━━━━━━ يوتيوب عن طريق cnv.cx (من غير كوكيز) ━━━━━━━━
+const CNV_HEADERS = {
+    'User-Agent': UA,
+    'Origin': 'https://iframe.y2meta-uk.com',
+    'Referer': 'https://iframe.y2meta-uk.com/'
+}
+
+function ytId(url) {
+    const m = String(url).match(/(?:youtube\.com\/(?:watch\?(?:.*&)?v=|embed\/|shorts\/|live\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/)
+    return m ? m[1] : null
+}
+
+async function viaCnv(url, mode) {
+    const id = ytId(url)
+    if (!id) throw new Error('cnv: مش لاقي ID الفيديو في الرابط')
+    const k = await axios.get(`https://cnv.cx/v2/sanity/key?id=${id}`, { headers: CNV_HEADERS, timeout: 20000 })
+    if (!k.data?.key) throw new Error('cnv: فشل جلب المفتاح')
+    await new Promise(r => setTimeout(r, 1500))
+
+    const params = new URLSearchParams({
+        link: `https://youtu.be/${id}`,
+        format: mode === 'audio' ? 'mp3' : 'mp4',
+        videoQuality: '720',
+        filenameStyle: 'pretty',
+        vCodec: 'h264'
+    })
+    if (mode === 'audio') params.set('audioBitrate', '256')
+
+    const r = await axios.post('https://cnv.cx/v2/converter', params.toString(), {
+        headers: { ...CNV_HEADERS, 'Content-Type': 'application/x-www-form-urlencoded', accept: '*/*', key: k.data.key },
+        timeout: 120000,
+        validateStatus: () => true
+    })
+    if (r.status === 200 && r.data?.url) {
+        return {
+            links: [{ url: r.data.url, key: 'download' }],
+            title: String(r.data.filename || '').replace(/\.(mp4|mp3)$/i, ''),
+            dlHeaders: { Referer: 'https://cnv.cx/', Origin: 'https://cnv.cx' },
+            assume: mode === 'audio' ? 'audio' : 'video',
+            retries: 3
+        }
+    }
+    throw new Error('cnv: ' + (r.data?.errorMsg || `HTTP ${r.status}`))
+}
+
 // ━━━━━━━━ المزوّدين ━━━━━━━━
 async function viaPrexzy(url) {
     const r = await axios.get(PREXZY_TIKTOK, { params: { url }, timeout: 30000, validateStatus: () => true })
     const d = r.data
-    // لو الـ API نفسه اتحظر (زي ما حصل في البحث) بيرجّع AxiosError جوه data
     if (d?.data?.name === 'AxiosError' || d?.data?.stack) throw new Error('Prexzy: ' + snip(d.data.message || 'خطأ داخلي'))
     if (d?.status === false) throw new Error('Prexzy: ' + snip(d.message || d))
     const ex = extractMedia(d?.data ?? d)
@@ -202,11 +255,13 @@ const P = {
     btchTW:  { name: 'btch',    run: viaPackage('btch-downloader', 'twitter') },
     igUrl:   { name: 'instagram-url-direct', run: viaPackage('instagram-url-direct', 'instagramGetUrl', m => m.default) },
     tobyTT:  { name: 'tiktok-api-dl', run: viaPackage('@tobyg74/tiktok-api-dl', 'Downloader', m => m.default?.Downloader ? ((u) => m.default.Downloader(u, { version: 'v3' })) : null) },
+    cnv:     { name: 'cnv',     run: viaCnv },
     ytdlp:   { name: 'yt-dlp',  run: viaYtdlp }
 }
 
 function chainFor(host) {
     if (/tiktok\.com$/.test(host)) return [P.prexzy, P.tobyTT, P.btchTT, P.ytdlp]
+    if (/youtube\.com$|youtu\.be$/.test(host)) return process.env.YT_COOKIES ? [P.cnv, P.ytdlp] : [P.cnv]
     if (/instagram\.com$/.test(host)) return [P.ytdlp, P.igUrl, P.btchIG]
     if (/facebook\.com$|fb\.watch$/.test(host)) return [P.btchFB, P.ytdlp]
     if (/twitter\.com$|x\.com$/.test(host)) return [P.btchTW, P.ytdlp]
@@ -223,9 +278,16 @@ async function collect(res, mode) {
         if (wantDone()) break
         if (files.filter(f => f.kind === 'image').length >= MAX_IMAGES) break
         try {
-            const b = await downloadBuffer(l.url)
-            const t = sniff(b)
+            const b = await downloadBuffer(l.url, res.dlHeaders, res.retries || 1)
+            let t = sniff(b)
+            if (!t && res.assume && b.length > 10000) {
+                const head = b.slice(0, 1).toString('latin1')
+                if (head !== '<' && head !== '{') {
+                    t = res.assume === 'audio' ? { kind: 'audio', mime: 'audio/mpeg', ext: 'mp3' } : { kind: 'video', mime: 'video/mp4', ext: 'mp4' }
+                }
+            }
             if (t) files.push({ buf: b, ...t })
+            else log(`نوع ملف مش معروف (${b.length} بايت):`, snip(b.slice(0, 80).toString('latin1')))
         } catch (e) { log('رابط فشل:', shortErr(e)) }
     }
 
