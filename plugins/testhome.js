@@ -17,31 +17,64 @@ function genId() {
     return Math.random().toString(36).slice(2, 10)
 }
 
-// دالة ذكية تستخرج الأقسام أياً كان شكل الـ JSON الكبير في /home
+function pickItemsArray(obj) {
+    if (!obj || typeof obj !== 'object') return null
+    if (Array.isArray(obj)) return obj
+
+    const candidates = [
+        obj.videos,
+        obj.items,
+        obj.list,
+        obj.results,
+        obj.data,
+        obj.movies,
+        obj.posts,
+        obj.cards
+    ]
+    for (const c of candidates) {
+        if (Array.isArray(c) && c.length) return c
+    }
+    return null
+}
+
 function parseHomeSections(data) {
-    if (!data || typeof data !== 'object') return []
+    const root = data?.home ?? data?.raw ?? data
+    if (!root || typeof root !== 'object') return []
 
     const sections = []
 
-    // الحالة 1: لو الـ JSON فيه مصفوفة أقسام مباشرة مثل data.sections أو data.categories أو data.result
-    const arrayCandidates = [
-        data.sections,
-        data.categories,
-        data.home,
-        data.result,
-        data.data
-    ].find(Array.isArray)
+    // الحالة 1: لو root عبارة عن مصفوفة مباشرة
+    if (Array.isArray(root)) {
+        // لو عناصرها نفسها أقسام (كل عنصر فيه مصفوفة فرعية)
+        const subSections = root
+            .map((sec, idx) => {
+                const items = pickItemsArray(sec)
+                if (!items) return null
+                return {
+                    title: String(sec?.title || sec?.name || sec?.category || sec?.label || `قسم ${idx + 1}`).trim(),
+                    items
+                }
+            })
+            .filter(Boolean)
 
-    if (arrayCandidates) {
-        arrayCandidates.forEach((sec, idx) => {
-            if (!sec || typeof sec !== 'object') return
-            const items =
-                sec.videos || sec.items || sec.list || sec.results || sec.data ||
-                (Array.isArray(sec) ? sec : null)
+        if (subSections.length) return subSections
 
+        // لو root مصفوفة عناصر مباشرة من غير أقسام فرعية
+        if (root.length && typeof root[0] === 'object') {
+            return [{ title: 'الرئيسية', items: root }]
+        }
+        return []
+    }
+
+    // الحالة 2: لو root كائن (Object) يحتوي على مفاتيح
+    // أولاً: هل جواه مصفوفة أقسام معروفة؟
+    const knownSectionArrays = [root.sections, root.categories, root.blocks, root.rows, root.groups].find(Array.isArray)
+    if (knownSectionArrays) {
+        knownSectionArrays.forEach((sec, idx) => {
+            const items = pickItemsArray(sec) || (Array.isArray(sec) ? sec : null)
             if (Array.isArray(items) && items.length) {
                 sections.push({
-                    title: String(sec.title || sec.name || sec.category || `قسم ${idx + 1}`).trim(),
+                    title: String(sec?.title || sec?.name || sec?.category || `قسم ${idx + 1}`).trim(),
                     items
                 })
             }
@@ -49,19 +82,23 @@ function parseHomeSections(data) {
         if (sections.length) return sections
     }
 
-    // الحالة 2: لو الـ JSON عبارة عن كائن فيه مفاتيح وكل مفتاح تحته مصفوفة (مثل { trending: [...], latest: [...] })
-    const ignoreKeys = new Set(['status', 'statusCode', 'creator', 'timestamp', 'message', 'code'])
-    const rootObj = (data.data && typeof data.data === 'object' && !Array.isArray(data.data))
-        ? data.data
-        : data
-
-    for (const [key, val] of Object.entries(rootObj)) {
+    // ثانياً: كل مفتاح جوه root قيمته مصفوفة كائنات نعتبره قسماً
+    const ignoreKeys = new Set(['status', 'statusCode', 'creator', 'timestamp', 'message', 'code', 'ops', 'keyword'])
+    for (const [key, val] of Object.entries(root)) {
         if (ignoreKeys.has(key)) continue
         if (Array.isArray(val) && val.length && typeof val[0] === 'object') {
             sections.push({
                 title: key.replace(/[_-]+/g, ' ').toUpperCase(),
                 items: val
             })
+        } else if (val && typeof val === 'object') {
+            const nestedItems = pickItemsArray(val)
+            if (nestedItems) {
+                sections.push({
+                    title: String(val.title || val.name || key).trim(),
+                    items: nestedItems
+                })
+            }
         }
     }
 
@@ -71,11 +108,11 @@ function parseHomeSections(data) {
 function normalizeItem(raw, index) {
     return {
         index: index + 1,
-        title: String(raw?.title || raw?.name || raw?.word || `عنصر ${index + 1}`).trim(),
-        link: raw?.link || raw?.url || raw?.href || 'لا يوجد رابط',
-        uploader: raw?.uploader || raw?.author || raw?.channel || 'غير معروف',
-        duration: raw?.duration || raw?.time || 'غير محدد',
-        views: raw?.views || raw?.view || 'غير محدد'
+        title: String(raw?.title || raw?.name || raw?.word || raw?.label || `عنصر ${index + 1}`).trim(),
+        link: raw?.link || raw?.url || raw?.href || raw?.page || 'لا يوجد رابط',
+        uploader: raw?.uploader || raw?.author || raw?.channel || raw?.creator || 'غير معروف',
+        duration: raw?.duration || raw?.time || raw?.length || 'غير محدد',
+        views: raw?.views || raw?.view || raw?.watched || 'غير محدد'
     }
 }
 
@@ -94,17 +131,21 @@ async function fetchHomeData() {
     }
 
     const rawData = res.data
+    const homeObj = rawData?.home
 
-    // نطبع ملخص خفيف في الكونسول بدل ما نطبع الـ JSON الضخم كله
-    if (rawData && typeof rawData === 'object') {
-        console.log('[testhome] top-level keys:', Object.keys(rawData))
+    if (homeObj && typeof homeObj === 'object') {
+        console.log('[testhome] home type:', Array.isArray(homeObj) ? 'array' : 'object')
+        console.log('[testhome] home keys:', Object.keys(homeObj))
+        const sample = Array.isArray(homeObj) ? homeObj[0] : homeObj[Object.keys(homeObj)[0]]
+        if (sample && typeof sample === 'object') {
+            console.log('[testhome] sample keys:', Object.keys(sample))
+        }
     }
 
     const sections = parseHomeSections(rawData)
     return { rawData, sections }
 }
 
-// المرحلة 1: إرسال قائمة بالأقسام الموجودة في /home
 async function sendSectionsMenu(conn, m, sections) {
     const pickedSections = sections.slice(0, MAX_SECTIONS)
 
@@ -127,7 +168,7 @@ async function sendSectionsMenu(conn, m, sections) {
     await sendButtons(conn, m.chat, {
         title: '🏠 الصفحة الرئيسية (/home)',
         subtitle: `تم استخراج ${sections.length} قسم`,
-        text: `📊 الرد كبير فتم تقسيمه إلى *${pickedSections.length}* أقسام رئيسية.\n\n👇 اختر قسماً لعرض محتواه:`,
+        text: `📊 تم استخراج *${pickedSections.length}* أقسام من \`home\`.\n\n👇 اختر قسماً لعرض محتواه:`,
         footer: '🧪 تجربة مطور • Large JSON Handler',
         buttons: [
             btn.list('📂 اختر قسماً', [
@@ -140,7 +181,6 @@ async function sendSectionsMenu(conn, m, sections) {
     }, m)
 }
 
-// المرحلة 2: إرسال عناصر القسم المختار
 async function sendSectionItemsMenu(conn, m, sectionTitle, rawItems) {
     const items = rawItems.map((it, i) => normalizeItem(it, i))
 
@@ -187,13 +227,11 @@ let before = async (m, { conn }) => {
 
         global.homeTestCache.delete(key)
 
-        // لو ضغط على قسم -> نعرض عناصر القسم
         if (cached.step === 'section') {
             await sendSectionItemsMenu(conn, m, cached.sectionTitle, cached.items)
             return true
         }
 
-        // لو ضغط على عنصر -> نعرض تفاصيله ورابطه
         if (cached.step === 'item') {
             const { item, sectionTitle } = cached
             const details = [
@@ -229,12 +267,14 @@ let handler = async (m, { conn, isROwner, isOwner }) => {
         const { rawData, sections } = await fetchHomeData()
 
         if (!sections.length) {
-            const topKeys = rawData && typeof rawData === 'object' ? Object.keys(rawData).join(', ') : 'غير معروف'
+            const homeKeys = rawData?.home && typeof rawData.home === 'object'
+                ? Object.keys(rawData.home).join(', ')
+                : 'غير معروف'
             await m.react('⚠️')
             return conn.sendMessage(
                 m.chat,
                 {
-                    text: `⚠️ تم استلام الـ JSON بنجاح لكن هيكل الأقسام مختلف.\n🔑 *المفاتيح الرئيسية:* \`${topKeys}\`\n\nشوف الكونسول أو ابعتلي أول 30 سطر من الـ JSON عشان نظبط \`parseHomeSections\`.`,
+                    text: `⚠️ شكل \`home\` مختلف شوية.\n🔑 *مفاتيح home:* \`${homeKeys}\`\n\nشوف الكونسول وابعـتلي السطرين بتوع \`home keys\` و \`sample keys\`.`,
                     edit: wait.key
                 }
             )
