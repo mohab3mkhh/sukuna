@@ -95,13 +95,22 @@ function sniff(b) {
     return null
 }
 
-async function downloadBuffer(url, extraHeaders = {}) {
-    const r = await axios.get(url, {
-        headers: { 'User-Agent': UA, Accept: '*/*', ...extraHeaders },
-        responseType: 'arraybuffer', timeout: 120000, maxRedirects: 8,
-        maxContentLength: MAX_MB * 1024 * 1024
-    })
-    return Buffer.from(r.data)
+async function downloadBuffer(url, extraHeaders = {}, retries = 1) {
+    let lastErr = null
+    for (let i = 0; i < retries; i++) {
+        try {
+            const r = await axios.get(url, {
+                headers: { 'User-Agent': UA, Accept: '*/*', ...extraHeaders },
+                responseType: 'arraybuffer', timeout: 600000, maxRedirects: 8,
+                maxContentLength: MAX_MB * 1024 * 1024,
+                validateStatus: () => true
+            })
+            if (r.status === 200 && r.data?.length) return Buffer.from(r.data)
+            lastErr = new Error('HTTP ' + r.status)
+        } catch (e) { lastErr = e }
+        if (i < retries - 1) await new Promise(r => setTimeout(r, 2000))
+    }
+    throw lastErr || new Error('تحميل فاشل')
 }
 
 // ━━━━━━━━ yt-dlp (نفس طريقة أمر يوتيوب) ━━━━━━━━
@@ -208,7 +217,9 @@ async function viaCnv(url, mode) {
         return {
             links: [{ url: r.data.url, key: 'download' }],
             title: String(r.data.filename || '').replace(/\.(mp4|mp3)$/i, ''),
-            dlHeaders: { Referer: 'https://cnv.cx/', Origin: 'https://cnv.cx' }
+            dlHeaders: { Referer: 'https://cnv.cx/', Origin: 'https://cnv.cx' },
+            assume: mode === 'audio' ? 'audio' : 'video',
+            retries: 3
         }
     }
     throw new Error('cnv: ' + (r.data?.errorMsg || `HTTP ${r.status}`))
@@ -251,7 +262,7 @@ const P = {
 
 function chainFor(host) {
     if (/tiktok\.com$/.test(host)) return [P.prexzy, P.tobyTT, P.btchTT, P.ytdlp]
-    if (/youtube\.com$|youtu\.be$/.test(host)) return [P.cnv, P.ytdlp]
+    if (/youtube\.com$|youtu\.be$/.test(host)) return process.env.YT_COOKIES ? [P.cnv, P.ytdlp] : [P.cnv]
     if (/instagram\.com$/.test(host)) return [P.ytdlp, P.igUrl, P.btchIG]
     if (/facebook\.com$|fb\.watch$/.test(host)) return [P.btchFB, P.ytdlp]
     if (/twitter\.com$|x\.com$/.test(host)) return [P.btchTW, P.ytdlp]
@@ -268,9 +279,17 @@ async function collect(res, mode) {
         if (wantDone()) break
         if (files.filter(f => f.kind === 'image').length >= MAX_IMAGES) break
         try {
-            const b = await downloadBuffer(l.url, res.dlHeaders)
-            const t = sniff(b)
+            const b = await downloadBuffer(l.url, res.dlHeaders, res.retries || 1)
+            let t = sniff(b)
+            if (!t && res.assume && b.length > 10000) {
+                // المزوّد ضامن النوع (زي cnv) — نتأكد بس إنه مش صفحة خطأ
+                const head = b.slice(0, 1).toString('latin1')
+                if (head !== '<' && head !== '{') {
+                    t = res.assume === 'audio' ? { kind: 'audio', mime: 'audio/mpeg', ext: 'mp3' } : { kind: 'video', mime: 'video/mp4', ext: 'mp4' }
+                }
+            }
             if (t) files.push({ buf: b, ...t })
+            else log(`نوع ملف مش معروف (${b.length} بايت):`, snip(b.slice(0, 80).toString('latin1')))
         } catch (e) { log('رابط فشل:', shortErr(e)) }
     }
 
