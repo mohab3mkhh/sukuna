@@ -1,449 +1,326 @@
 /**
- * plugins/soundcloud.js
- * أمر أغنية: بحث في SoundCloud (/search/soundcloud) + تنزيل وإرسال الصوت (/download/soundcloud) - متاح للجميع
+ * plugins/اغنية.js
+ * بحث عن أغنية + قائمة نتائج + تنزيل صوت حقيقي (cnv.cx + yt-dlp)
  */
 
 import axios from 'axios'
 import fs from 'fs'
-import path from 'path'
 import os from 'os'
+import path from 'path'
+import { execFile } from 'child_process'
 import { sendButtons, btn, getButtonId } from '../lib/buttons.js'
 
-const SEARCH_ENDPOINT = 'https://prexzyapis.com/search/soundcloud'
-const DL_ENDPOINT = 'https://prexzyapis.com/download/soundcloud'
-const MAX_ITEMS = 10
-const TTL_MS = 30 * 60 * 1000
-const MAX_AUDIO_MB = 150
-const MAX_AUDIO_BYTES = MAX_AUDIO_MB * 1024 * 1024
-const TMP = os.tmpdir()
-const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
+const SEARCH_SC = 'https://prexzyapis.com/search/soundcloud'
+const MAX_RESULTS = 10
+const MAX_MB = 60
+const PREFIX = 'song_'
 
-if (!global.scSearchCache) global.scSearchCache = new Map()
+const YTDLP = fs.existsSync('/root/.nix-profile/bin/yt-dlp') ? '/root/.nix-profile/bin/yt-dlp' : 'yt-dlp'
+const FFMPEG = fs.existsSync('/root/.nix-profile/bin/ffmpeg') ? '/root/.nix-profile/bin/ffmpeg' : 'ffmpeg'
+const COOKIES = '/app/cookies.txt'
 
-function genId() {
-    return Math.random().toString(36).slice(2, 10)
-}
+if (!global.songCache) global.songCache = new Map()
 
-function sanitizeFileName(name) {
-    const cleaned = String(name || 'track')
-        .replace(/[^\x20-\x7E]+/g, '_')
-        .replace(/[\\/:*?"<>|;]+/g, '_')
-        .replace(/\s+/g, '_')
-        .replace(/_+/g, '_')
-        .replace(/^_+|_+$/g, '')
-        .slice(0, 50)
-    return cleaned || 'soundcloud_track'
+const log = (...a) => console.log('[أغنية]', ...a)
+const genId = () => Math.random().toString(36).slice(2, 10)
+const react = async (conn, m, emoji) => {
+  try { await conn.sendMessage(m.chat, { react: { text: emoji, key: m.key } }) } catch {}
 }
 
 function formatDuration(val) {
-    if (!val && val !== 0) return ''
-    if (typeof val === 'number') {
-        const totalSec = val > 10000 ? Math.floor(val / 1000) : Math.floor(val)
-        const mins = Math.floor(totalSec / 60)
-        const secs = totalSec % 60
-        return `${mins}:${String(secs).padStart(2, '0')}`
-    }
-    return String(val).trim()
+  if (!val && val !== 0) return ''
+  if (typeof val === 'number') {
+    const sec = val > 10000 ? Math.floor(val / 1000) : Math.floor(val)
+    return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`
+  }
+  return String(val).trim()
 }
 
-function extractStringField(val) {
-    if (!val) return ''
-    if (typeof val === 'string' || typeof val === 'number') return String(val).trim()
-    if (typeof val === 'object') {
-        return String(
-            val.username ||
-            val.name ||
-            val.title ||
-            val.full_name ||
-            val.display_name ||
-            ''
-        ).trim()
-    }
-    return ''
+function extractName(v) {
+  if (!v) return ''
+  if (typeof v === 'string' || typeof v === 'number') return String(v).trim()
+  if (typeof v === 'object') return String(v.username || v.name || v.title || v.full_name || '').trim()
+  return ''
 }
 
-function normalizeTrack(raw, index) {
-    const title = String(
-        extractStringField(raw?.title) ||
-        extractStringField(raw?.name) ||
-        extractStringField(raw?.trackName) ||
-        extractStringField(raw?.song) ||
-        `مقطع ${index + 1}`
-    ).trim()
-
-    const artist = String(
-        extractStringField(raw?.author) ||
-        extractStringField(raw?.artist) ||
-        extractStringField(raw?.user) ||
-        extractStringField(raw?.uploader) ||
-        'غير معروف'
-    ).trim()
-
-    const duration = formatDuration(
-        raw?.duration ||
-        raw?.full_duration ||
-        raw?.length ||
-        raw?.time ||
-        ''
-    )
-
-    const url = String(
-        raw?.url ||
-        raw?.permalink_url ||
-        raw?.link ||
-        raw?.trackUrl ||
-        ''
-    ).trim()
-
-    const id = raw?.id ? String(raw.id).trim() : ''
-
-    return {
-        index: index + 1,
-        id,
-        title,
-        artist,
-        duration,
-        url
-    }
+async function searchYouTubeForTrack(query) {
+  try {
+    const mod = await import('yt-search')
+    const yts = mod.default || mod
+    const res = await yts(query)
+    let vids = (res?.videos || []).filter(v => v.seconds > 0 && v.seconds < 1800)
+    if (!vids.length) vids = res?.videos || []
+    return vids.slice(0, MAX_RESULTS).map(v => ({
+      videoId: v.videoId,
+      title: v.title,
+      author: v.author?.name || '',
+      duration: v.timestamp || '',
+      thumbnail: v.thumbnail || `https://i.ytimg.com/vi/${v.videoId}/hqdefault.jpg`
+    }))
+  } catch (e) {
+    log('yt-search:', e.message)
+    return []
+  }
 }
 
-async function searchSoundCloud(query) {
-    const res = await axios.get(SEARCH_ENDPOINT, {
-        params: { q: query },
-        timeout: 20000,
-        headers: {
-            'User-Agent': UA,
-            'Accept': 'application/json'
-        },
-        validateStatus: () => true
+async function searchSongs(query) {
+  try {
+    const res = await axios.get(SEARCH_SC, {
+      params: { q: query },
+      timeout: 20000,
+      headers: { 'User-Agent': UA, Accept: 'application/json' },
+      validateStatus: () => true
     })
-
-    if (res.status >= 400) {
-        throw new Error(`HTTP ${res.status}`)
-    }
-
     const d = res.data
     const list =
-        (Array.isArray(d?.result) && d.result) ||
-        (Array.isArray(d?.results) && d.results) ||
-        (Array.isArray(d?.data) && d.data) ||
-        (Array.isArray(d?.tracks) && d.tracks) ||
-        (Array.isArray(d?.data?.result) && d.data.result) ||
-        []
+      (Array.isArray(d?.result) && d.result) ||
+      (Array.isArray(d?.results) && d.results) ||
+      (Array.isArray(d?.data) && d.data) ||
+      (Array.isArray(d?.tracks) && d.tracks) ||
+      []
 
-    if (!list.length) return []
-    return list.slice(0, MAX_ITEMS).map((item, i) => normalizeTrack(item, i))
-}
-
-async function downloadAudioFromUrl(audioUrl, referer, outFilePath) {
-    const res = await axios.get(audioUrl, {
-        responseType: 'stream',
-        timeout: 180000,
-        maxRedirects: 5,
-        maxContentLength: MAX_AUDIO_BYTES,
-        maxBodyLength: MAX_AUDIO_BYTES,
-        headers: {
-            'User-Agent': UA,
-            'Referer': referer || 'https://soundcloud.com/'
-        },
-        validateStatus: () => true
-    })
-
-    if (res.status >= 400 || !res.data) {
-        throw new Error(`HTTP ${res.status}`)
-    }
-
-    const contentType = String(res.headers['content-type'] || '').toLowerCase()
-    if (contentType.includes('text/html') || contentType.includes('application/json')) {
-        throw new Error('الرابط ليس ملفاً صوتياً مباشراً')
-    }
-
-    let bytes = 0
-    await new Promise((resolve, reject) => {
-        const writer = fs.createWriteStream(outFilePath)
-        res.data.on('data', (chunk) => {
-            bytes += chunk.length
-            if (bytes > MAX_AUDIO_BYTES) {
-                writer.destroy()
-                res.data.destroy()
-                reject(new Error(`حجم الملف تجاوز ${MAX_AUDIO_MB} MB`))
-            }
-        })
-        res.data.on('error', (err) => {
-            writer.destroy()
-            reject(err)
-        })
-        writer.on('error', reject)
-        writer.on('finish', resolve)
-        res.data.pipe(writer)
-    })
-
-    if (bytes < 10000) {
-        try { fs.unlinkSync(outFilePath) } catch {}
-        throw new Error('الملف الصوتي صغير جداً')
-    }
-
-    const mime = contentType.includes('audio/')
-        ? contentType.split(';')[0]
-        : 'audio/mpeg'
-
-    return { bytes, mimetype: mime }
-}
-
-async function downloadSoundCloudTrack(track, outFilePath) {
-    const paramAttempts = [
-        ...(track.url ? [{ url: track.url }] : []),
-        ...(track.id ? [{ id: track.id, mode: 'audio', quality: 'hq' }] : []),
-        ...(track.id ? [{ id: track.id, mode: 'audio', quality: 'lq' }] : [])
-    ]
-
-    let lastError = ''
-
-    for (const params of paramAttempts) {
-        try {
-            const res = await axios.get(DL_ENDPOINT, {
-                params,
-                timeout: 30000,
-                responseType: 'arraybuffer',
-                headers: {
-                    'User-Agent': UA,
-                    'Accept': 'audio/*, application/json, */*'
-                },
-                validateStatus: () => true
-            })
-
-            const buf = Buffer.from(res.data || [])
-            const contentType = String(res.headers['content-type'] || '').toLowerCase()
-
-            if (res.status >= 400) {
-                let errMsg = `HTTP ${res.status}`
-                try {
-                    const errJson = JSON.parse(buf.toString('utf8'))
-                    errMsg = errJson?.error || errJson?.message || errMsg
-                } catch {}
-                lastError = errMsg
-                continue
-            }
-
-            if (contentType.includes('audio/') || (buf.length > 50000 && !contentType.includes('application/json') && buf[0] !== 0x7b)) {
-                if (buf.length > MAX_AUDIO_BYTES) {
-                    throw new Error(`حجم الملف تجاوز ${MAX_AUDIO_MB} MB`)
-                }
-                fs.writeFileSync(outFilePath, buf)
-                return {
-                    bytes: buf.length,
-                    mimetype: contentType.includes('audio/') ? contentType.split(';')[0] : 'audio/mpeg'
-                }
-            }
-
-            if (contentType.includes('application/json') || buf[0] === 0x7b) {
-                let json = null
-                try {
-                    json = JSON.parse(buf.toString('utf8'))
-                } catch {
-                    continue
-                }
-
-                if (json && json.status === false) {
-                    lastError = json.error || json.message || `statusCode ${json.statusCode || 400}`
-                    continue
-                }
-
-                const d = json?.data || json?.result || json
-                const audioUrl =
-                    d?.downloadUrl ||
-                    d?.download ||
-                    d?.audio ||
-                    d?.audioUrl ||
-                    d?.stream ||
-                    ''
-
-                if (typeof audioUrl === 'string' && /^https?:\/\//i.test(audioUrl.trim())) {
-                    return await downloadAudioFromUrl(audioUrl.trim(), track.url || 'https://soundcloud.com/', outFilePath)
-                }
-
-                const streamUrl = d?.streams?.hq || d?.streams?.lq || ''
-                if (typeof streamUrl === 'string' && /^https?:\/\//i.test(streamUrl.trim())) {
-                    return await downloadAudioFromUrl(streamUrl.trim(), track.url || 'https://soundcloud.com/', outFilePath)
-                }
-            }
-        } catch (err) {
-            if (err.message.includes('تجاوز')) throw err
-            lastError = err.message
-        }
-    }
-
-    throw new Error(lastError || 'تعذر جلب ملف الصوت من /download/soundcloud')
-}
-
-async function sendTracksMenu(conn, m, query, tracks) {
-    const rows = tracks.map((track) => {
-        const key = genId()
-        global.scSearchCache.set(key, {
-            track,
-            query,
-            createdAt: Date.now()
-        })
-
-        const desc = [
-            `🎤 ${track.artist}`,
-            track.duration ? `⏱️ ${track.duration}` : ''
-        ].filter(Boolean).join(' | ')
-
+    if (list.length) {
+      const ytFallback = await searchYouTubeForTrack(query)
+      return list.slice(0, MAX_RESULTS).map((item, idx) => {
+        const title = extractName(item?.title) || extractName(item?.name) || `مقطع ${idx + 1}`
+        const author = extractName(item?.author) || extractName(item?.artist) || extractName(item?.user) || ''
+        const duration = formatDuration(item?.duration || item?.full_duration || '')
+        const thumb = extractName(item?.thumbnail) || extractName(item?.artwork) || extractName(item?.image) || ''
+        const matchedYt = ytFallback[idx] || ytFallback[0] || null
         return {
-            title: `${track.index}. ${track.title.slice(0, 50)}`,
-            description: desc.slice(0, 70),
-            id: `sc_${key}`
+          videoId: matchedYt?.videoId || '',
+          queryForYt: `${title} ${author}`.trim(),
+          title,
+          author,
+          duration,
+          thumbnail: thumb || matchedYt?.thumbnail || ''
         }
-    })
+      })
+    }
+  } catch (e) {
+    log('soundcloud search:', e.message)
+  }
 
-    await sendButtons(conn, m.chat, {
-        title: '🎧 SoundCloud Search',
-        subtitle: query,
-        text: `🔍 *بحث عن:* ${query}\n🎶 *النتائج:* ${tracks.length}\n\n👇 اختر أغنية لتنزيلها:`,
-        footer: '🎧 SoundCloud',
-        buttons: [
-            btn.list('🎵 اختر أغنية', [
-                {
-                    title: 'نتائج البحث',
-                    rows
-                }
-            ])
-        ]
-    }, m)
+  return await searchYouTubeForTrack(query)
+}
+
+async function getThumb(url, videoId) {
+  const urls = [url, videoId ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg` : ''].filter(Boolean)
+  for (const u of urls) {
+    try {
+      const r = await axios.get(u, { headers: { 'User-Agent': UA }, responseType: 'arraybuffer', timeout: 15000 })
+      if (r.data?.length > 1000) return Buffer.from(r.data)
+    } catch {}
+  }
+  return null
+}
+
+function runYtDlp(args) {
+  return new Promise((resolve, reject) => {
+    execFile(YTDLP, args, { timeout: 180000, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
+      if (err) return reject(new Error((stderr || err.message).toString().trim().split('\n').slice(-2).join(' ').slice(0, 300)))
+      resolve(stdout)
+    })
+  })
+}
+
+async function ytdlpAudio(videoId) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'song-'))
+  const out = path.join(dir, `${videoId}.%(ext)s`)
+  const url = `https://www.youtube.com/watch?v=${videoId}`
+
+  const base = [
+    '-x', '--audio-format', 'mp3', '--audio-quality', '5',
+    '--no-playlist', '--no-warnings',
+    '--max-filesize', `${MAX_MB}M`,
+    '--ffmpeg-location', FFMPEG,
+    '-o', out
+  ]
+  if (fs.existsSync(COOKIES)) base.push('--cookies', COOKIES)
+
+  const attempts = [
+    [...base, url],
+    [...base, '--extractor-args', 'youtube:player_client=android,web', url]
+  ]
+
+  try {
+    let lastErr
+    for (const args of attempts) {
+      try {
+        await runYtDlp(args)
+        const file = fs.readdirSync(dir).find(f => f.endsWith('.mp3'))
+        if (!file) throw new Error('no mp3 produced')
+        const buffer = fs.readFileSync(path.join(dir, file))
+        if (buffer.length < 20 * 1024) throw new Error('الملف صغير جداً')
+        return buffer
+      } catch (e) {
+        lastErr = e
+        log('yt-dlp:', e.message)
+      }
+    }
+    throw lastErr || new Error('فشل التحميل')
+  } finally {
+    try { fs.rmSync(dir, { recursive: true, force: true }) } catch {}
+  }
+}
+
+const CNV_HEADERS = { 'User-Agent': UA, Origin: 'https://iframe.y2meta-uk.com', Referer: 'https://iframe.y2meta-uk.com/' }
+
+async function cnvAudio(videoId) {
+  const k = await axios.get(`https://cnv.cx/v2/sanity/key?id=${videoId}`, { headers: CNV_HEADERS, timeout: 20000 })
+  if (!k.data?.key) throw new Error('cnv: no key')
+  await new Promise(r => setTimeout(r, 1500))
+
+  const params = new URLSearchParams({
+    link: `https://youtu.be/${videoId}`,
+    format: 'mp3',
+    audioBitrate: '128',
+    videoQuality: '720',
+    filenameStyle: 'pretty',
+    vCodec: 'h264'
+  })
+  const r = await axios.post('https://cnv.cx/v2/converter', params.toString(), {
+    headers: { ...CNV_HEADERS, 'Content-Type': 'application/x-www-form-urlencoded', accept: '*/*', key: k.data.key },
+    timeout: 120000,
+    validateStatus: () => true
+  })
+  if (!(r.status === 200 && r.data?.url)) throw new Error(r.data?.errorMsg || `cnv: status ${r.status}`)
+
+  for (let i = 0; i < 3; i++) {
+    try {
+      const d = await axios.get(r.data.url, {
+        headers: { 'User-Agent': UA, Referer: 'https://cnv.cx/', Origin: 'https://cnv.cx' },
+        responseType: 'arraybuffer',
+        timeout: 180000,
+        maxContentLength: MAX_MB * 1024 * 1024,
+        validateStatus: () => true
+      })
+      if (d.status === 200 && d.data?.length > 20 * 1024) return Buffer.from(d.data)
+    } catch (e) {
+      log('cnv dl:', e.message)
+    }
+    await new Promise(r => setTimeout(r, 2000))
+  }
+  throw new Error('cnv: الملف فاضي')
+}
+
+async function resolveVideoId(item) {
+  if (item.videoId) return item.videoId
+  const q = item.queryForYt || item.title
+  const vids = await searchYouTubeForTrack(q)
+  return vids[0]?.videoId || ''
+}
+
+async function downloadAudio(item) {
+  const videoId = await resolveVideoId(item)
+  if (!videoId) throw new Error('لم يتم العثور على مصدر صوتي متاح')
+
+  try {
+    const b = await cnvAudio(videoId)
+    log('✅ cnv.cx')
+    return b
+  } catch (e) {
+    log('cnv.cx:', e.message)
+  }
+
+  const b = await ytdlpAudio(videoId)
+  log('✅ yt-dlp')
+  return b
 }
 
 let before = async (m, { conn }) => {
+  try {
+    const buttonId = getButtonId(m)
+    if (!buttonId || !buttonId.startsWith(PREFIX)) return false
+
+    const data = global.songCache.get(buttonId.slice(PREFIX.length))
+    if (!data) return false
+    global.songCache.delete(buttonId.slice(PREFIX.length))
+
+    await react(conn, m, '⬇️')
+    const status = await m.reply(`⏳ *جاري تحميل:*\n${data.title}`)
+
     try {
-        const buttonId = getButtonId(m)
-        if (!buttonId || !buttonId.startsWith('sc_')) return false
+      const buffer = await downloadAudio(data)
+      try { await conn.sendMessage(m.chat, { delete: status.key }) } catch {}
 
-        const key = buttonId.replace('sc_', '')
-        const cached = global.scSearchCache.get(key)
-        if (!cached) return false
-
-        global.scSearchCache.delete(key)
-
-        const { track } = cached
-        await m.react('⏳').catch(() => {})
-        const waitMsg = await m.reply(`⬇️ *جاري تنزيل:* ${track.title}...`)
-        const tmpFile = path.join(TMP, `sc_${process.pid}_${Date.now()}.mp3`)
-
-        try {
-            const { bytes, mimetype } = await downloadSoundCloudTrack(track, tmpFile)
-            const sizeMb = (bytes / (1024 * 1024)).toFixed(2)
-            const fileName = `${sanitizeFileName(track.title)}.mp3`
-
-            try { await conn.sendMessage(m.chat, { delete: waitMsg.key }) } catch {}
-
-            try {
-                await conn.sendMessage(
-                    m.chat,
-                    {
-                        audio: { url: tmpFile },
-                        mimetype,
-                        ptt: false,
-                        fileName
-                    },
-                    { quoted: m }
-                )
-            } catch {
-                await conn.sendMessage(
-                    m.chat,
-                    {
-                        audio: { url: tmpFile },
-                        mimetype,
-                        ptt: false
-                    },
-                    { quoted: m }
-                )
-            }
-
-            await conn.sendMessage(
-                m.chat,
-                {
-                    text: [
-                        `🎵 *العنوان:* ${track.title}`,
-                        `🎤 *الفنان:* ${track.artist}`,
-                        track.duration ? `⏱️ *المدة:* ${track.duration}` : '',
-                        `💾 *الحجم:* ${sizeMb} MB`,
-                        track.url ? `🔗 *الرابط:* ${track.url}` : ''
-                    ].filter(Boolean).join('\n')
-                },
-                { quoted: m }
-            )
-
-            await m.react('✅').catch(() => {})
-            return true
-        } catch (dlErr) {
-            try { fs.unlinkSync(tmpFile) } catch {}
-            try { await conn.sendMessage(m.chat, { delete: waitMsg.key }) } catch {}
-
-            const fallbackMsg = [
-                `🎵 *العنوان:* ${track.title}`,
-                `🎤 *الفنان:* ${track.artist}`,
-                track.duration ? `⏱️ *المدة:* ${track.duration}` : '',
-                track.url ? `🔗 *الرابط:* ${track.url}` : '',
-                ``,
-                `⚠️ *تعذر تنزيل الصوت:* ${dlErr.message}`
-            ].filter(Boolean).join('\n')
-
-            await conn.sendMessage(m.chat, { text: fallbackMsg }, { quoted: m })
-            await m.react('⚠️').catch(() => {})
-            return true
-        } finally {
-            setTimeout(() => {
-                try { fs.unlinkSync(tmpFile) } catch {}
-            }, 180000)
-        }
+      const safeName = String(data.title).replace(/[^\x20-\x7E]+/g, '_').replace(/[\\/:*?"<>|]/g, '').slice(0, 60) || 'song'
+      await conn.sendMessage(m.chat, {
+        audio: buffer,
+        mimetype: 'audio/mpeg',
+        fileName: `${safeName}.mp3`,
+        ptt: false
+      }, { quoted: m })
+      await react(conn, m, '✅')
     } catch (e) {
-        console.error('[soundcloud before]', e.message)
-        return false
+      console.error('[أغنية] download:', e.message)
+      try { await conn.sendMessage(m.chat, { delete: status.key }) } catch {}
+      await react(conn, m, '❌')
+      await m.reply(`❌ فشل التحميل\n\n${e.message}\n\n💡 جرب أغنية تانية`)
     }
+    return true
+  } catch (e) {
+    console.error('[أغنية] before:', e.message)
+    return false
+  }
 }
 
 let handler = async (m, { conn, text, usedPrefix, command }) => {
-    const query = (text || '').trim()
-    if (!query) {
-        return conn.reply(
-            m.chat,
-            `🎧 اكتب اسم أغنية للبحث في SoundCloud:\n*مثال:* ${usedPrefix + command} انا مين`,
-            m
-        )
+  const query = (text || '').trim()
+  if (!query) {
+    return m.reply(`🎧 *أغنية*\n\nاكتب اسم الأغنية\n💡 مثال: ${usedPrefix}${command} انا مين`)
+  }
+
+  await react(conn, m, '🔍')
+
+  try {
+    const results = await searchSongs(query)
+    if (!results.length) {
+      await react(conn, m, '❌')
+      return m.reply('❌ مفيش نتايج، جرب اسم تاني')
     }
 
-    await m.react('🔍')
-    const wait = await m.reply(`🔍 *جاري البحث في SoundCloud عن:* ${query}`)
+    const rows = results.map((v, i) => {
+      const id = genId()
+      global.songCache.set(id, { ...v, createdAt: Date.now() })
+      return {
+        title: `${i + 1}. ${v.title.slice(0, 50)}`,
+        description: `${v.author ? '👤 ' + v.author : ''}${v.duration ? ' | ⏱️ ' + v.duration : ''}`.slice(0, 70) || 'اضغط للتحميل',
+        id: `${PREFIX}${id}`
+      }
+    })
 
-    try {
-        const tracks = await searchSoundCloud(query)
-        if (!tracks.length) {
-            await m.react('❌')
-            return conn.sendMessage(m.chat, { text: '❌ مفيش نتائج.', edit: wait.key })
-        }
+    const thumb = await getThumb(results[0].thumbnail, results[0].videoId)
 
-        try { await conn.sendMessage(m.chat, { delete: wait.key }) } catch {}
-        await sendTracksMenu(conn, m, query, tracks)
-        await m.react('✅')
-    } catch (e) {
-        console.error('[soundcloud handler]', e.message)
-        await m.react('❌')
-        await conn.sendMessage(m.chat, { text: `❌ ${e.message}`, edit: wait.key })
-    }
+    await sendButtons(conn, m.chat, {
+      title: '🎧 SUKUNA MUSIC',
+      subtitle: query,
+      text: `✅ *تم البحث*\n\n🔍 *الأغنية:* ${query}\n📊 *النتائج:* ${results.length}\n\n👇 اضغط على الزرار واختار الأغنية`,
+      footer: '⛩️ SUKUNA BOT',
+      image: thumb || (results[0].videoId ? `https://i.ytimg.com/vi/${results[0].videoId}/hqdefault.jpg` : undefined),
+      buttons: [btn.list('🎵 عرض النتائج', [{ title: 'النتائج', rows }])]
+    }, m)
+
+    await react(conn, m, '✅')
+  } catch (e) {
+    console.error('[أغنية] search:', e)
+    await react(conn, m, '❌')
+    m.reply('❌ حصل خطأ: ' + (e?.message || e))
+  }
 }
 
-setInterval(() => {
-    const now = Date.now()
-    for (const [k, v] of global.scSearchCache.entries()) {
-        if (now - v.createdAt > TTL_MS) {
-            global.scSearchCache.delete(k)
-        }
-    }
+if (global.songCleanup) clearInterval(global.songCleanup)
+global.songCleanup = setInterval(() => {
+  const now = Date.now()
+  for (const [k, v] of global.songCache.entries()) {
+    if (now - v.createdAt > 30 * 60 * 1000) global.songCache.delete(k)
+  }
 }, 5 * 60 * 1000)
 
 handler.before = before
 handler.help = ['اغنية <اسم الأغنية>']
 handler.tags = ['downloader']
-handler.command = /^(اغنية|أغنية|sc|soundcloud)$/i
+handler.command = /^(اغنية|أغنية)$/i
 
 export default handler
