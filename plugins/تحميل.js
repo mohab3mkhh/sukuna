@@ -95,9 +95,9 @@ function sniff(b) {
     return null
 }
 
-async function downloadBuffer(url) {
+async function downloadBuffer(url, extraHeaders = {}) {
     const r = await axios.get(url, {
-        headers: { 'User-Agent': UA, Accept: '*/*' },
+        headers: { 'User-Agent': UA, Accept: '*/*', ...extraHeaders },
         responseType: 'arraybuffer', timeout: 120000, maxRedirects: 8,
         maxContentLength: MAX_MB * 1024 * 1024
     })
@@ -171,6 +171,49 @@ async function viaYtdlp(url, mode) {
     }
 }
 
+// ━━━━━━━━ يوتيوب عن طريق cnv.cx (من غير كوكيز) ━━━━━━━━
+const CNV_HEADERS = {
+    'User-Agent': UA,
+    'Origin': 'https://iframe.y2meta-uk.com',
+    'Referer': 'https://iframe.y2meta-uk.com/'
+}
+
+function ytId(url) {
+    const m = String(url).match(/(?:youtube\.com\/(?:watch\?(?:.*&)?v=|embed\/|shorts\/|live\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/)
+    return m ? m[1] : null
+}
+
+async function viaCnv(url, mode) {
+    const id = ytId(url)
+    if (!id) throw new Error('cnv: مش لاقي ID الفيديو في الرابط')
+    const k = await axios.get(`https://cnv.cx/v2/sanity/key?id=${id}`, { headers: CNV_HEADERS, timeout: 20000 })
+    if (!k.data?.key) throw new Error('cnv: فشل جلب المفتاح')
+    await new Promise(r => setTimeout(r, 1500))
+
+    const params = new URLSearchParams({
+        link: `https://youtu.be/${id}`,
+        format: mode === 'audio' ? 'mp3' : 'mp4',
+        videoQuality: '720',
+        filenameStyle: 'pretty',
+        vCodec: 'h264'
+    })
+    if (mode === 'audio') params.set('audioBitrate', '256')
+
+    const r = await axios.post('https://cnv.cx/v2/converter', params.toString(), {
+        headers: { ...CNV_HEADERS, 'Content-Type': 'application/x-www-form-urlencoded', accept: '*/*', key: k.data.key },
+        timeout: 120000,
+        validateStatus: () => true
+    })
+    if (r.status === 200 && r.data?.url) {
+        return {
+            links: [{ url: r.data.url, key: 'download' }],
+            title: String(r.data.filename || '').replace(/\.(mp4|mp3)$/i, ''),
+            dlHeaders: { Referer: 'https://cnv.cx/', Origin: 'https://cnv.cx' }
+        }
+    }
+    throw new Error('cnv: ' + (r.data?.errorMsg || `HTTP ${r.status}`))
+}
+
 // ━━━━━━━━ المزوّدين ━━━━━━━━
 async function viaPrexzy(url) {
     const r = await axios.get(PREXZY_TIKTOK, { params: { url }, timeout: 30000, validateStatus: () => true })
@@ -202,11 +245,13 @@ const P = {
     btchTW:  { name: 'btch',    run: viaPackage('btch-downloader', 'twitter') },
     igUrl:   { name: 'instagram-url-direct', run: viaPackage('instagram-url-direct', 'instagramGetUrl', m => m.default) },
     tobyTT:  { name: 'tiktok-api-dl', run: viaPackage('@tobyg74/tiktok-api-dl', 'Downloader', m => m.default?.Downloader ? ((u) => m.default.Downloader(u, { version: 'v3' })) : null) },
+    cnv:     { name: 'cnv',     run: viaCnv },
     ytdlp:   { name: 'yt-dlp',  run: viaYtdlp }
 }
 
 function chainFor(host) {
     if (/tiktok\.com$/.test(host)) return [P.prexzy, P.tobyTT, P.btchTT, P.ytdlp]
+    if (/youtube\.com$|youtu\.be$/.test(host)) return [P.cnv, P.ytdlp]
     if (/instagram\.com$/.test(host)) return [P.ytdlp, P.igUrl, P.btchIG]
     if (/facebook\.com$|fb\.watch$/.test(host)) return [P.btchFB, P.ytdlp]
     if (/twitter\.com$|x\.com$/.test(host)) return [P.btchTW, P.ytdlp]
@@ -223,7 +268,7 @@ async function collect(res, mode) {
         if (wantDone()) break
         if (files.filter(f => f.kind === 'image').length >= MAX_IMAGES) break
         try {
-            const b = await downloadBuffer(l.url)
+            const b = await downloadBuffer(l.url, res.dlHeaders)
             const t = sniff(b)
             if (t) files.push({ buf: b, ...t })
         } catch (e) { log('رابط فشل:', shortErr(e)) }
