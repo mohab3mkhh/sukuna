@@ -92,7 +92,6 @@ function normalizeTrack(raw, index) {
     ).trim()
 
     const id = raw?.id ? String(raw.id).trim() : ''
-    const artwork = String(raw?.artwork || raw?.thumbnail || raw?.artwork_url || raw?.image || '').trim()
 
     return {
         index: index + 1,
@@ -100,8 +99,7 @@ function normalizeTrack(raw, index) {
         title,
         artist,
         duration,
-        url,
-        artwork
+        url
     }
 }
 
@@ -133,7 +131,7 @@ async function searchSoundCloud(query) {
     return list.slice(0, MAX_ITEMS).map((item, i) => normalizeTrack(item, i))
 }
 
-async function downloadStreamToFile(audioUrl, referer, outFilePath) {
+async function downloadAudioFromUrl(audioUrl, referer, outFilePath) {
     const res = await axios.get(audioUrl, {
         responseType: 'stream',
         timeout: 180000,
@@ -153,7 +151,7 @@ async function downloadStreamToFile(audioUrl, referer, outFilePath) {
 
     const contentType = String(res.headers['content-type'] || '').toLowerCase()
     if (contentType.includes('text/html') || contentType.includes('application/json')) {
-        throw new Error('الرابط لا يرجع ملفاً صوتياً مباشراً')
+        throw new Error('الرابط ليس ملفاً صوتياً مباشراً')
     }
 
     let bytes = 0
@@ -178,7 +176,7 @@ async function downloadStreamToFile(audioUrl, referer, outFilePath) {
 
     if (bytes < 10000) {
         try { fs.unlinkSync(outFilePath) } catch {}
-        throw new Error('الملف الصوتي صغير جداً أو غير صالح')
+        throw new Error('الملف الصوتي صغير جداً')
     }
 
     const mime = contentType.includes('audio/')
@@ -191,10 +189,11 @@ async function downloadStreamToFile(audioUrl, referer, outFilePath) {
 async function downloadSoundCloudTrack(track, outFilePath) {
     const paramAttempts = [
         ...(track.url ? [{ url: track.url }] : []),
-        ...(track.id ? [{ id: track.id, mode: 'audio', quality: 'hq' }] : [])
+        ...(track.id ? [{ id: track.id, mode: 'audio', quality: 'hq' }] : []),
+        ...(track.id ? [{ id: track.id, mode: 'audio', quality: 'lq' }] : [])
     ]
 
-    let lastApiError = ''
+    let lastError = ''
 
     for (const params of paramAttempts) {
         try {
@@ -209,13 +208,18 @@ async function downloadSoundCloudTrack(track, outFilePath) {
                 validateStatus: () => true
             })
 
-            if (res.status >= 400 || !res.data) {
-                lastApiError = `HTTP ${res.status}`
+            const buf = Buffer.from(res.data || [])
+            const contentType = String(res.headers['content-type'] || '').toLowerCase()
+
+            if (res.status >= 400) {
+                let errMsg = `HTTP ${res.status}`
+                try {
+                    const errJson = JSON.parse(buf.toString('utf8'))
+                    errMsg = errJson?.error || errJson?.message || errMsg
+                } catch {}
+                lastError = errMsg
                 continue
             }
-
-            const buf = Buffer.from(res.data)
-            const contentType = String(res.headers['content-type'] || '').toLowerCase()
 
             if (contentType.includes('audio/') || (buf.length > 50000 && !contentType.includes('application/json') && buf[0] !== 0x7b)) {
                 if (buf.length > MAX_AUDIO_BYTES) {
@@ -237,7 +241,7 @@ async function downloadSoundCloudTrack(track, outFilePath) {
                 }
 
                 if (json && json.status === false) {
-                    lastApiError = json.error || json.message || `statusCode ${json.statusCode || 400}`
+                    lastError = json.error || json.message || `statusCode ${json.statusCode || 400}`
                     continue
                 }
 
@@ -248,21 +252,24 @@ async function downloadSoundCloudTrack(track, outFilePath) {
                     d?.audio ||
                     d?.audioUrl ||
                     d?.stream ||
-                    d?.streams?.hq ||
-                    d?.streams?.lq ||
                     ''
 
                 if (typeof audioUrl === 'string' && /^https?:\/\//i.test(audioUrl.trim())) {
-                    return await downloadStreamToFile(audioUrl.trim(), track.url || 'https://soundcloud.com/', outFilePath)
+                    return await downloadAudioFromUrl(audioUrl.trim(), track.url || 'https://soundcloud.com/', outFilePath)
+                }
+
+                const streamUrl = d?.streams?.hq || d?.streams?.lq || ''
+                if (typeof streamUrl === 'string' && /^https?:\/\//i.test(streamUrl.trim())) {
+                    return await downloadAudioFromUrl(streamUrl.trim(), track.url || 'https://soundcloud.com/', outFilePath)
                 }
             }
         } catch (err) {
             if (err.message.includes('تجاوز')) throw err
-            lastApiError = err.message
+            lastError = err.message
         }
     }
 
-    throw new Error(lastApiError || 'تعذر جلب ملف الصوت من /download/soundcloud')
+    throw new Error(lastError || 'تعذر جلب ملف الصوت من /download/soundcloud')
 }
 
 async function sendTracksMenu(conn, m, query, tracks) {
