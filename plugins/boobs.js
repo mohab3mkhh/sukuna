@@ -18,47 +18,47 @@ let handler = async (m, { conn, isROwner, isOwner }) => {
     try {
         await m.react('⏳');
 
-        // الـ API بيرجع binary مباشرة (gif/image/video) مش JSON
+        // الـ API بيرجع JSON فيه رابط رغم إن content-type بيقول image/gif
         const res = await axios.get(endpoint, {
             timeout: 20000,
-            responseType: 'arraybuffer',
+            // بدون responseType عشان axios يفسره كـ JSON تلقائياً
             headers: {
                 'User-Agent': 'Mozilla/5.0',
-                'Accept': '*/*'
+                'Accept': 'application/json, */*'
             },
             validateStatus: () => true
         });
 
         if (res.status >= 400) throw new Error(`HTTP ${res.status}`);
 
-        const buffer      = Buffer.from(res.data);
-        const contentType = String(res.headers?.['content-type'] || '').toLowerCase().split(';')[0].trim();
+        const data = res.data;
+        console.log('[boobs] data:', JSON.stringify(data)?.slice(0, 300));
 
-        console.log('[boobs] content-type:', contentType, '| size:', buffer.length);
+        // طلّع الرابط من الـ JSON
+        const mediaUrl =
+            data?.url        ||
+            data?.result     ||
+            data?.image      ||
+            data?.video      ||
+            data?.link       ||
+            data?.data?.url  ||
+            (typeof data === 'string' && data.startsWith('http') ? data : null);
 
-        if (buffer.length < 500) throw new Error('الملف فارغ أو صغير جداً');
+        if (!mediaUrl) throw new Error('مش لاقي رابط — JSON: ' + JSON.stringify(data)?.slice(0, 100));
 
-        const isVideo = contentType.includes('video');
-        const isGif   = contentType.includes('gif');
+        console.log('[boobs] mediaUrl:', mediaUrl);
+
+        const isVideo = /\.(mp4|webm|mov)(\?|$)/i.test(mediaUrl);
 
         if (isVideo) {
             await conn.sendMessage(m.chat, {
-                video: buffer,
+                video: { url: mediaUrl },
                 mimetype: 'video/mp4',
                 caption
             }, { quoted: m });
-        } else if (isGif) {
-            // GIF نبعته كـ image/gif مباشرة
-            await conn.sendMessage(m.chat, {
-                image: buffer,
-                mimetype: 'image/gif',
-                caption
-            }, { quoted: m });
         } else {
-            // image (jpeg, png, webp...)
             await conn.sendMessage(m.chat, {
-                image: buffer,
-                mimetype: contentType || 'image/jpeg',
+                image: { url: mediaUrl },
                 caption
             }, { quoted: m });
         }
