@@ -1,6 +1,6 @@
 /**
  * plugins/apk.js
- * أمر .apk كامل: بحث في AN1 + تنزيل وإرسال ملف APK (بحد أقصى 1200MB) - للمطور فقط
+ * أمر .apk متاح للجميع: بحث في AN1 + تنزيل وإرسال ملف APK
  */
 
 import axios from 'axios'
@@ -204,7 +204,6 @@ async function downloadApkToFile(apkUrl, referer, outFilePath) {
         res.data.pipe(writer)
     })
 
-    // ملفات APK تبدأ بتوقيع ZIP/APK (PK => 0x50 0x4b)
     if (
         downloadedBytes < 50000 ||
         !firstTwoBytes ||
@@ -240,7 +239,7 @@ async function sendApkMenu(conn, m, query, items) {
         title: '📦 APK Downloader & Search',
         subtitle: query,
         text: `🔍 *بحث عن:* ${query}\n📊 *النتائج:* ${items.length}\n💾 *الحد الأقصى للتحميل:* ${MAX_APK_MB} MB\n\n👇 اختر تطبيقاً أو لعبة لتنزيل ملف APK:`,
-        footer: '🧪 تجربة مطور • APK',
+        footer: '📦 APK Downloader',
         ...(coverImage ? { image: coverImage } : {}),
         buttons: [
             btn.list('📋 اختر تطبيقاً', [
@@ -341,11 +340,7 @@ let before = async (m, { conn }) => {
     }
 }
 
-let handler = async (m, { conn, text, usedPrefix, command, isROwner, isOwner }) => {
-    if (!isROwner && !isOwner) {
-        return conn.reply(m.chat, '❌ هذا الأمر للمطور فقط.', m)
-    }
-
+let handler = async (m, { conn, text, usedPrefix, command }) => {
     const query = (text || '').trim()
     if (!query) {
         return conn.reply(
@@ -386,8 +381,7 @@ setInterval(() => {
 
 handler.before = before
 handler.help = ['apk <اسم اللعبة أو التطبيق>']
-handler.tags = ['owner']
+handler.tags = ['downloader']
 handler.command = /^apk$/i
-handler.owner = true
 
 export default handler
