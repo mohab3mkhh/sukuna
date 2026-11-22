@@ -1,328 +1,125 @@
-/**
- * plugins/تيكتوك.js
- * بحث في تيكتوك (prexzyapis + tikwm مباشر كبديل + yt-dlp كاحتياط) مع إرسال الفيديو
- */
+// plugins/تيكتوك_بحث.js
+// 🎵 بحث تيك توك: Prexzy API أولاً، ولو فشل (زي 403 من tikwm) بيجرّب tikwm مباشرة
+//   .تيك <كلمة البحث>   (أو .ttsearch / .tiktoksearch)
+//   → قائمة فيديوهات → تختار → البوت يبعتلك الفيديو
 
 import axios from 'axios'
-import fs from 'fs'
-import os from 'os'
-import path from 'path'
-import { execFile } from 'child_process'
-import { sendButtons, btn, getButtonId } from '../lib/buttons.js'
+import { sendList } from '../lib/buttons.js'
 
-const SEARCH_ENDPOINT = 'https://prexzyapis.com/search/tiktoksearch'
-const TIKWM_SEARCH = 'https://tikwm.com/api/feed/search'
-const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
-const MAX_MB = 80
-const PREFIX = 'tt_'
+const PREXZY = 'https://prexzyapis.com/search/tiktoksearch'
+const TIKWM = 'https://tikwm.com/api/feed/search'
+const FOOTER = '⛩️ SUKUNA BOT ⛩️'
+const MAX_RESULTS = 10
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36'
 
-const YTDLP = fs.existsSync('/root/.nix-profile/bin/yt-dlp') ? '/root/.nix-profile/bin/yt-dlp' : 'yt-dlp'
-const COOKIES = '/app/cookies.txt'
+if (!global.ttCache) global.ttCache = new Map()
 
-if (!global.ttSearchCache) global.ttSearchCache = new Map()
+const abs = u => (typeof u === 'string' && u.startsWith('/') ? 'https://tikwm.com' + u : u)
+const isHttp = v => typeof v === 'string' && /^https?:\/\//i.test(v)
 
-const genId = () => Math.random().toString(36).slice(2, 10)
-const react = async (conn, m, emoji) => {
-  try { await conn.sendMessage(m.chat, { react: { text: emoji, key: m.key } }) } catch {}
-}
-
-function parseListFromResponse(payload) {
-  if (!payload || typeof payload !== 'object') return []
-  if (payload?.data?.name === 'AxiosError' || payload?.data?.status === 403) return []
-
-  return (
-    (Array.isArray(payload?.data?.videos) && payload.data.videos) ||
-    (Array.isArray(payload?.data?.aweme_list) && payload.data.aweme_list) ||
-    (Array.isArray(payload?.data) && payload.data) ||
-    (Array.isArray(payload?.result) && payload.result) ||
-    (Array.isArray(payload?.results) && payload.results) ||
-    []
-}
-
-function normalizeItems(rawList) {
-  return rawList.slice(0, 10).map((v, idx) => {
-    const pageUrl = String(
-      v?.webpage_url ||
-      v?.url ||
-      (v?.author?.unique_id && v?.video_id ? `https://www.tiktok.com/@${v.author.unique_id}/video/${v.video_id}` : '') ||
-      ''
-    ).trim()
-
-    const directPlay = String(
-      v?.play ||
-      v?.hdplay ||
-      v?.wmplay ||
-      v?.video?.play_addr?.url_list?.[0] ||
-      v?.videoUrl ||
-      ''
-    ).trim()
-
-    const coverUrl = String(
-      v?.cover ||
-      v?.origin_cover ||
-      v?.ai_dynamic_cover ||
-      v?.video?.cover?.url_list?.[0] ||
-      v?.thumbnail ||
-      ''
-    ).trim()
-
-    const author = String(
-      v?.author?.nickname ||
-      v?.author?.unique_id ||
-      v?.author ||
-      v?.nickname ||
-      'غير معروف'
-    ).trim()
-
-    const title = String(
-      v?.title ||
-      v?.desc ||
-      `فيديو تيكتوك ${idx + 1}`
-    ).trim()
-
-    return {
-      title,
-      author,
-      pageUrl: /^https?:\/\//i.test(pageUrl) ? pageUrl : '',
-      directPlay: /^https?:\/\//i.test(directPlay) ? directPlay : '',
-      coverUrl: /^https?:\/\//i.test(coverUrl) ? coverUrl : ''
+function findArray(o, depth = 0) {
+  if (!o || depth > 4) return null
+  if (Array.isArray(o)) return o.length && typeof o[0] === 'object' ? o : null
+  if (typeof o === 'object') {
+    for (const k of ['videos', 'results', 'result', 'data', 'items']) {
+      if (k in o) { const r = findArray(o[k], depth + 1); if (r) return r }
     }
-  }).filter(item => item.pageUrl || item.directPlay || item.title)
-}
-
-async function searchViaPrexzy(query) {
-  const res = await axios.get(SEARCH_ENDPOINT, {
-    params: { q: query },
-    timeout: 25000,
-    headers: { 'User-Agent': UA, Accept: 'application/json' },
-    validateStatus: () => true
-  })
-  if (res.status >= 400) return []
-  return normalizeItems(parseListFromResponse(res.data))
-}
-
-async function searchViaTikwmDirect(query) {
-  const form = new URLSearchParams({
-    keywords: query,
-    count: '10',
-    cursor: '0',
-    HD: '1'
-  })
-  const res = await axios.post(TIKWM_SEARCH, form.toString(), {
-    timeout: 25000,
-    headers: {
-      'User-Agent': UA,
-      'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-      'Accept': 'application/json, text/plain, */*',
-      'Origin': 'https://www.tikwm.com',
-      'Referer': 'https://www.tikwm.com/'
-    },
-    validateStatus: () => true
-  })
-  if (res.status >= 400) return []
-  return normalizeItems(parseListFromResponse(res.data))
-}
-
-function runYtDlp(args) {
-  return new Promise((resolve, reject) => {
-    execFile(YTDLP, args, { timeout: 180000, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
-      if (err) return reject(new Error((stderr || err.message).toString().trim().split('\n').slice(-2).join(' ').slice(0, 250)))
-      resolve(stdout)
-    })
-  })
-}
-
-async function searchAndDownloadViaYtDlp(query, explicitUrl = '') {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tt-'))
-  const outTemplate = path.join(dir, 'video.%(ext)s')
-  const target = explicitUrl || `ytsearch10:tiktok ${query}`
-
-  const args = [
-    target,
-    '--no-playlist',
-    '--no-warnings',
-    '--max-filesize', `${MAX_MB}M`,
-    '-f', 'mp4/best[ext=mp4]/best',
-    '-o', outTemplate
-  ]
-  if (fs.existsSync(COOKIES)) args.push('--cookies', COOKIES)
-
-  try {
-    await runYtDlp(args)
-    const files = fs.readdirSync(dir).filter(f => /\.(mp4|mkv|webm|mov)$/i.test(f))
-    if (!files.length) throw new Error('لم يتم تنزيل أي ملف فيديو')
-    const filePath = path.join(dir, files[0])
-    const buf = fs.readFileSync(filePath)
-    if (buf.length < 10000) throw new Error('ملف الفيديو غير صالح')
-    return buf
-  } finally {
-    try { fs.rmSync(dir, { recursive: true, force: true }) } catch {}
+    for (const v of Object.values(o)) { const r = findArray(v, depth + 1); if (r) return r }
   }
-}
-
-async function searchTikTok(query) {
-  const viaPrexzy = await searchViaPrexzy(query)
-  if (viaPrexzy.length) return viaPrexzy
-
-  const viaTikwm = await searchViaTikwmDirect(query)
-  if (viaTikwm.length) return viaTikwm
-
-  // بديل مباشر عبر yt-dlp في حال حجب tikwm للـ IP
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tt-list-'))
-  try {
-    const raw = await runYtDlp([
-      `ytsearch10:tiktok ${query}`,
-      '--dump-json',
-      '--no-playlist',
-      '--no-warnings'
-    ])
-    const lines = String(raw).split('\n').map(l => l.trim()).filter(Boolean)
-    const items = []
-    for (const line of lines) {
-      try {
-        const j = JSON.parse(line)
-        const u = j.webpage_url || j.url || ''
-        if (!/^https?:\/\//i.test(u)) continue
-        items.push({
-          title: String(j.title || j.fulltitle || `فيديو ${items.length + 1}`).trim(),
-          author: String(j.uploader || j.channel || 'TikTok').trim(),
-          pageUrl: u,
-          directPlay: '',
-          coverUrl: String(j.thumbnail || '').trim()
-        })
-        if (items.length >= 10) break
-      } catch {}
-    }
-    return items
-  } catch {
-    return []
-  } finally {
-    try { fs.rmSync(dir, { recursive: true, force: true }) } catch {}
-  }
-}
-
-async function getThumbBuffer(url) {
-  if (!url || !/^https?:\/\//i.test(url)) return null
-  try {
-    const r = await axios.get(url, {
-      headers: { 'User-Agent': UA },
-      responseType: 'arraybuffer',
-      timeout: 15000,
-      validateStatus: () => true
-    })
-    if (r.status < 400 && r.data?.length > 1000) return Buffer.from(r.data)
-  } catch {}
   return null
 }
 
-async function fetchVideoBuffer(item) {
-  if (item.directPlay) {
-    try {
-      const vidRes = await axios.get(item.directPlay, {
-        responseType: 'arraybuffer',
-        timeout: 120000,
-        headers: { 'User-Agent': UA, Referer: 'https://www.tiktok.com/' },
-        validateStatus: () => true
-      })
-      if (vidRes.status < 400 && vidRes.data && vidRes.data.length > 10000) {
-        return Buffer.from(vidRes.data)
-      }
-    } catch {}
-  }
-
-  return await searchAndDownloadViaYtDlp(item.title, item.pageUrl)
-}
-
-let before = async (m, { conn }) => {
-  try {
-    const buttonId = getButtonId(m)
-    if (!buttonId || !buttonId.startsWith(PREFIX)) return false
-
-    const item = global.ttSearchCache.get(buttonId.slice(PREFIX.length))
-    if (!item) return false
-    global.ttSearchCache.delete(buttonId.slice(PREFIX.length))
-
-    await react(conn, m, '⏳')
-    const wait = await m.reply(`⏳ *جاري تحميل الفيديو:*\n${item.title.slice(0, 60)}`)
-
-    try {
-      const videoBuf = await fetchVideoBuffer(item)
-      try { await conn.sendMessage(m.chat, { delete: wait.key }) } catch {}
-
-      await conn.sendMessage(m.chat, {
-        video: videoBuf,
-        mimetype: 'video/mp4',
-        caption: `🎵 *العنوان:* ${item.title}\n👤 *الناشر:* ${item.author}`
-      }, { quoted: m })
-
-      await react(conn, m, '✅')
-    } catch (e) {
-      try { await conn.sendMessage(m.chat, { delete: wait.key }) } catch {}
-      await react(conn, m, '❌')
-      await m.reply(`❌ *تعذر إرسال الفيديو:*\n${e.message}`)
-    }
-    return true
-  } catch (e) {
-    console.error('[تيكتوك] before:', e.message)
-    return false
+function normalize(v) {
+  const video = abs(v.play || v.nowm || v.no_watermark || v.video || v.videoUrl || v.video_url || v.download || v.wmplay || v.url)
+  if (!isHttp(video)) return null
+  const author = v.author?.unique_id || v.author?.nickname || v.author?.username || (typeof v.author === 'string' ? v.author : '') || v.username || ''
+  return {
+    title: String(v.title || v.desc || v.description || 'TikTok').replace(/\s+/g, ' ').slice(0, 100),
+    author, video,
+    cover: abs(v.cover || v.thumbnail || v.origin_cover || ''),
+    plays: v.play_count ?? v.plays ?? v.views ?? null,
+    likes: v.digg_count ?? v.likes ?? null,
+    duration: v.duration ?? null
   }
 }
 
-let handler = async (m, { conn, text, usedPrefix, command }) => {
-  const query = (text || '').trim()
-  if (!query) {
-    return m.reply(`🎵 *بحث تيكتوك*\n\nاكتب كلمة البحث\n💡 مثال: ${usedPrefix}${command} تصميم انمي`)
+async function viaPrexzy(q) {
+  const r = await axios.get(PREXZY, { params: { q }, timeout: 25000, validateStatus: () => true })
+  const items = (findArray(r.data?.data?.videos ? r.data.data : r.data) || []).map(normalize).filter(Boolean)
+  if (!items.length) { console.log('[تيك] Prexzy:', JSON.stringify(r.data?.data?.message || r.data).slice(0, 200)); throw new Error(r.data?.data?.message || 'مفيش نتائج') }
+  return items
+}
+
+async function viaTikwm(q) {
+  const body = new URLSearchParams({ keywords: q, count: '12', cursor: '0', HD: '1' })
+  const r = await axios.post(TIKWM, body.toString(), { headers: { 'User-Agent': UA, 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' }, timeout: 25000, validateStatus: () => true })
+  const items = (r.data?.data?.videos || []).map(normalize).filter(Boolean)
+  if (!items.length) throw new Error(r.data?.msg || `tikwm HTTP ${r.status}`)
+  return items
+}
+
+async function search(q) {
+  const errs = []
+  for (const fn of [viaPrexzy, viaTikwm]) {
+    try { return await fn(q) } catch (e) { errs.push(e.message) }
+  }
+  throw new Error(errs.join(' | '))
+}
+
+async function sendVideo(conn, m, it) {
+  const caption = `🎵 *${it.title}*\n${it.author ? `👤 @${it.author}\n` : ''}\n> ${FOOTER}`
+  try { await conn.sendMessage(m.chat, { video: { url: it.video }, caption, mimetype: 'video/mp4' }, { quoted: m }) }
+  catch {
+    const r = await axios.get(it.video, { responseType: 'arraybuffer', timeout: 60000, maxContentLength: 60 * 1024 * 1024, headers: { 'User-Agent': UA } })
+    await conn.sendMessage(m.chat, { video: Buffer.from(r.data), caption, mimetype: 'video/mp4' }, { quoted: m })
+  }
+}
+
+const fmtN = n => (n == null ? '' : Number(n) >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : Number(n) >= 1e3 ? (n / 1e3).toFixed(1) + 'K' : String(n))
+
+const handler = async (m, { conn, args, text, usedPrefix = '.', command }) => {
+  const reply = t => conn.sendMessage(m.chat, { text: t }, { quoted: m })
+
+  if (/^ttget$/i.test(command)) {
+    const it = global.ttCache.get(String(args?.[0]))
+    if (!it) return reply(`⌛ النتيجة دي انتهت، اعمل بحث جديد بـ *${usedPrefix}تيك <كلمة>*`)
+    try { await m.react?.('⏳') } catch {}
+    try { await sendVideo(conn, m, it); try { await m.react?.('✅') } catch {} }
+    catch (e) { try { await m.react?.('❌') } catch {}; reply(`❌ معرفتش أبعت الفيديو: ${e.message}\n🔗 ${it.video}\n\n> ${FOOTER}`) }
+    return
   }
 
-  await react(conn, m, '🔍')
+  const q = String(text || (args || []).join(' ')).trim()
+  if (!q) return reply(`🎵 *بحث تيك توك*\n\nاكتب:\n*${usedPrefix}${command} <كلمة البحث>*\n\nمثال:\n*${usedPrefix}${command} كورة*\n\n> ${FOOTER}`)
 
+  try { await m.react?.('🔍') } catch {}
   try {
-    const items = await searchTikTok(query)
-    if (!items.length) {
-      await react(conn, m, '❌')
-      return m.reply('❌ لا توجد نتائج متاحة حالياً.')
-    }
-
-    const rows = items.map((v, i) => {
-      const id = genId()
-      global.ttSearchCache.set(id, { ...v, createdAt: Date.now() })
-      return {
-        title: `${i + 1}. ${v.title.slice(0, 50)}`,
-        description: `👤 ${v.author.slice(0, 60)}`,
-        id: `${PREFIX}${id}`
-      }
+    const items = (await search(q)).slice(0, MAX_RESULTS)
+    const stamp = Date.now().toString(36)
+    const rows = items.map((it, i) => {
+      const id = `${stamp}${i}`
+      global.ttCache.set(id, it)
+      const stats = [it.author && `@${it.author}`, it.plays != null && `👁 ${fmtN(it.plays)}`, it.likes != null && `❤️ ${fmtN(it.likes)}`].filter(Boolean).join(' | ')
+      return { header: `🎵 ${i + 1}`, title: it.title.slice(0, 60), description: stats.slice(0, 70) || 'اضغط لإرسال الفيديو', id: `${usedPrefix}ttget ${id}` }
     })
+    if (global.ttCache.size > 400) for (const k of [...global.ttCache.keys()].slice(0, 200)) global.ttCache.delete(k)
 
-    const thumb = await getThumbBuffer(items[0].coverUrl)
-
-    await sendButtons(conn, m.chat, {
-      title: '🎵 TikTok Search',
-      subtitle: query,
-      text: `✅ *تم البحث*\n\n🔍 *الكلمة:* ${query}\n📊 *النتائج:* ${items.length}\n\n👇 اختر فيديو من القائمة:`,
-      footer: '⛩️ SUKUNA BOT',
-      ...(thumb ? { image: thumb } : {}),
-      buttons: [btn.list('🎬 عرض النتائج', [{ title: 'النتائج', rows }])]
-    }, m)
-
-    await react(conn, m, '✅')
+    await sendList(conn, m.chat, {
+      text: `🎵 *نتائج تيك توك:* ${q}\n📦 عدد النتائج: ${items.length}\n\nاختار فيديو من القائمة 👇`,
+      footer: FOOTER,
+      title: '🎵 بحث تيك توك',
+      buttonText: '「 قائمة الفيديوهات 」',
+      sections: [{ title: `نتائج (${items.length})`, highlight_label: 'SUKUNA BOT', rows }],
+      quoted: m
+    })
+    try { await m.react?.('✅') } catch {}
   } catch (e) {
-    console.error('[تيكتوك] search:', e.message)
-    await react(conn, m, '❌')
-    await m.reply(`❌ *فشل البحث في تيكتوك:*\n${e.message}`)
+    try { await m.react?.('❌') } catch {}
+    reply(`❌ البحث فشل: ${e.message}\n\n> ${FOOTER}`)
   }
 }
 
-if (global.ttCleanup) clearInterval(global.ttCleanup)
-global.ttCleanup = setInterval(() => {
-  const now = Date.now()
-  for (const [k, v] of global.ttSearchCache.entries()) {
-    if (now - v.createdAt > 30 * 60 * 1000) global.ttSearchCache.delete(k)
-  }
-}, 5 * 60 * 1000)
-
-handler.before = before
-handler.help = ['تيكتوك <كلمة البحث>']
-handler.tags = ['search']
-handler.command = /^(تيكتوك|tiktok|ttsearch)$/i
-
+handler.command = /^(تيك|ttsearch|tiktoksearch|ttget)$/i
+handler.help = ['تيك <كلمة>']
+handler.tags = ['tools']
 export default handler
