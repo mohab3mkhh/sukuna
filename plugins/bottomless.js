@@ -50,7 +50,7 @@ let handler = async (m, { conn, isROwner, isOwner }) => {
         return conn.reply(m.chat, '❌ هذا الأمر للمطور فقط.', m)
     }
 
-    const title    = "Boobs"
+    const title    = "bottomless"
     const emoji    = "🔞"
     const endpoint = "https://prexzyapis.com/nsfw/bottomless"
     const caption  = `${emoji} *${title}*\n\n> ⛩️ SUKUNA BOT • 18+`
@@ -76,7 +76,7 @@ let handler = async (m, { conn, isROwner, isOwner }) => {
         const isMp4  = magic.startsWith('00000018') || magic.startsWith('00000020')
         const isPng  = magic.startsWith('89504e47')
 
-        console.log('[boobs] magic:', magic, '| size:', buffer.length)
+        console.log('[bottomless] magic:', magic, '| size:', buffer.length)
 
         if (isGif) {
             // GIF → MP4 عشان يتشغل صح في واتساب
