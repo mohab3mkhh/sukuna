@@ -1,229 +1,212 @@
-// plugins/edit-search.js
-// ⛩️ SUKUNA BOT - بحث إيديتات تيك توك (كاروسيل) 🎬
-// نفس أسلوب أمر ريلز: كروت فيديو بدون أزرار + relayMessage
+/**
+ * plugins/تيكتوك.js
+ * بحث في تيكتوك عبر /search/tiktoksearch مع معالجة خطأ 403 من المصدر وإرسال الفيديو
+ */
 
-import * as _baileys from '@whiskeysockets/baileys'
+import axios from 'axios'
+import { sendButtons, btn, getButtonId } from '../lib/buttons.js'
 
-const B = _baileys.generateWAMessageFromContent ? _baileys : (_baileys.default || _baileys)
-const { proto, generateWAMessageFromContent, generateWAMessageContent } = B
+const SEARCH_ENDPOINT = 'https://prexzyapis.com/search/tiktoksearch'
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
+const PREFIX = 'tt_'
 
-const CARD_COUNT = 6      // عدد الكروت في الكاروسيل (زي الريلز)
-const SEARCH_COUNT = 15   // عدد النتايج اللي بنبحث فيها (احتياطي لو بعضها فشل)
-const CONCURRENCY = 3
-const CACHE_TTL = 30 * 60 * 1000
-const CACHE = new Map()
+if (!global.ttSearchCache) global.ttSearchCache = new Map()
 
-const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36'
-
-const sleep = ms => new Promise(r => setTimeout(r, ms))
-const isMp4 = buf => buf && buf.length > 12 && buf.subarray(4, 8).toString('latin1') === 'ftyp'
-
-function formatNum(n) {
-    if (!n) return '0'
-    if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
-    if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K'
-    return n.toString()
+const genId = () => Math.random().toString(36).slice(2, 10)
+const react = async (conn, m, emoji) => {
+  try { await conn.sendMessage(m.chat, { react: { text: emoji, key: m.key } }) } catch {}
 }
 
-// ━━━ البحث ━━━
-async function searchTikTok(query, count = SEARCH_COUNT) {
-    const cached = CACHE.get(query)
-    if (cached && Date.now() - cached.time < CACHE_TTL) return cached.results.slice(0, count)
+function normalizeTikTokItems(payload) {
+  const rawList =
+    (Array.isArray(payload?.data?.videos) && payload.data.videos) ||
+    (Array.isArray(payload?.data?.aweme_list) && payload.data.aweme_list) ||
+    (Array.isArray(payload?.data) && payload.data) ||
+    (Array.isArray(payload?.result) && payload.result) ||
+    (Array.isArray(payload?.results) && payload.results) ||
+    []
 
-    const now = Math.floor(Date.now() / 1000)
-    const oneYearAgo = now - 365 * 24 * 60 * 60
+  return rawList.slice(0, 10).map((v, idx) => {
+    const videoUrl = String(
+      v?.play ||
+      v?.wmplay ||
+      v?.hdplay ||
+      v?.video?.play_addr?.url_list?.[0] ||
+      v?.videoUrl ||
+      v?.url ||
+      ''
+    ).trim()
 
-    const res = await fetch('https://www.revid.ai/api/tiktok-search', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'User-Agent': UA,
-            'Referer': 'https://www.revid.ai/tiktok-video-finder',
-            'Accept': 'application/json'
-        },
-        body: JSON.stringify({
-            keywords: query,
-            filtersFast: ['nbChar > 10', "lang = 'en'", `createTime >= ${oneYearAgo} AND createTime <= ${now}`],
-            extraParams: { sort: '' }
-        }),
-        signal: AbortSignal.timeout(30000)
-    })
-    if (!res.ok) throw new Error('HTTP ' + res.status)
+    const coverUrl = String(
+      v?.cover ||
+      v?.origin_cover ||
+      v?.ai_dynamic_cover ||
+      v?.video?.cover?.url_list?.[0] ||
+      v?.thumbnail ||
+      ''
+    ).trim()
 
-    const data = await res.json()
-    const videos = (data.videos || []).map(v => ({
-        id: v.id,
-        desc: v.desc || 'TikTok Video',
-        url: v.url,
-        videoUrl: v.urlUploaded,
-        duration: v.durationInSeconds || 0,
-        author: v.userNickname || 'Unknown',
-        likes: v.diggCount || 0,
-        comments: v.commentCount || 0,
-        plays: v.playCount || 0
-    }))
+    const author = String(
+      v?.author?.nickname ||
+      v?.author?.unique_id ||
+      v?.author ||
+      v?.nickname ||
+      'غير معروف'
+    ).trim()
 
-    CACHE.set(query, { results: videos, time: Date.now() })
-    return videos.slice(0, count)
-}
+    const title = String(
+      v?.title ||
+      v?.desc ||
+      `فيديو تيكتوك ${idx + 1}`
+    ).trim()
 
-// tikwm بيسمح بطلب واحد كل ثانية تقريبًا، فبنرتّب الطلبات
-let lastTikwm = 0
-async function tikwmGate() {
-    const slot = Math.max(Date.now(), lastTikwm + 1100)
-    lastTikwm = slot
-    const wait = slot - Date.now()
-    if (wait > 0) await sleep(wait)
-}
-
-async function getVideoNoWatermark(tiktokUrl) {
-    await tikwmGate()
-    const r = await fetch('https://www.tikwm.com/api/?url=' + encodeURIComponent(tiktokUrl), {
-        headers: { 'User-Agent': UA },
-        signal: AbortSignal.timeout(30000)
-    })
-    if (!r.ok) throw new Error('HTTP ' + r.status)
-    const j = await r.json()
-    if (j.code !== 0) throw new Error(j.msg || 'Failed')
-    const url = j.data.hdplay || j.data.play
-    if (!url) throw new Error('No video URL')
-    return url
-}
-
-async function downloadVideo(url) {
-    const r = await fetch(url, {
-        headers: { 'User-Agent': UA, 'Referer': 'https://www.tiktok.com/' },
-        signal: AbortSignal.timeout(90000)
-    })
-    if (!r.ok) throw new Error('HTTP ' + r.status)
-    const buf = Buffer.from(await r.arrayBuffer())
-    if (buf.length < 10000) throw new Error('فيديو صغير جدًا')
-    if (!isMp4(buf)) throw new Error('فيديو غير سليم')
-    return buf
-}
-
-// الأفضل: بدون علامة مائية (tikwm)، وإلا الرابط المباشر
-async function getVideoBuffer(video) {
-    try {
-        return await downloadVideo(await getVideoNoWatermark(video.url))
-    } catch (e) {
-        console.log('[edit-search] tikwm فشل:', e.message)
-    }
-    if (video.videoUrl) return await downloadVideo(video.videoUrl)
-    throw new Error('مفيش مصدر')
-}
-
-// ━━━ كارت واحد (نفس شكل كارت الريلز) ━━━
-async function processItem(video, conn) {
-    const buffer = await getVideoBuffer(video)
-    const mediaMsg = await generateWAMessageContent(
-        { video: buffer, mimetype: 'video/mp4' },
-        { upload: conn.waUploadToServer }
-    )
-    const title = (video.desc || 'TikTok Edit').replace(/\s+/g, ' ').trim()
     return {
-        buffer,
-        info: video,
-        card: {
-            body: proto.Message.InteractiveMessage.Body.fromObject({
-                text: `❤️ ${formatNum(video.likes)} | 💬 ${formatNum(video.comments)} | 👁️ ${formatNum(video.plays)}\n👤 ${video.author} | ⏱️ ${video.duration}s`
-            }),
-            footer: proto.Message.InteractiveMessage.Footer.fromObject({ text: '⛩️ SUKUNA BOT ⛩️' }),
-            header: proto.Message.InteractiveMessage.Header.fromObject({
-                title: title.slice(0, 40),
-                hasMediaAttachment: true,
-                videoMessage: mediaMsg.videoMessage
-            }),
-            nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.fromObject({ buttons: [] })
-        }
+      title,
+      author,
+      videoUrl,
+      coverUrl
     }
+  }).filter(item => item.videoUrl || item.title)
 }
 
-// بيجهز كروت كفاية (CARD_COUNT) من قايمة النتايج، 3 مع بعض
-async function buildCards(videos, conn) {
-    const results = []
-    let idx = 0
-    const workers = Array.from({ length: CONCURRENCY }, async () => {
-        while (results.length < CARD_COUNT) {
-            const i = idx++
-            if (i >= videos.length) break
-            try {
-                const item = await processItem(videos[i], conn)
-                if (results.length < CARD_COUNT) results.push(item)
-            } catch (e) {
-                console.log(`[edit-search] كارت ${i} فشل:`, e.message)
-            }
-        }
+async function searchTikTok(query) {
+  const res = await axios.get(SEARCH_ENDPOINT, {
+    params: { q: query },
+    timeout: 25000,
+    headers: { 'User-Agent': UA, Accept: 'application/json' },
+    validateStatus: () => true
+  })
+
+  if (res.status >= 400) {
+    throw new Error(`HTTP ${res.status}`)
+  }
+
+  const body = res.data || {}
+  if (body?.data?.name === 'AxiosError' || body?.data?.status === 403 || body?.data?.code === 'ERR_BAD_REQUEST') {
+    throw new Error('المصدر حظر الطلب (403 Forbidden من tikwm حاليًا)')
+  }
+
+  return normalizeTikTokItems(body)
+}
+
+async function getThumbBuffer(url) {
+  if (!url || !/^https?:\/\//i.test(url)) return null
+  try {
+    const r = await axios.get(url, {
+      headers: { 'User-Agent': UA },
+      responseType: 'arraybuffer',
+      timeout: 15000,
+      validateStatus: () => true
     })
-    await Promise.all(workers)
-    return results
+    if (r.status < 400 && r.data?.length > 1000) return Buffer.from(r.data)
+  } catch {}
+  return null
 }
 
-let handler = async (m, { conn, args, usedPrefix, command }) => {
-    const chat = m.chat
-    const send = t => conn.sendMessage(chat, { text: t })
-    const react = async emoji => {
-        try { await conn.sendMessage(chat, { react: { text: emoji, key: m.key } }) } catch {}
-    }
+let before = async (m, { conn }) => {
+  try {
+    const buttonId = getButtonId(m)
+    if (!buttonId || !buttonId.startsWith(PREFIX)) return false
 
-    if (!args[0]) {
-        await react('❌')
-        return send(`🔍 *بحث اديتات تيك توك*\n\n${usedPrefix}${command} <اسم الشخصية>\n\n💡 مثال:\n${usedPrefix}${command} زورو\n\n⛩️ SUKUNA BOT ⛩️`)
-    }
+    const item = global.ttSearchCache.get(buttonId.slice(PREFIX.length))
+    if (!item) return false
+    global.ttSearchCache.delete(buttonId.slice(PREFIX.length))
 
-    const characterName = args.join(' ')
-    await react('🔍')
-    await send(`🔍 *جاري البحث عن اديتات:* ${characterName}`)
+    await react(conn, m, '⏳')
+    const wait = await m.reply(`⏳ *جاري إرسال الفيديو:*\n${item.title.slice(0, 60)}`)
 
     try {
-        const videos = await searchTikTok(`${characterName} edit`)
-        if (!videos.length) throw new Error(`ما لقيت اديتات لـ ${characterName}`)
+      if (!item.videoUrl || !/^https?:\/\//i.test(item.videoUrl)) {
+        throw new Error('لا يوجد رابط فيديو متاح لهذه النتيجة')
+      }
 
-        await send(`⬇️ *لقيت ${videos.length} نتيجة، جاري تجهيز ${Math.min(CARD_COUNT, videos.length)} فيديو...*`)
+      const vidRes = await axios.get(item.videoUrl, {
+        responseType: 'arraybuffer',
+        timeout: 120000,
+        headers: { 'User-Agent': UA, Referer: 'https://www.tiktok.com/' },
+        validateStatus: () => true
+      })
 
-        const items = await buildCards(videos, conn)
-        if (!items.length) throw new Error('فشل تحميل الفيديوهات')
-        const cards = items.map(i => i.card)
+      if (vidRes.status >= 400 || !vidRes.data || vidRes.data.length < 10000) {
+        throw new Error(`تعذر تحميل الفيديو (HTTP ${vidRes.status})`)
+      }
 
-        try {
-            const msg = generateWAMessageFromContent(chat, {
-                viewOnceMessage: {
-                    message: {
-                        messageContextInfo: { deviceListMetadata: {}, deviceListMetadataVersion: 2 },
-                        interactiveMessage: proto.Message.InteractiveMessage.fromObject({
-                            body: proto.Message.InteractiveMessage.Body.create({ text: `🎬 *اديتات: ${characterName}*\n${cards.length} فيديو` }),
-                            footer: proto.Message.InteractiveMessage.Footer.create({ text: 'SukunaBot' }),
-                            header: proto.Message.InteractiveMessage.Header.create({ hasMediaAttachment: false }),
-                            carouselMessage: proto.Message.InteractiveMessage.CarouselMessage.fromObject({ cards })
-                        })
-                    }
-                }
-            }, { quoted: m })
+      try { await conn.sendMessage(m.chat, { delete: wait.key }) } catch {}
 
-            await conn.relayMessage(chat, msg.message, { messageId: msg.key.id })
-        } catch (err) {
-            // لو الكاروسيل فشل: نبعت أول 3 فيديوهات عادي
-            console.error('[edit-search] الكاروسيل فشل:', err?.message)
-            for (const it of items.slice(0, 3)) {
-                await conn.sendMessage(chat, {
-                    video: it.buffer,
-                    mimetype: 'video/mp4',
-                    caption: `🎬 *${it.info.desc.slice(0, 80)}*\n👤 ${it.info.author}\n\n⛩️ SUKUNA BOT ⛩️`
-                })
-            }
-        }
+      await conn.sendMessage(m.chat, {
+        video: Buffer.from(vidRes.data),
+        mimetype: 'video/mp4',
+        caption: `🎵 *العنوان:* ${item.title}\n👤 *الناشر:* ${item.author}`
+      }, { quoted: m })
 
-        await react('✅')
-    } catch (err) {
-        console.error('[edit-search]', err.message)
-        await react('❌')
-        await send('❌ ' + err.message)
+      await react(conn, m, '✅')
+    } catch (e) {
+      try { await conn.sendMessage(m.chat, { delete: wait.key }) } catch {}
+      await react(conn, m, '❌')
+      await m.reply(`❌ *تعذر إرسال الفيديو:*\n${e.message}`)
     }
+    return true
+  } catch (e) {
+    console.error('[تيكتوك] before:', e.message)
+    return false
+  }
 }
 
-handler.help = ['بحثتيك <اسم>']
-handler.tags = ['downloader']
-// ملحوظة: "ايديت" مش هنا عشان ما يتعارضش مع أمر ايديت التاني
-handler.command = /^(بحثتيك|بحثتيكك|بحث_تيك|تيك|تيكتوك)$/i
+let handler = async (m, { conn, text, usedPrefix, command }) => {
+  const query = (text || '').trim()
+  if (!query) {
+    return m.reply(`🎵 *بحث تيكتوك*\n\nاكتب كلمة البحث\n💡 مثال: ${usedPrefix}${command} تصميم انمي`)
+  }
+
+  await react(conn, m, '🔍')
+
+  try {
+    const items = await searchTikTok(query)
+    if (!items.length) {
+      await react(conn, m, '❌')
+      return m.reply('❌ لا توجد نتائج متاحة حالياً.')
+    }
+
+    const rows = items.map((v, i) => {
+      const id = genId()
+      global.ttSearchCache.set(id, { ...v, createdAt: Date.now() })
+      return {
+        title: `${i + 1}. ${v.title.slice(0, 50)}`,
+        description: `👤 ${v.author.slice(0, 60)}`,
+        id: `${PREFIX}${id}`
+      }
+    })
+
+    const thumb = await getThumbBuffer(items[0].coverUrl)
+
+    await sendButtons(conn, m.chat, {
+      title: '🎵 TikTok Search',
+      subtitle: query,
+      text: `✅ *تم البحث*\n\n🔍 *الكلمة:* ${query}\n📊 *النتائج:* ${items.length}\n\n👇 اختر فيديو من القائمة:`,
+      footer: '⛩️ SUKUNA BOT',
+      ...(thumb ? { image: thumb } : {}),
+      buttons: [btn.list('🎬 عرض النتائج', [{ title: 'النتائج', rows }])]
+    }, m)
+
+    await react(conn, m, '✅')
+  } catch (e) {
+    console.error('[تيكتوك] search:', e.message)
+    await react(conn, m, '❌')
+    await m.reply(`❌ *فشل البحث في تيكتوك:*\n${e.message}`)
+  }
+}
+
+if (global.ttCleanup) clearInterval(global.ttCleanup)
+global.ttCleanup = setInterval(() => {
+  const now = Date.now()
+  for (const [k, v] of global.ttSearchCache.entries()) {
+    if (now - v.createdAt > 30 * 60 * 1000) global.ttSearchCache.delete(k)
+  }
+}, 5 * 60 * 1000)
+
+handler.before = before
+handler.help = ['تيكتوك <كلمة البحث>']
+handler.tags = ['search']
+handler.command = /^(تيكتوك|tiktok|ttsearch)$/i
 
 export default handler
