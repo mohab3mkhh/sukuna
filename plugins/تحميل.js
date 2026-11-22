@@ -3,8 +3,8 @@
 //   .تحميل <رابط> صوت      → الصوت بس
 //   (أو رد على رسالة فيها رابط واكتب .تحميل)
 //
-// المصادر (بالترتيب حسب الموقع): Prexzy / btch-downloader / instagram-url-direct / yt-dlp
-// كوكيز اختيارية: IG_COOKIES (إنستجرام) و YT_COOKIES (يوتيوب) و YT_PROXY على Railway
+// المصادر: Prexzy AIO (أول) ← يدعم كل المواقع
+//          ثم btch-downloader / instagram-url-direct / yt-dlp كـ fallback
 
 import axios from 'axios'
 import fs from 'fs'
@@ -15,29 +15,29 @@ import { promisify } from 'util'
 
 const execFileP = promisify(execFile)
 
-const FOOTER = '⛩️ SUKUNA BOT ⛩️'
-const MAX_MB = 500        // ✅ أكبر حجم مسموح (تم التعديل من 100 لـ 500)
-const AS_VIDEO_MB = 50    // أكبر من كده يتبعت كـ document
-const MAX_IMAGES = 10
-const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36'
-const PREXZY_TIKTOK = 'https://prexzyapis.com/download/tiktokv2'
-const PREXZY_IG     = 'https://prexzyapis.com/download/instagram'
+const FOOTER      = '⛩️ SUKUNA BOT ⛩️'
+const MAX_MB      = 500
+const AS_VIDEO_MB = 50
+const MAX_IMAGES  = 10
+const UA          = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36'
 
-const URL_RE = /https?:\/\/[^\s<>"']+/i
+const PREXZY_AIO = 'https://prexzyapis.com/download/aio'
+
+const URL_RE   = /https?:\/\/[^\s<>"']+/i
 const AUDIO_RE = /(^|\s)(mp3|audio)(\s|$)|صوت|اغني|أغني|اغاني|أغاني|موسيق/i
-const log = (...a) => console.log('[تحميل]', ...a)
-const snip = d => { try { return (typeof d === 'string' ? d : JSON.stringify(d)).replace(/\s+/g, ' ').slice(0, 120) } catch { return '' } }
+const log      = (...a) => console.log('[تحميل]', ...a)
+const snip     = d => { try { return (typeof d === 'string' ? d : JSON.stringify(d)).replace(/\s+/g, ' ').slice(0, 120) } catch { return '' } }
 const shortErr = e => e?.response?.status ? `HTTP ${e.response.status}` : String(e?.code || e?.message || e || 'unknown').slice(0, 140)
 
 // ━━━━━━━━ استخراج الروابط من أي JSON ━━━━━━━━
-const SKIP_KEYS = /thumb|preview|cover|avatar|profile|poster|icon|logo|author|user|config|headers|request|stack/i
+const SKIP_KEYS  = /thumb|preview|cover|avatar|profile|poster|icon|logo|author|user|config|headers|request|stack/i
 const TITLE_KEYS = /^(title|desc|description|caption)$/i
 
 function extractMedia(data) {
     const links = []
-    const seen = new Set()
-    let title = ''
-    const walk = (node, key = '', depth = 0) => {
+    const seen  = new Set()
+    let title   = ''
+    const walk  = (node, key = '', depth = 0) => {
         if (node == null || depth > 8) return
         if (typeof node === 'string') {
             if (/^https?:\/\//i.test(node)) {
@@ -55,7 +55,7 @@ function extractMedia(data) {
     return { links, title }
 }
 
-// نرتّب الروابط حسب المطلوب (فيديو / صوت)
+// ━━━━━━━━ ترتيب الروابط حسب المطلوب ━━━━━━━━
 function rankLinks(links, mode) {
     const score = ({ url, key }) => {
         const s = `${key} ${url}`.toLowerCase()
@@ -79,7 +79,7 @@ function rankLinks(links, mode) {
 // ━━━━━━━━ معرفة نوع الملف من محتواه ━━━━━━━━
 function sniff(b) {
     if (!b || b.length < 500) return null
-    const head = b.slice(0, 16)
+    const head  = b.slice(0, 16)
     const brand = b.slice(4, 8).toString('latin1')
     if (brand === 'ftyp') {
         const sub = b.slice(8, 12).toString('latin1')
@@ -114,6 +114,25 @@ async function downloadBuffer(url, extraHeaders = {}, retries = 1) {
     throw lastErr || new Error('تحميل فاشل')
 }
 
+// ━━━━━━━━ Prexzy AIO — يدعم كل المواقع ━━━━━━━━
+async function viaPrexzyAIO(url) {
+    const r = await axios.get(PREXZY_AIO, {
+        params: { url },
+        timeout: 40000,
+        validateStatus: () => true
+    })
+    const d = r.data
+    log('[prexzy-aio] status:', r.status, '| sample:', snip(d))
+
+    if (r.status >= 400) throw new Error(`Prexzy-AIO: HTTP ${r.status}`)
+    if (d?.data?.name === 'AxiosError' || d?.data?.stack) throw new Error('Prexzy-AIO: ' + snip(d.data.message || 'خطأ داخلي'))
+    if (d?.status === false) throw new Error('Prexzy-AIO: ' + snip(d.message || d))
+
+    const ex = extractMedia(d?.data ?? d)
+    if (!ex.links.length) throw new Error('Prexzy-AIO: مفيش روابط — ' + snip(d))
+    return ex
+}
+
 // ━━━━━━━━ yt-dlp ━━━━━━━━
 let ytdlpPath = null
 async function canRun(bin) {
@@ -121,7 +140,7 @@ async function canRun(bin) {
 }
 async function ensureYtdlp() {
     if (ytdlpPath && fs.existsSync(ytdlpPath)) return ytdlpPath
-    const dirs = [...new Set(['/tmp', os.tmpdir(), process.cwd(), '/home'])]
+    const dirs       = [...new Set(['/tmp', os.tmpdir(), process.cwd(), '/home'])]
     const candidates = dirs.map(d => path.join(d, 'yt-dlp-bin'))
     for (const bin of candidates) {
         if (fs.existsSync(bin)) {
@@ -130,7 +149,7 @@ async function ensureYtdlp() {
         }
     }
     log('بنزّل yt-dlp...')
-    const r = await axios.get('https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux',
+    const r    = await axios.get('https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux',
         { responseType: 'arraybuffer', timeout: 120000, maxRedirects: 5 })
     const data = Buffer.from(r.data)
     if (data.length < 1024 * 1024) throw new Error('yt-dlp: التحميل ناقص')
@@ -144,10 +163,10 @@ async function ensureYtdlp() {
 }
 
 async function viaYtdlp(url, mode) {
-    const bin = await ensureYtdlp()
+    const bin    = await ensureYtdlp()
     const tmpDir = os.tmpdir()
-    const stem = `dl_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
-    const args = [
+    const stem   = `dl_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
+    const args   = [
         '-f', mode === 'audio' ? 'ba[ext=m4a]/ba/b' : 'best[ext=mp4][height<=720]/best[ext=mp4]/best',
         '--no-playlist', '--no-warnings', '--max-filesize', `${MAX_MB}M`,
         '-o', path.join(tmpDir, `${stem}.%(ext)s`)
@@ -181,10 +200,10 @@ async function viaYtdlp(url, mode) {
     }
 }
 
-// ━━━━━━━━ يوتيوب عن طريق cnv.cx ━━━━━━━━
+// ━━━━━━━━ يوتيوب عن طريق cnv.cx (fallback) ━━━━━━━━
 const CNV_HEADERS = {
     'User-Agent': UA,
-    'Origin': 'https://iframe.y2meta-uk.com',
+    'Origin':  'https://iframe.y2meta-uk.com',
     'Referer': 'https://iframe.y2meta-uk.com/'
 }
 
@@ -211,8 +230,7 @@ async function viaCnv(url, mode) {
 
     const r = await axios.post('https://cnv.cx/v2/converter', params.toString(), {
         headers: { ...CNV_HEADERS, 'Content-Type': 'application/x-www-form-urlencoded', accept: '*/*', key: k.data.key },
-        timeout: 120000,
-        validateStatus: () => true
+        timeout: 120000, validateStatus: () => true
     })
     if (r.status === 200 && r.data?.url) {
         return {
@@ -226,60 +244,38 @@ async function viaCnv(url, mode) {
     throw new Error('cnv: ' + (r.data?.errorMsg || `HTTP ${r.status}`))
 }
 
-// ━━━━━━━━ المزوّدين ━━━━━━━━
-async function viaPrexzy(url) {
-    const r = await axios.get(PREXZY_TIKTOK, { params: { url }, timeout: 30000, validateStatus: () => true })
-    const d = r.data
-    if (d?.data?.name === 'AxiosError' || d?.data?.stack) throw new Error('Prexzy: ' + snip(d.data.message || 'خطأ داخلي'))
-    if (d?.status === false) throw new Error('Prexzy: ' + snip(d.message || d))
-    const ex = extractMedia(d?.data ?? d)
-    if (!ex.links.length) throw new Error('Prexzy: مفيش روابط ' + snip(d))
-    return ex
-}
-
-// ━━━━━━━━ Prexzy للإنستجرام ━━━━━━━━
-async function viaPrexzyIG(url) {
-    const r = await axios.get(PREXZY_IG, { params: { url }, timeout: 30000, validateStatus: () => true })
-    const d = r.data
-    log('[prexzy-ig] status:', r.status, '| response:', snip(d))
-    if (d?.data?.name === 'AxiosError' || d?.data?.stack) throw new Error('Prexzy-IG: ' + snip(d.data.message || 'خطأ داخلي'))
-    if (d?.status === false) throw new Error('Prexzy-IG: ' + snip(d.message || d))
-    const ex = extractMedia(d?.data ?? d)
-    if (!ex.links.length) throw new Error('Prexzy-IG: مفيش روابط ' + snip(d))
-    return ex
-}
-
+// ━━━━━━━━ باقي المزوّدين كـ fallback ━━━━━━━━
 const viaPackage = (pkg, fnName, extra) => async (url) => {
     let mod
     try { mod = await import(pkg) } catch { throw new Error(`${pkg} مش متثبتة`) }
     const fn = mod[fnName] || mod.default?.[fnName] || (extra && extra(mod))
     if (typeof fn !== 'function') throw new Error(`${pkg}: مفيش دالة ${fnName}`)
     const data = await fn(url)
-    const ex = extractMedia(data)
+    const ex   = extractMedia(data)
     if (!ex.links.length) throw new Error(`${pkg}: مفيش روابط ${snip(data)}`)
     return ex
 }
 
 const P = {
-    prexzy:    { name: 'prexzy',    run: viaPrexzy },
-    prexzyIG:  { name: 'prexzy-ig', run: viaPrexzyIG },
-    btchTT:    { name: 'btch',      run: viaPackage('btch-downloader', 'ttdl') },
-    btchIG:    { name: 'btch',      run: viaPackage('btch-downloader', 'igdl') },
-    btchFB:    { name: 'btch',      run: viaPackage('btch-downloader', 'fbdown') },
-    btchTW:    { name: 'btch',      run: viaPackage('btch-downloader', 'twitter') },
-    igUrl:     { name: 'instagram-url-direct', run: viaPackage('instagram-url-direct', 'instagramGetUrl', m => m.default) },
-    tobyTT:    { name: 'tiktok-api-dl', run: viaPackage('@tobyg74/tiktok-api-dl', 'Downloader', m => m.default?.Downloader ? ((u) => m.default.Downloader(u, { version: 'v3' })) : null) },
-    cnv:       { name: 'cnv',       run: viaCnv },
-    ytdlp:     { name: 'yt-dlp',   run: viaYtdlp }
+    aio:    { name: 'prexzy-aio', run: viaPrexzyAIO },
+    btchTT: { name: 'btch-tt',    run: viaPackage('btch-downloader', 'ttdl') },
+    btchIG: { name: 'btch-ig',    run: viaPackage('btch-downloader', 'igdl') },
+    btchFB: { name: 'btch-fb',    run: viaPackage('btch-downloader', 'fbdown') },
+    btchTW: { name: 'btch-tw',    run: viaPackage('btch-downloader', 'twitter') },
+    igUrl:  { name: 'ig-url',     run: viaPackage('instagram-url-direct', 'instagramGetUrl', m => m.default) },
+    tobyTT: { name: 'tiktok-dl',  run: viaPackage('@tobyg74/tiktok-api-dl', 'Downloader', m => m.default?.Downloader ? ((u) => m.default.Downloader(u, { version: 'v3' })) : null) },
+    cnv:    { name: 'cnv',        run: viaCnv },
+    ytdlp:  { name: 'yt-dlp',    run: viaYtdlp }
 }
 
+// ━━━━━━━━ السلاسل — Prexzy AIO أول دايماً ━━━━━━━━
 function chainFor(host) {
-    if (/tiktok\.com$/.test(host))              return [P.prexzy, P.tobyTT, P.btchTT, P.ytdlp]
-    if (/youtube\.com$|youtu\.be$/.test(host))  return process.env.YT_COOKIES ? [P.cnv, P.ytdlp] : [P.cnv]
-    if (/instagram\.com$/.test(host))           return [P.prexzyIG, P.ytdlp, P.igUrl, P.btchIG]  // ✅ Prexzy أول
-    if (/facebook\.com$|fb\.watch$/.test(host)) return [P.btchFB, P.ytdlp]
-    if (/twitter\.com$|x\.com$/.test(host))     return [P.btchTW, P.ytdlp]
-    return [P.ytdlp]
+    if (/tiktok\.com$/.test(host))              return [P.aio, P.tobyTT, P.btchTT, P.ytdlp]
+    if (/youtube\.com$|youtu\.be$/.test(host))  return [P.aio, P.cnv, P.ytdlp]
+    if (/instagram\.com$/.test(host))           return [P.aio, P.ytdlp, P.igUrl, P.btchIG]
+    if (/facebook\.com$|fb\.watch$/.test(host)) return [P.aio, P.btchFB, P.ytdlp]
+    if (/twitter\.com$|x\.com$/.test(host))     return [P.aio, P.btchTW, P.ytdlp]
+    return [P.aio, P.ytdlp]
 }
 
 // ━━━━━━━━ تجميع الملفات من نتيجة مزوّد ━━━━━━━━
@@ -293,11 +289,13 @@ async function collect(res, mode) {
         if (files.filter(f => f.kind === 'image').length >= MAX_IMAGES) break
         try {
             const b = await downloadBuffer(l.url, res.dlHeaders, res.retries || 1)
-            let t = sniff(b)
+            let t   = sniff(b)
             if (!t && res.assume && b.length > 10000) {
                 const head = b.slice(0, 1).toString('latin1')
                 if (head !== '<' && head !== '{') {
-                    t = res.assume === 'audio' ? { kind: 'audio', mime: 'audio/mpeg', ext: 'mp3' } : { kind: 'video', mime: 'video/mp4', ext: 'mp4' }
+                    t = res.assume === 'audio'
+                        ? { kind: 'audio', mime: 'audio/mpeg', ext: 'mp3' }
+                        : { kind: 'video', mime: 'video/mp4',  ext: 'mp4' }
                 }
             }
             if (t) files.push({ buf: b, ...t })
@@ -318,9 +316,9 @@ const cleanName = t => (String(t || 'file').replace(/[\\/:*?"<>|\n\r]/g, ' ').re
 
 async function sendOut(conn, m, out, title) {
     const caption = `${title ? `*${title.slice(0, 120)}*\n\n` : ''}> ${FOOTER}`
-    const opts = { quoted: m }
+    const opts    = { quoted: m }
     if (out.kind === 'video') {
-        const f = out.files[0]
+        const f      = out.files[0]
         const sizeMB = f.buf.length / 1048576
         if (sizeMB > MAX_MB) throw new Error(`الحجم ${sizeMB.toFixed(1)}MB أكبر من الحد (${MAX_MB}MB)`)
         const fileName = `${cleanName(title || 'video')}.${f.ext}`
@@ -342,9 +340,15 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
     const react = async e => { try { await conn.sendMessage(m.chat, { react: { text: e, key: m.key } }) } catch {} }
 
     const given = String(text || '')
-    const url = (`${given} ${m.quoted?.text || ''}`.match(URL_RE) || [])[0]
+    const url   = (`${given} ${m.quoted?.text || ''}`.match(URL_RE) || [])[0]
     if (!url) {
-        return reply(`⬇️ *تحميل شامل*\n\nابعت رابط (تيك توك / إنستجرام / فيسبوك / تويتر / يوتيوب / ساوند كلاود...)\n\n*${usedPrefix}${command} <الرابط>*  ← فيديو أو صور\n*${usedPrefix}${command} <الرابط> صوت*  ← الصوت بس\n\n> ${FOOTER}`)
+        return reply(
+            `⬇️ *تحميل شامل*\n\n` +
+            `ابعت رابط (تيك توك / إنستجرام / فيسبوك / تويتر / يوتيوب...)\n\n` +
+            `*${usedPrefix}${command} <الرابط>*  ← فيديو أو صور\n` +
+            `*${usedPrefix}${command} <الرابط> صوت*  ← الصوت بس\n\n` +
+            `> ${FOOTER}`
+        )
     }
 
     let host = ''
@@ -371,11 +375,14 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
     }
 
     await react('❌')
-    return reply(`❌ فشل التحميل\nتأكد إن الرابط عام (مش private)\n\n🔧 *تفاصيل:*\n${errors.map(e => `• ${e}`).join('\n').slice(0, 900)}\n\n> ${FOOTER}`)
+    return reply(
+        `❌ فشل التحميل\nتأكد إن الرابط عام (مش private)\n\n` +
+        `🔧 *تفاصيل:*\n${errors.map(e => `• ${e}`).join('\n').slice(0, 900)}\n\n> ${FOOTER}`
+    )
 }
 
-handler.help = ['تحميل <رابط>']
-handler.tags = ['downloader']
+handler.help    = ['تحميل <رابط>']
+handler.tags    = ['downloader']
 handler.command = /^(تحميل|dl)$/i
 
 export default handler
