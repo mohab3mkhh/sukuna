@@ -47,8 +47,8 @@ function extractStringField(val) {
     if (typeof val === 'string' || typeof val === 'number') return String(val).trim()
     if (typeof val === 'object') {
         return String(
-            val.name ||
             val.username ||
+            val.name ||
             val.title ||
             val.full_name ||
             val.display_name ||
@@ -68,9 +68,9 @@ function normalizeTrack(raw, index) {
     ).trim()
 
     const artist = String(
+        extractStringField(raw?.author) ||
         extractStringField(raw?.artist) ||
         extractStringField(raw?.user) ||
-        extractStringField(raw?.author) ||
         extractStringField(raw?.uploader) ||
         'غير معروف'
     ).trim()
@@ -91,32 +91,17 @@ function normalizeTrack(raw, index) {
         ''
     ).trim()
 
-    const directAudio = String(
-        raw?.download ||
-        raw?.downloadUrl ||
-        raw?.audio ||
-        raw?.audioUrl ||
-        raw?.stream ||
-        raw?.streamUrl ||
-        ''
-    ).trim()
-
-    const thumbnail = String(
-        raw?.thumbnail ||
-        raw?.artwork_url ||
-        raw?.image ||
-        raw?.cover ||
-        ''
-    ).trim()
+    const id = raw?.id ? String(raw.id).trim() : ''
+    const artwork = String(raw?.artwork || raw?.thumbnail || raw?.artwork_url || raw?.image || '').trim()
 
     return {
         index: index + 1,
+        id,
         title,
         artist,
         duration,
         url,
-        directAudio,
-        thumbnail
+        artwork
     }
 }
 
@@ -146,43 +131,6 @@ async function searchSoundCloud(query) {
 
     if (!list.length) return []
     return list.slice(0, MAX_ITEMS).map((item, i) => normalizeTrack(item, i))
-}
-
-function findUrlRecursive(obj, depth = 0) {
-    if (!obj || depth > 4) return null
-    if (typeof obj === 'string') {
-        const s = obj.trim()
-        if (/^https?:\/\//i.test(s) && !/soundcloud\.com\/[^/]+\/[^/]+$/i.test(s)) {
-            return s
-        }
-        return null
-    }
-    if (Array.isArray(obj)) {
-        for (const item of obj) {
-            const found = findUrlRecursive(item, depth + 1)
-            if (found) return found
-        }
-        return null
-    }
-    if (typeof obj === 'object') {
-        const priorityKeys = [
-            'download', 'downloadUrl', 'download_url',
-            'audio', 'audioUrl', 'audio_url',
-            'stream', 'streamUrl', 'stream_url',
-            'media', 'file', 'mp3', 'url', 'link'
-        ]
-        for (const k of priorityKeys) {
-            if (k in obj) {
-                const found = findUrlRecursive(obj[k], depth + 1)
-                if (found) return found
-            }
-        }
-        for (const v of Object.values(obj)) {
-            const found = findUrlRecursive(v, depth + 1)
-            if (found) return found
-        }
-    }
-    return null
 }
 
 async function downloadStreamToFile(audioUrl, referer, outFilePath) {
@@ -242,8 +190,8 @@ async function downloadStreamToFile(audioUrl, referer, outFilePath) {
 
 async function downloadSoundCloudTrack(track, outFilePath) {
     const paramAttempts = [
-        ...(track.url ? [{ url: track.url }, { link: track.url }] : []),
-        { q: track.title }
+        ...(track.url ? [{ url: track.url }] : []),
+        ...(track.id ? [{ id: track.id, mode: 'audio', quality: 'hq' }] : [])
     ]
 
     let lastApiError = ''
@@ -281,10 +229,9 @@ async function downloadSoundCloudTrack(track, outFilePath) {
             }
 
             if (contentType.includes('application/json') || buf[0] === 0x7b) {
-                const rawJson = buf.toString('utf8')
                 let json = null
                 try {
-                    json = JSON.parse(rawJson)
+                    json = JSON.parse(buf.toString('utf8'))
                 } catch {
                     continue
                 }
@@ -294,19 +241,25 @@ async function downloadSoundCloudTrack(track, outFilePath) {
                     continue
                 }
 
-                const audioUrl = findUrlRecursive(json)
-                if (audioUrl) {
-                    return await downloadStreamToFile(audioUrl, track.url || 'https://soundcloud.com/', outFilePath)
+                const d = json?.data || json?.result || json
+                const audioUrl =
+                    d?.downloadUrl ||
+                    d?.download ||
+                    d?.audio ||
+                    d?.audioUrl ||
+                    d?.stream ||
+                    d?.streams?.hq ||
+                    d?.streams?.lq ||
+                    ''
+
+                if (typeof audioUrl === 'string' && /^https?:\/\//i.test(audioUrl.trim())) {
+                    return await downloadStreamToFile(audioUrl.trim(), track.url || 'https://soundcloud.com/', outFilePath)
                 }
             }
         } catch (err) {
             if (err.message.includes('تجاوز')) throw err
             lastApiError = err.message
         }
-    }
-
-    if (track.directAudio && /^https?:\/\//i.test(track.directAudio)) {
-        return await downloadStreamToFile(track.directAudio, track.url || 'https://soundcloud.com/', outFilePath)
     }
 
     throw new Error(lastApiError || 'تعذر جلب ملف الصوت من /download/soundcloud')
