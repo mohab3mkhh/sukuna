@@ -1,97 +1,100 @@
-const API_URL = "https://nekobot.xyz/api/image";
-const REQUEST_TIMEOUT_MS = 15000;
-
 /**
- * دالة جلب رابط الصورة من API
+ * plugins/hentai.js
+ * محتوى 18+ - للمطور فقط
  */
-async function fetchAnimeImage(type) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
+import axios from 'axios'
+import { execFile } from 'child_process'
+import { promisify } from 'util'
+import fs from 'fs'
+import os from 'os'
+import path from 'path'
+
+const execFileP = promisify(execFile)
+
+async function ffmpegPath() {
+    try { await execFileP('ffmpeg', ['-version'], { timeout: 8000 }); return 'ffmpeg' } catch {}
+    try { const mod = await import('@ffmpeg-installer/ffmpeg'); const p = (mod.default || mod).path; if (p && fs.existsSync(p)) return p } catch {}
+    try { const mod = await import('ffmpeg-static'); const p = mod.default || mod; if (p && fs.existsSync(p)) return p } catch {}
+    return null
+}
+
+async function gifToMp4(gifBuffer) {
+    const ff = await ffmpegPath()
+    if (!ff) throw new Error('مفيش ffmpeg')
+    const id  = `${process.pid}_${Date.now()}`
+    const inp = path.join(os.tmpdir(), `gif_${id}.gif`)
+    const out = path.join(os.tmpdir(), `gif_${id}.mp4`)
     try {
-        const response = await fetch(`${API_URL}?type=${encodeURIComponent(type)}`, {
-            headers: { accept: "application/json" },
-            signal: controller.signal
-        });
-
-        if (!response.ok) {
-            throw new Error(`NekoBot HTTP ${response.status}`);
-        }
-
-        const payload = await response.json();
-        const imageUrl = typeof payload?.message === "string" ? payload.message : payload?.url;
-
-        if (!payload?.success || !/^https?:\/\//i.test(imageUrl || "")) {
-            throw new Error("No valid image URL returned");
-        }
-
-        return imageUrl;
+        fs.writeFileSync(inp, gifBuffer)
+        await execFileP(ff, ['-y', '-i', inp, '-movflags', 'faststart', '-pix_fmt', 'yuv420p', '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2', out], { timeout: 60000 })
+        const buf = fs.readFileSync(out)
+        if (buf.length < 1000) throw new Error('ناتج التحويل فاضي')
+        return buf
     } finally {
-        clearTimeout(timer);
+        try { fs.unlinkSync(inp) } catch {}
+        try { fs.unlinkSync(out) } catch {}
     }
 }
 
 let handler = async (m, { conn, isROwner, isOwner }) => {
-    // للمطور فقط
-    if (!isROwner && !isOwner) return conn.reply(m.chat, '❌ هذا الأمر للمطور فقط.', m);
+    if (!isROwner && !isOwner) {
+        return conn.reply(m.chat, '❌ هذا الأمر للمطور فقط.', m)
+    }
+
+    const title    = "Hentai"
+    const emoji    = "🔞"
+    const endpoint = "https://prexzyapis.com/nsfw/hentai"
+    const caption  = `${emoji} *${title}*\n\n> ⛩️ SUKUNA BOT • 18+`
 
     try {
-        // 1. التفاعل على رسالة المستخدم فوراً بإيموجي
-        await conn.sendMessage(m.chat, { 
-            react: { text: '🔞', key: m.key } 
-        }).catch(() => {});
+        await m.react('⏳')
 
-        // 2. جلب رابط الصورة مباشرة
-        const imageUrl = await fetchAnimeImage("hentai");
+        const res = await axios.get(endpoint, {
+            timeout: 20000,
+            responseType: 'arraybuffer',
+            headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': '*/*' },
+            validateStatus: () => true
+        })
 
-        // 3. إرسال الصورة بتصميم كليشة واستايل sukuna BOT المنسق
-        const caption = 
-`╭━━━〔 🔞 *HENTAI* 〕━━━╮\n` +
-`┃\n` +
-`┃ 🌸 Anime NSFW · (18+)\n` +
-`┃ 🚀 بوت : 么⃝Sukuna 𝑩𝑶𝑻 🪄\n` +
-`┃\n` +
-`╰━━━━━━━━━━━━━━━━━━╯`;
+        if (res.status >= 400) throw new Error(`HTTP ${res.status}`)
 
-        await conn.sendMessage(
-            m.chat,
-            {
-                image: { url: imageUrl },
-                caption
-            },
-            { quoted: m }
-        );
+        const buffer = Buffer.from(res.data)
+        if (buffer.length < 500) throw new Error('الملف فارغ')
 
-        await conn.sendMessage(m.chat, { 
-            react: { text: '✅', key: m.key } 
-        }).catch(() => {});
+        const magic  = buffer.slice(0, 4).toString('hex')
+        const isGif  = magic.startsWith('47494638')
+        const isMp4  = magic.startsWith('00000018') || magic.startsWith('00000020')
+        const isPng  = magic.startsWith('89504e47')
 
-        return true;
+        console.log('[hentai] magic:', magic, '| size:', buffer.length)
 
-    } catch (error) {
-        console.error("[GEO HENTAI ERROR]", error);
+        if (isGif) {
+            try {
+                const mp4 = await gifToMp4(buffer)
+                await conn.sendMessage(m.chat, { video: mp4, mimetype: 'video/mp4', gifPlayback: true, caption }, { quoted: m })
+            } catch (e) {
+                console.error('[hentai] gif→mp4 فشل:', e.message, '— هبعته صورة')
+                await conn.sendMessage(m.chat, { image: buffer, mimetype: 'image/gif', caption }, { quoted: m })
+            }
+        } else if (isMp4) {
+            await conn.sendMessage(m.chat, { video: buffer, mimetype: 'video/mp4', caption }, { quoted: m })
+        } else {
+            await conn.sendMessage(m.chat, { image: buffer, mimetype: isPng ? 'image/png' : 'image/jpeg', caption }, { quoted: m })
+        }
 
-        try { 
-            await conn.sendMessage(m.chat, { 
-                react: { text: '❌', key: m.key } 
-            }); 
-        } catch {}
+        await m.react('✅')
 
-        return conn.reply(
-            m.chat,
-            `╭━━━〔 ❌ *HENTAI* 〕━━━╮\n` +
-            `┃\n` +
-            `┃ ⚠️ حدث خطأ أثناء جلب الصورة.\n` +
-            `┃ ${error?.message || "SERVICE_UNAVAILABLE"}\n` +
-            `┃\n` +
-            `╰━━━━━━━━━━━━━━━━━━╯`, m
-        );
+    } catch (err) {
+        console.error('[hentai] error:', err.message)
+        await m.react('❌').catch(() => {})
+        return conn.reply(m.chat, `❌ حدث خطأ: ${err.message}`, m)
     }
-};
+}
 
-handler.help = ['hentai', 'nsfwhentai'];
-handler.tags = ['18plus'];
-handler.command = /^(hentai|هنتاي|nsfwhentai)$/i;
-handler.owner = true;   // للمطور فقط
+handler.help    = ['hentai']
+handler.tags    = ['18plus']
+handler.command = /^hentai$/i
+handler.owner   = true
 
-export default handler;
+export default handler
