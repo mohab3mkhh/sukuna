@@ -16,7 +16,7 @@ import { promisify } from 'util'
 const execFileP = promisify(execFile)
 
 const FOOTER = '⛩️ SUKUNA BOT ⛩️'
-const MAX_MB = 500        // ✅ أكبر حجم مسموح (تم التعديل من 100 لـ 500)
+const MAX_MB = 100        // أكبر حجم مسموح
 const AS_VIDEO_MB = 50    // أكبر من كده يتبعت كـ document
 const MAX_IMAGES = 10
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36'
@@ -102,7 +102,7 @@ async function downloadBuffer(url, extraHeaders = {}, retries = 1) {
             const r = await axios.get(url, {
                 headers: { 'User-Agent': UA, Accept: '*/*', ...extraHeaders },
                 responseType: 'arraybuffer', timeout: 600000, maxRedirects: 8,
-                maxContentLength: MAX_MB * 1024 * 1024, // ✅ 500 ميجا
+                maxContentLength: MAX_MB * 1024 * 1024,
                 validateStatus: () => true
             })
             if (r.status === 200 && r.data?.length) return Buffer.from(r.data)
@@ -148,7 +148,7 @@ async function viaYtdlp(url, mode) {
     const stem = `dl_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
     const args = [
         '-f', mode === 'audio' ? 'ba[ext=m4a]/ba/b' : 'best[ext=mp4][height<=720]/best[ext=mp4]/best',
-        '--no-playlist', '--no-warnings', '--max-filesize', `${MAX_MB}M`, // ✅ 500 ميجا
+        '--no-playlist', '--no-warnings', '--max-filesize', `${MAX_MB}M`,
         '-o', path.join(tmpDir, `${stem}.%(ext)s`)
     ]
     let cookieFile = null
@@ -229,6 +229,7 @@ async function viaCnv(url, mode) {
 async function viaPrexzy(url) {
     const r = await axios.get(PREXZY_TIKTOK, { params: { url }, timeout: 30000, validateStatus: () => true })
     const d = r.data
+    // لو الـ API نفسه اتحظر (زي ما حصل في البحث) بيرجّع AxiosError جوه data
     if (d?.data?.name === 'AxiosError' || d?.data?.stack) throw new Error('Prexzy: ' + snip(d.data.message || 'خطأ داخلي'))
     if (d?.status === false) throw new Error('Prexzy: ' + snip(d.message || d))
     const ex = extractMedia(d?.data ?? d)
@@ -281,6 +282,7 @@ async function collect(res, mode) {
             const b = await downloadBuffer(l.url, res.dlHeaders, res.retries || 1)
             let t = sniff(b)
             if (!t && res.assume && b.length > 10000) {
+                // المزوّد ضامن النوع (زي cnv) — نتأكد بس إنه مش صفحة خطأ
                 const head = b.slice(0, 1).toString('latin1')
                 if (head !== '<' && head !== '{') {
                     t = res.assume === 'audio' ? { kind: 'audio', mime: 'audio/mpeg', ext: 'mp3' } : { kind: 'video', mime: 'video/mp4', ext: 'mp4' }
