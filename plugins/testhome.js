@@ -1,6 +1,6 @@
 /**
  * plugins/testhome.js
- * أمر تجريبي للتعامل مع JSON كبير الحجم (/home) وتقسيمه لقوائم زراير - للمطور فقط
+ * أمر تجريبي لاستكشاف أقسام /home والوصول لمعلومات الأفلام - للمطور فقط
  */
 
 import axios from 'axios'
@@ -22,12 +22,13 @@ function pickItemsArray(obj) {
     if (Array.isArray(obj)) return obj
 
     const candidates = [
+        obj.movies,
+        obj.films,
         obj.videos,
         obj.items,
         obj.list,
         obj.results,
         obj.data,
-        obj.movies,
         obj.posts,
         obj.cards
     ]
@@ -43,9 +44,7 @@ function parseHomeSections(data) {
 
     const sections = []
 
-    // الحالة 1: لو root عبارة عن مصفوفة مباشرة
     if (Array.isArray(root)) {
-        // لو عناصرها نفسها أقسام (كل عنصر فيه مصفوفة فرعية)
         const subSections = root
             .map((sec, idx) => {
                 const items = pickItemsArray(sec)
@@ -58,16 +57,12 @@ function parseHomeSections(data) {
             .filter(Boolean)
 
         if (subSections.length) return subSections
-
-        // لو root مصفوفة عناصر مباشرة من غير أقسام فرعية
         if (root.length && typeof root[0] === 'object') {
             return [{ title: 'الرئيسية', items: root }]
         }
         return []
     }
 
-    // الحالة 2: لو root كائن (Object) يحتوي على مفاتيح
-    // أولاً: هل جواه مصفوفة أقسام معروفة؟
     const knownSectionArrays = [root.sections, root.categories, root.blocks, root.rows, root.groups].find(Array.isArray)
     if (knownSectionArrays) {
         knownSectionArrays.forEach((sec, idx) => {
@@ -82,13 +77,12 @@ function parseHomeSections(data) {
         if (sections.length) return sections
     }
 
-    // ثانياً: كل مفتاح جوه root قيمته مصفوفة كائنات نعتبره قسماً
     const ignoreKeys = new Set(['status', 'statusCode', 'creator', 'timestamp', 'message', 'code', 'ops', 'keyword'])
     for (const [key, val] of Object.entries(root)) {
         if (ignoreKeys.has(key)) continue
         if (Array.isArray(val) && val.length && typeof val[0] === 'object') {
             sections.push({
-                title: key.replace(/[_-]+/g, ' ').toUpperCase(),
+                title: key,
                 items: val
             })
         } else if (val && typeof val === 'object') {
@@ -105,14 +99,52 @@ function parseHomeSections(data) {
     return sections
 }
 
-function normalizeItem(raw, index) {
+function normalizeMovieOrItem(raw, index) {
+    const title = String(
+        raw?.title ||
+        raw?.name ||
+        raw?.movieTitle ||
+        raw?.original_title ||
+        raw?.word ||
+        `عنصر ${index + 1}`
+    ).trim()
+
+    const year = raw?.year || raw?.releaseYear || raw?.release_date || ''
+    const rating = raw?.rating || raw?.score || raw?.imdb || ''
+    const genre = Array.isArray(raw?.genre)
+        ? raw.genre.join(', ')
+        : Array.isArray(raw?.genres)
+            ? raw.genres.join(', ')
+            : (raw?.genre || raw?.category || raw?.type || '')
+
+    const description = String(
+        raw?.description ||
+        raw?.overview ||
+        raw?.plot ||
+        raw?.synopsis ||
+        raw?.desc ||
+        ''
+    ).trim()
+
+    const link = raw?.link || raw?.url || raw?.href || raw?.page || raw?.trailer || ''
+    const poster = raw?.poster || raw?.image || raw?.thumbnail || raw?.cover || raw?.backdrop || ''
+    const uploader = raw?.uploader || raw?.author || raw?.channel || raw?.director || ''
+    const duration = raw?.duration || raw?.runtime || raw?.time || ''
+    const views = raw?.views || raw?.view || ''
+
     return {
         index: index + 1,
-        title: String(raw?.title || raw?.name || raw?.word || raw?.label || `عنصر ${index + 1}`).trim(),
-        link: raw?.link || raw?.url || raw?.href || raw?.page || 'لا يوجد رابط',
-        uploader: raw?.uploader || raw?.author || raw?.channel || raw?.creator || 'غير معروف',
-        duration: raw?.duration || raw?.time || raw?.length || 'غير محدد',
-        views: raw?.views || raw?.view || raw?.watched || 'غير محدد'
+        title,
+        year: year ? String(year) : '',
+        rating: rating ? String(rating) : '',
+        genre: genre ? String(genre) : '',
+        description,
+        link: link ? String(link) : '',
+        poster: poster ? String(poster) : '',
+        uploader: uploader ? String(uploader) : '',
+        duration: duration ? String(duration) : '',
+        views: views ? String(views) : '',
+        rawKeys: raw && typeof raw === 'object' ? Object.keys(raw) : []
     }
 }
 
@@ -131,18 +163,14 @@ async function fetchHomeData() {
     }
 
     const rawData = res.data
-    const homeObj = rawData?.home
-
-    if (homeObj && typeof homeObj === 'object') {
-        console.log('[testhome] home type:', Array.isArray(homeObj) ? 'array' : 'object')
-        console.log('[testhome] home keys:', Object.keys(homeObj))
-        const sample = Array.isArray(homeObj) ? homeObj[0] : homeObj[Object.keys(homeObj)[0]]
-        if (sample && typeof sample === 'object') {
-            console.log('[testhome] sample keys:', Object.keys(sample))
-        }
-    }
-
     const sections = parseHomeSections(rawData)
+
+    // نطبع ملخص بالأقسام وعدد عناصرها في الكونسول عشان نعرف مكان الأفلام بسهولة
+    console.log(
+        '[testhome] sections:',
+        sections.map(s => `${s.title} (${s.items.length})`).join(' | ')
+    )
+
     return { rawData, sections }
 }
 
@@ -159,21 +187,25 @@ async function sendSectionsMenu(conn, m, sections) {
         })
 
         return {
-            title: `${idx + 1}. ${sec.title.slice(0, 45)}`,
+            title: `${idx + 1}. ${String(sec.title).slice(0, 45)}`,
             description: `📦 عدد العناصر: ${sec.items.length}`,
             id: `hmt_${key}`
         }
     })
 
+    const sectionsListText = pickedSections
+        .map((s, i) => `• *${i + 1}.* ${s.title} (${s.items.length})`)
+        .join('\n')
+
     await sendButtons(conn, m.chat, {
         title: '🏠 الصفحة الرئيسية (/home)',
-        subtitle: `تم استخراج ${sections.length} قسم`,
-        text: `📊 تم استخراج *${pickedSections.length}* أقسام من \`home\`.\n\n👇 اختر قسماً لعرض محتواه:`,
-        footer: '🧪 تجربة مطور • Large JSON Handler',
+        subtitle: `${sections.length} قسم متاح`,
+        text: `📊 *الأقسام المستخرجة:*\n${sectionsListText}\n\n👇 اختر قسماً من القائمة:`,
+        footer: '🧪 تجربة مطور • Home Explorer',
         buttons: [
             btn.list('📂 اختر قسماً', [
                 {
-                    title: 'الأقسام المتاحة',
+                    title: 'الأقسام',
                     rows
                 }
             ])
@@ -182,7 +214,11 @@ async function sendSectionsMenu(conn, m, sections) {
 }
 
 async function sendSectionItemsMenu(conn, m, sectionTitle, rawItems) {
-    const items = rawItems.map((it, i) => normalizeItem(it, i))
+    const items = rawItems.map((it, i) => normalizeMovieOrItem(it, i))
+
+    if (items[0]?.rawKeys?.length) {
+        console.log(`[testhome:${sectionTitle}] first item keys:`, items[0].rawKeys)
+    }
 
     const rows = items.map((item) => {
         const key = genId()
@@ -193,22 +229,30 @@ async function sendSectionItemsMenu(conn, m, sectionTitle, rawItems) {
             createdAt: Date.now()
         })
 
+        const subInfo = [
+            item.year ? `📅 ${item.year}` : '',
+            item.rating ? `⭐ ${item.rating}` : '',
+            item.genre ? `🎭 ${item.genre}` : '',
+            item.duration ? `⏱️ ${item.duration}` : '',
+            item.uploader ? `👤 ${item.uploader}` : ''
+        ].filter(Boolean)
+
         return {
             title: `${item.index}. ${item.title.slice(0, 50)}`,
-            description: `👤 ${item.uploader} | ⏱️ ${item.duration} | 👁️ ${item.views}`,
+            description: subInfo.length ? subInfo.join(' | ').slice(0, 70) : `📂 ${sectionTitle}`,
             id: `hmt_${key}`
         }
     })
 
     await sendButtons(conn, m.chat, {
-        title: `📂 قسم: ${sectionTitle.slice(0, 30)}`,
+        title: `📂 ${String(sectionTitle).slice(0, 30)}`,
         subtitle: `${items.length} عناصر`,
-        text: `📂 *القسم المختار:* ${sectionTitle}\n\n👇 اختر عنصراً لعرض الرابط والتفاصيل:`,
+        text: `📂 *القسم:* ${sectionTitle}\n\n👇 اختر عنصراً لعرض كافة معلوماته:`,
         footer: '🧪 تجربة مطور',
         buttons: [
             btn.list('📋 اختر عنصراً', [
                 {
-                    title: sectionTitle.slice(0, 24),
+                    title: String(sectionTitle).slice(0, 24),
                     rows
                 }
             ])
@@ -234,16 +278,36 @@ let before = async (m, { conn }) => {
 
         if (cached.step === 'item') {
             const { item, sectionTitle } = cached
-            const details = [
+            const lines = [
                 `📂 *القسم:* ${sectionTitle}`,
-                `📌 *العنوان:* ${item.title}`,
-                `👤 *الناشر:* ${item.uploader}`,
-                `⏱️ *المدة:* ${item.duration}`,
-                `👁️ *المشاهدات:* ${item.views}`,
-                `🔗 *الرابط:* ${item.link}`
-            ].join('\n')
+                `🎬 *العنوان:* ${item.title}`,
+                item.year ? `📅 *السنة/التاريخ:* ${item.year}` : '',
+                item.rating ? `⭐ *التقييم:* ${item.rating}` : '',
+                item.genre ? `🎭 *التصنيف:* ${item.genre}` : '',
+                item.duration ? `⏱️ *المدة:* ${item.duration}` : '',
+                item.views ? `👁️ *المشاهدات:* ${item.views}` : '',
+                item.uploader ? `👤 *الناشر/المخرج:* ${item.uploader}` : '',
+                item.description ? `📝 *الوصف:* ${item.description.slice(0, 400)}` : '',
+                item.link ? `🔗 *الرابط:* ${item.link}` : ''
+            ].filter(Boolean)
 
-            await conn.sendMessage(m.chat, { text: details }, { quoted: m })
+            // لو في صورة/بوستر صالح نبعته مع التفاصيل، وإلا نبعت نص فقط
+            if (item.poster && /^https?:\/\//i.test(item.poster)) {
+                try {
+                    await conn.sendMessage(
+                        m.chat,
+                        {
+                            image: { url: item.poster },
+                            caption: lines.join('\n')
+                        },
+                        { quoted: m }
+                    )
+                    await m.react('✅').catch(() => {})
+                    return true
+                } catch {}
+            }
+
+            await conn.sendMessage(m.chat, { text: lines.join('\n') }, { quoted: m })
             await m.react('✅').catch(() => {})
             return true
         }
@@ -261,23 +325,14 @@ let handler = async (m, { conn, isROwner, isOwner }) => {
     }
 
     await m.react('⏳')
-    const wait = await m.reply('⏳ *جاري جلب وتلخيص بيانات /home...*')
+    const wait = await m.reply('⏳ *جاري جلب أقسام /home...*')
 
     try {
-        const { rawData, sections } = await fetchHomeData()
+        const { sections } = await fetchHomeData()
 
         if (!sections.length) {
-            const homeKeys = rawData?.home && typeof rawData.home === 'object'
-                ? Object.keys(rawData.home).join(', ')
-                : 'غير معروف'
             await m.react('⚠️')
-            return conn.sendMessage(
-                m.chat,
-                {
-                    text: `⚠️ شكل \`home\` مختلف شوية.\n🔑 *مفاتيح home:* \`${homeKeys}\`\n\nشوف الكونسول وابعـتلي السطرين بتوع \`home keys\` و \`sample keys\`.`,
-                    edit: wait.key
-                }
-            )
+            return conn.sendMessage(m.chat, { text: '⚠️ لم يتم العثور على أقسام.', edit: wait.key })
         }
 
         try { await conn.sendMessage(m.chat, { delete: wait.key }) } catch {}
