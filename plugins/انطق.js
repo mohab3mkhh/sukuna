@@ -45,30 +45,28 @@ if (!global._ttsState) global._ttsState = {}
 
 // ━━━━━━━━ جيب الصوت من API ━━━━━━━━
 async function fetchVoice(endpoint, text) {
+    // جيب JSON الأول عشان الـ API بيرجع audio_url مش audio مباشرة
     const r = await axios.get(`${BASE_URL}/${endpoint}`, {
         params: { text },
-        responseType: 'arraybuffer',
         timeout: 30000,
         validateStatus: () => true,
         headers: { 'User-Agent': 'Mozilla/5.0' }
     })
     if (r.status >= 400) throw new Error(`HTTP ${r.status}`)
-    const buf = Buffer.from(r.data)
-    if (buf.length < 100) throw new Error('الملف فارغ')
 
-    // لو JSON فيه رابط
-    const ct = (r.headers['content-type'] || '').toLowerCase()
-    if (ct.includes('application/json') || ct.includes('text/')) {
-        try {
-            const json = JSON.parse(buf.toString())
-            const link = json?.url || json?.audio || json?.link || json?.data?.url
-            if (link) {
-                const r2 = await axios.get(link, { responseType: 'arraybuffer', timeout: 30000 })
-                return Buffer.from(r2.data)
-            }
-        } catch {}
-        throw new Error('رد غير متوقع من API')
-    }
+    const json = r.data
+    // الرابط في audio_url
+    const link = json?.audio_url || json?.url || json?.audio || json?.link || json?.data?.url
+    if (!link) throw new Error('مفيش رابط صوت في الرد: ' + JSON.stringify(json).slice(0, 120))
+
+    // حمّل الملف الصوتي
+    const r2 = await axios.get(link, {
+        responseType: 'arraybuffer',
+        timeout: 30000,
+        headers: { 'User-Agent': 'Mozilla/5.0' }
+    })
+    const buf = Buffer.from(r2.data)
+    if (buf.length < 100) throw new Error('الملف الصوتي فارغ')
     return buf
 }
 
