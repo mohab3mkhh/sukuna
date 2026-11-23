@@ -43,51 +43,67 @@ const BASE_URL = 'https://prexzyapis.com/tts'
 
 if (!global._ttsState) global._ttsState = {}
 
-// ━━━━━━━━ جيب الصوت من API ━━━━━━━━
+// ━━━━━━━━ جيب الصوت من API (arraybuffer مباشرة) ━━━━━━━━
 async function fetchVoice(endpoint, text) {
-    // جيب JSON الأول عشان الـ API بيرجع audio_url مش audio مباشرة
+    // بنطلب الـ API مباشرة كـ arraybuffer — لو رجع JSON نجيب الـ audio_url ونحمّله فوراً
     const r = await axios.get(`${BASE_URL}/${endpoint}`, {
         params: { text },
-        timeout: 30000,
-        validateStatus: () => true,
-        headers: { 'User-Agent': 'Mozilla/5.0' }
-    })
-    if (r.status >= 400) throw new Error(`HTTP ${r.status}`)
-
-    const json = r.data
-    // الرابط في audio_url
-    const link = json?.audio_url || json?.url || json?.audio || json?.link || json?.data?.url
-    if (!link) throw new Error('مفيش رابط صوت في الرد: ' + JSON.stringify(json).slice(0, 120))
-
-    // tmpfiles.org بيكون الرابط على شكل /dl/xxx — نحوّله لـ /xxx عشان التحميل المباشر
-    // مثال: https://tmpfiles.org/dl/weAEjAFrlD6u/audio.mp3
-    //   →   https://tmpfiles.org/weAEjAFrlD6u/audio.mp3  (مباشر)
-    let directLink = link
-    const tmpm = link.match(/tmpfiles\.org\/dl\/([^/]+\/[^?]+)/)
-    if (tmpm) directLink = `https://tmpfiles.org/${tmpm[1]}`
-
-    const r2 = await axios.get(directLink, {
         responseType: 'arraybuffer',
-        timeout: 60000,
+        timeout: 40000,
         maxRedirects: 10,
+        validateStatus: () => true,
         headers: {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Accept': 'audio/mpeg, audio/*, */*'
-        },
-        validateStatus: () => true
+            'Accept': 'audio/mpeg, audio/*, application/json, */*'
+        }
     })
 
-    if (r2.status >= 400) throw new Error(`فشل تحميل الصوت: HTTP ${r2.status}`)
+    if (r.status >= 400) throw new Error(`HTTP ${r.status}`)
 
-    const buf = Buffer.from(r2.data)
-    if (buf.length < 100) throw new Error('الملف الصوتي فارغ')
+    const buf = Buffer.from(r.data)
+    const start = buf.slice(0, 5).toString('utf8')
 
-    // تأكد إنه مش HTML
-    const start = buf.slice(0, 15).toString('utf8').toLowerCase()
-    if (start.includes('<!doc') || start.includes('<html')) {
-        throw new Error('الموقع رجع صفحة HTML بدل الصوت — جرّب تاني')
+    // لو رجع JSON — جيب audio_url وحمّله كـ stream
+    if (start.startsWith('{') || start.startsWith('[')) {
+        let json
+        try { json = JSON.parse(buf.toString()) } catch { throw new Error('رد مش JSON صح') }
+
+        const link = json?.audio_url || json?.url || json?.audio || json?.link
+        if (!link) throw new Error('مفيش رابط في الرد: ' + JSON.stringify(json).slice(0, 100))
+
+        // حمّل الصوت بـ stream مباشرة بدون تخزين الرابط
+        const { data: stream, headers } = await axios.get(link, {
+            responseType: 'stream',
+            timeout: 60000,
+            maxRedirects: 10,
+            headers: {
+                'User-Agent': 'Mozilla/5.0',
+                'Accept': '*/*',
+                // لو tmpfiles محتاج referer
+                'Referer': new URL(link).origin + '/'
+            },
+            validateStatus: () => true
+        })
+
+        // جمّع الـ chunks
+        const chunks = []
+        await new Promise((res, rej) => {
+            stream.on('data', c => chunks.push(c))
+            stream.on('end', res)
+            stream.on('error', rej)
+        })
+
+        const audioBuf = Buffer.concat(chunks)
+        if (audioBuf.length < 500) throw new Error(`الملف صغير جداً (${audioBuf.length} bytes) — الرابط انتهى`)
+
+        const s = audioBuf.slice(0, 15).toString('utf8').toLowerCase()
+        if (s.includes('<!doc') || s.includes('<html')) throw new Error('الموقع محتاج login — الرابط محمي')
+
+        return audioBuf
     }
 
+    // رجع audio مباشرة (ID3 / ftyp / ...)
+    if (buf.length < 500) throw new Error('الملف فارغ')
     return buf
 }
 
