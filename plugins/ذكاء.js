@@ -1,6 +1,6 @@
 /**
  * plugins/aiapk.js
- * محادثة AI + توليد صور عبر /ai/aiapk مع معالجة HTTP 500 في توليد الصور
+ * محادثة AI عبر /ai/aiapk + توليد صور مع بدائل تلقائية
  */
 
 import axios from 'axios'
@@ -10,6 +10,18 @@ const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,
 
 const react = async (conn, m, emoji) => {
   try { await conn.sendMessage(m.chat, { react: { text: emoji, key: m.key } }) } catch {}
+}
+
+function isCannotGenerateImageText(str = '') {
+  const s = String(str).toLowerCase()
+  return (
+    s.includes('unable to generate') ||
+    s.includes('cannot generate') ||
+    s.includes("can't generate") ||
+    s.includes('display images') ||
+    s.includes('لا أستطيع توليد') ||
+    s.includes('لا يمكنني توليد')
+  )
 }
 
 function extractImageUrl(payload) {
@@ -84,42 +96,36 @@ async function requestAiApk(params) {
 
   return {
     imageUrl: extractImageUrl(data),
-    textReply: extractReplyText(data),
-    raw: data
+    textReply: extractReplyText(data)
   }
-}
-
-async function generateImageWithFallback(prompt) {
-  const attempts = [
-    { prompt: `generate image: ${prompt}`, mode: 'image' },
-    { prompt: `draw an image of: ${prompt}`, mode: 'image' },
-    { prompt: `generate image: ${prompt}` }
-  ]
-
-  let lastErr = null
-  for (const params of attempts) {
-    try {
-      const res = await requestAiApk(params)
-      if (res.imageUrl || res.textReply) return res
-    } catch (e) {
-      lastErr = e
-    }
-  }
-  throw lastErr || new Error('فشل توليد الصورة من السيرفر')
 }
 
 async function downloadImageBuffer(url) {
   try {
     const r = await axios.get(url, {
       responseType: 'arraybuffer',
-      timeout: 30000,
+      timeout: 35000,
       headers: { 'User-Agent': UA },
       validateStatus: () => true
     })
-    if (r.status < 400 && r.data && r.data.length > 1000) {
+    if (r.status < 400 && r.data && r.data.length > 2000) {
       return Buffer.from(r.data)
     }
   } catch {}
+  return null
+}
+
+async function generateFallbackImageBuffer(prompt) {
+  const seed = Math.floor(Math.random() * 1000000)
+  const candidates = [
+    `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?seed=${seed}&width=1024&height=1024&nologo=true`,
+    `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?seed=${seed}`
+  ]
+
+  for (const u of candidates) {
+    const buf = await downloadImageBuffer(u)
+    if (buf) return buf
+  }
   return null
 }
 
@@ -137,10 +143,51 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
   const wait = await m.reply(isImageCmd ? '🎨 *جاري توليد الصورة...*' : '🤖 *جاري التفكير...*')
 
   try {
-    const { imageUrl, textReply } = isImageCmd
-      ? await generateImageWithFallback(prompt)
-      : await requestAiApk({ prompt })
+    if (isImageCmd) {
+      let sent = false
 
+      try {
+        const aiRes = await requestAiApk({ prompt, mode: 'image' })
+        if (aiRes.imageUrl) {
+          const buf = await downloadImageBuffer(aiRes.imageUrl)
+          if (buf) {
+            try { await conn.sendMessage(m.chat, { delete: wait.key }) } catch {}
+            await conn.sendMessage(
+              m.chat,
+              { image: buf, caption: `🎨 *النتيجة:* ${prompt}` },
+              { quoted: m }
+            )
+            sent = true
+          }
+        } else if (aiRes.textReply && !isCannotGenerateImageText(aiRes.textReply)) {
+          try { await conn.sendMessage(m.chat, { delete: wait.key }) } catch {}
+          await conn.sendMessage(m.chat, { text: aiRes.textReply }, { quoted: m })
+          sent = true
+        }
+      } catch {}
+
+      if (!sent) {
+        const fallbackBuf = await generateFallbackImageBuffer(prompt)
+        try { await conn.sendMessage(m.chat, { delete: wait.key }) } catch {}
+
+        if (fallbackBuf) {
+          await conn.sendMessage(
+            m.chat,
+            { image: fallbackBuf, caption: `🎨 *النتيجة:* ${prompt}` },
+            { quoted: m }
+          )
+        } else {
+          await m.reply('❌ تعذر توليد الصورة حالياً، جرّب وصفاً آخر أو أعد المحاولة.')
+          await react(conn, m, '❌')
+          return
+        }
+      }
+
+      await react(conn, m, '✅')
+      return
+    }
+
+    const { imageUrl, textReply } = await requestAiApk({ prompt })
     try { await conn.sendMessage(m.chat, { delete: wait.key }) } catch {}
 
     if (imageUrl) {
@@ -163,21 +210,13 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
       return
     }
 
-    await m.reply(
-      isImageCmd
-        ? '⚠️ سيرفر `/ai/aiapk` لم يرجع صورة (قد يكون توليد الصور معطلاً أو يحتاج model/modelId معين في السيرفر).'
-        : '❌ لم يرجع الـ API رداً نصياً أو صورة.'
-    )
-    await react(conn, m, '⚠️')
+    await m.reply('❌ لم يرجع الـ API رداً نصياً أو صورة.')
+    await react(conn, m, '❌')
   } catch (e) {
     console.error('[aiapk]', e.message)
     try { await conn.sendMessage(m.chat, { delete: wait.key }) } catch {}
     await react(conn, m, '❌')
-    await m.reply(
-      isImageCmd
-        ? `❌ *فشل توليد الصورة:* ${e.message}\n💡 غالباً قسم الصور في /ai/aiapk بيرجع خطأ 500 من السيرفر نفسه.`
-        : `❌ *خطأ:* ${e.message}`
-    )
+    await m.reply(`❌ *خطأ:* ${e.message}`)
   }
 }
 
