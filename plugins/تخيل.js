@@ -1,6 +1,7 @@
 /**
  * plugins/تخيل.js
  * توليد صور بـ 3 اختيارات عبر أزرار القائمة (أمر: تخيل فقط)
+ * الاختيار 1 سريع ومضمون، والاختيار 2 و 3 بـ timeout مضبوط لعدم الإطالة
  */
 
 import axios from 'axios'
@@ -32,7 +33,7 @@ function isAlreadyEnglish(str = '') {
 
 async function getJson(url) {
   const ctl = new AbortController()
-  const t = setTimeout(() => ctl.abort(), 12000)
+  const t = setTimeout(() => ctl.abort(), 10000)
   try {
     const r = await fetch(url, {
       headers: { 'User-Agent': UA },
@@ -138,14 +139,14 @@ function extractImageSourceDeep(obj, depth = 0) {
   return ''
 }
 
-async function resolveImageBufferFromSource(src) {
+async function resolveImageBufferFromSource(src, timeout = 25000) {
   if (!src) return null
   if (isBase64Image(src)) return decodeBase64Image(src)
 
   try {
     const r = await axios.get(src, {
       responseType: 'arraybuffer',
-      timeout: 45000,
+      timeout,
       headers: { 'User-Agent': UA },
       validateStatus: () => true
     })
@@ -159,18 +160,12 @@ async function resolveImageBufferFromSource(src) {
   return null
 }
 
-async function trySingleEndpoint(endpoint, prompt) {
-  const paramVariants = [
-    { prompt },
-    { q: prompt },
-    { text: prompt }
-  ]
-
+async function trySingleEndpoint(endpoint, paramVariants, timeout = 20000) {
   for (const params of paramVariants) {
     try {
       const res = await axios.get(endpoint, {
         params,
-        timeout: 65000,
+        timeout,
         responseType: 'arraybuffer',
         headers: { 'User-Agent': UA, Accept: 'image/*, application/json, */*' },
         validateStatus: () => true
@@ -189,14 +184,14 @@ async function trySingleEndpoint(endpoint, prompt) {
           if (json && json.status === false) continue
           const src = extractImageSourceDeep(json)
           if (src) {
-            const imgBuf = await resolveImageBufferFromSource(src)
+            const imgBuf = await resolveImageBufferFromSource(src, timeout)
             if (imgBuf) return imgBuf
           }
         } catch {}
       } else {
         const str = buf.toString('utf8').trim()
         if (/^https?:\/\//i.test(str) || isBase64Image(str)) {
-          const imgBuf = await resolveImageBufferFromSource(str)
+          const imgBuf = await resolveImageBufferFromSource(str, timeout)
           if (imgBuf) return imgBuf
         }
       }
@@ -211,7 +206,11 @@ async function generateByChoice(choiceKey, enPrompt, rawPrompt) {
 
   if (choiceKey === 'chatpro') {
     for (const p of prompts) {
-      const buf = await trySingleEndpoint(CHATPRO_ENDPOINT, p)
+      const buf = await trySingleEndpoint(
+        CHATPRO_ENDPOINT,
+        [{ prompt: p }, { q: p }],
+        15000
+      )
       if (buf) return buf
     }
     return null
@@ -219,15 +218,24 @@ async function generateByChoice(choiceKey, enPrompt, rawPrompt) {
 
   if (choiceKey === 'genimage') {
     for (const p of prompts) {
-      const buf = await trySingleEndpoint(GENIMAGE_ENDPOINT, p)
+      const buf = await trySingleEndpoint(
+        GENIMAGE_ENDPOINT,
+        [
+          { prompt: p, width: 1024, height: 1024, steps: 30 },
+          { prompt: p },
+          { q: p }
+        ],
+        20000
+      )
       if (buf) return buf
     }
     return null
   }
 
+  // الاختيار الأول: المسار السريع والشغال
   for (const p of prompts) {
     for (const ep of PRIMARY_IMG_ENDPOINTS) {
-      const buf = await trySingleEndpoint(ep, p)
+      const buf = await trySingleEndpoint(ep, [{ prompt: p }, { q: p }], 25000)
       if (buf) return buf
     }
   }
@@ -239,7 +247,7 @@ async function generateByChoice(choiceKey, enPrompt, rawPrompt) {
   ]
 
   for (const u of fallbackUrls) {
-    const buf = await resolveImageBufferFromSource(u)
+    const buf = await resolveImageBufferFromSource(u, 30000)
     if (buf) return buf
   }
 
@@ -281,7 +289,7 @@ let before = async (m, { conn }) => {
 
       if (!imgBuf) {
         await react(conn, m, '❌')
-        await m.reply(`❌ تعذر توليد الصورة من *${CHOICE_META[choiceKey].short}*، جرّب اختياراً آخر من القائمة أو أعد المحاولة.`)
+        await m.reply(`❌ تعذر توليد الصورة من *${CHOICE_META[choiceKey].short}*، جرّب *1️⃣ توليد سريع* أو أعد المحاولة.`)
         return true
       }
 
@@ -340,17 +348,17 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
     const rows = [
       {
         title: '1️⃣ الاختيار الأول (توليد سريع)',
-        description: 'المسار الأساسي السريع مع بديل تلقائي',
+        description: 'المسار الأساسي السريع والشغال مع بديل تلقائي',
         id: `${PREFIX}primary_${jobId}`
       },
       {
         title: '2️⃣ الاختيار الثاني (ChatPro Image)',
-        description: 'توليد الصور عبر /ai/chatpro-image',
+        description: 'توليد سريع عبر /ai/chatpro-image (حد أقصى 15 ثانية)',
         id: `${PREFIX}chatpro_${jobId}`
       },
       {
         title: '3️⃣ الاختيار الثالث (GenImage)',
-        description: 'توليد الصور عبر /ai/genimage',
+        description: 'توليد عبر /ai/genimage (حد أقصى 20 ثانية)',
         id: `${PREFIX}genimage_${jobId}`
       }
     ]
