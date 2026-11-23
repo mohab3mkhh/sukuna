@@ -1,112 +1,172 @@
-import axios from 'axios';
-import { generateWAMessageFromContent } from '@whiskeysockets/baileys';
+// plugins/جيتهاب.js
+// 🐙 تحميل من جيتهاب:
+//   .جيتهاب <رابط ريبو>          → الريبو كامل ZIP
+//   .جيتهاب <رابط ملف (blob)>    → الملف ده بس
+//   .جيتهاب <رابط ملف> zip       → الريبو كامل حتى لو الرابط لملف
+// يقبل: github.com/owner/repo  |  /tree/branch  |  /blob/branch/path  |  raw.githubusercontent.com/...  |  owner/repo
+// المصدر: Prexzy API (معلومات الريبو) ← ولو فشل بيحمّل من جيتهاب مباشرة
 
-const regex = /(?:https|git)(?::\/\/|@)github\.com[\/:]([^\/:]+)\/(.+)/i;
+import axios from 'axios'
+import fs from 'fs'
+import os from 'os'
+import path from 'path'
+import { Transform } from 'stream'
+import { pipeline } from 'stream/promises'
 
-// ✅ **البحث في GitHub**
-const searchGitHub = async (m, { conn, text, usedPrefix, command }) => {
-  if (!text) return conn.sendMessage(m.chat, {
-    image: { url: "https://files.catbox.moe/00p88l.png" },
-    caption: `*╭━━━━━━❨🔎❩━━━━━━╮*\n` +
-             `🚨 *يرجى إدخال اسم المشروع للبحث في GitHub!*\n` +
-             `🔍 *مثال:* \n➤  ${usedPrefix + command} WhatsApp-Bot\n` +
-             `*╰━━━━━━❨🔎❩━━━━━━╯*`
-  }, { quoted: m });
+const FOOTER = '⛩️ SUKUNA BOT ⛩️'
+const PREXZY = 'https://prexzyapis.com/download/github'
+const MAX_MB = 80   // الذاكرة محدودة؛ الملف بيتحمّل على الديسك مش في الرام
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36'
 
-  await conn.sendMessage(m.chat, { react: { text: '⌛', key: m.key } });
+const isHttp = v => typeof v === 'string' && /^https?:\/\//i.test(v)
+const fmtSize = b => !b ? '?' : b < 1048576 ? (b / 1024).toFixed(1) + ' KB' : (b / 1048576).toFixed(2) + ' MB'
 
-  try {
-    const url = `https://api.github.com/search/repositories?q=${encodeURIComponent(text)}&per_page=100`;
-    const { data } = await axios.get(url);
+// ━━━━━━━━ تحليل الرابط ━━━━━━━━
+export function parseGithub(input) {
+    const s = String(input || '').trim().replace(/[)\]\.,>،]+$/, '')
 
-    if (!data.items.length) throw "❌ *لم يتم العثور على أي مستودع مطابق!*";
+    let m = s.match(/raw\.githubusercontent\.com\/([^/\s]+)\/([^/\s]+)\/([^/\s]+)\/([^\s?#]+)/i)
+    if (m) return { owner: m[1], repo: m[2], branch: m[3], file: m[4] }
 
-    let sections = data.items.map((repo) => ({
-      title: `📂 ${repo.name}`,
-      rows: [
-        {
-          title: "📥 تحميل المستودع",
-          description: `⭐ ${repo.stargazers_count} | 🍴 ${repo.forks_count} | 👤 ${repo.owner.login}`,
-          id: `${usedPrefix}تحميل ${repo.html_url}`
+    m = s.match(/github\.com\/([^/\s]+)\/([^/\s#?]+?)(?:\.git)?(?:\/(tree|blob|raw)\/([^/\s?#]+)(?:\/([^\s?#]+))?)?\/?(?:[?#]\S*)?$/i)
+    if (m) {
+        const kind = m[3]
+        return { owner: m[1], repo: m[2], branch: m[4] || null, file: (kind === 'blob' || kind === 'raw') ? (m[5] || null) : null }
+    }
+
+    m = s.match(/^([\w.-]+)\/([\w.-]+)$/)   // owner/repo
+    if (m) return { owner: m[1], repo: m[2], branch: null, file: null }
+    return null
+}
+
+// ━━━━━━━━ معلومات الريبو من Prexzy ━━━━━━━━
+async function viaPrexzy({ owner, repo, branch }) {
+    const url = `https://github.com/${owner}/${repo}` + (branch ? `/tree/${branch}` : '')
+    const r = await axios.get(PREXZY, { params: { url }, timeout: 20000, validateStatus: () => true })
+    const d = r.data?.data
+    if (d?.name === 'AxiosError' || d?.stack) throw new Error('Prexzy: ' + String(d.message || 'خطأ').slice(0, 100))
+    if (!d || !isHttp(d.downloadUrl)) throw new Error('Prexzy: مفيش رابط تحميل')
+    return {
+        downloadUrl: d.downloadUrl,
+        fileName: d.fileName || `${repo}-${d.branch || branch || 'main'}.zip`,
+        branch: d.branch || branch,
+        stars: d.stars,
+        description: d.description,
+        sizeBytes: d.repoSizeBytes || 0
+    }
+}
+
+// ━━━━━━━━ تحميل على الديسك (من غير ما الملف يدخل الرام) ━━━━━━━━
+async function downloadToFile(url, dest, maxBytes) {
+    const r = await axios.get(url, {
+        responseType: 'stream', timeout: 120000, maxRedirects: 8,
+        headers: { 'User-Agent': UA }, validateStatus: () => true
+    })
+    if (r.status !== 200) { try { r.data.destroy() } catch {} ; throw new Error('HTTP ' + r.status + (r.status === 404 ? ' (الملف/الريبو مش موجود أو private)' : '')) }
+    const len = Number(r.headers?.['content-length'] || 0)
+    if (len > maxBytes) { try { r.data.destroy() } catch {} ; throw new Error(`الحجم ${fmtSize(len)} أكبر من الحد (${MAX_MB}MB)`) }
+
+    let bytes = 0
+    const counter = new Transform({
+        transform(chunk, _enc, cb) {
+            bytes += chunk.length
+            if (bytes > maxBytes) return cb(new Error(`الحجم أكبر من الحد (${MAX_MB}MB)`))
+            cb(null, chunk)
         }
-      ]
-    }));
+    })
+    await pipeline(r.data, counter, fs.createWriteStream(dest))
+    return bytes
+}
 
-    const interactiveMessage = {
-      body: { text: `*🔎 تم العثور على ${data.items.length} مستودع*\n\n> *اختر المستودع المطلوب للتحميل:*` },
-      footer: { text: "🚀 *GitHub Search*" },
-      header: { imageMessage: { url: "https://files.catbox.moe/00p88l.png" } }, // ✅ **إضافة الصورة في القائمة**
-      nativeFlowMessage: {
-        buttons: [
-          {
-            name: 'single_select',
-            buttonParamsJson: JSON.stringify({
-              title: '❲ 📜 قائمة المستودعات ❳',
-              sections
-            })
-          }
-        ],
-        messageParamsJson: ''
-      }
-    };
+const MIMES = { zip: 'application/zip', json: 'application/json', pdf: 'application/pdf', txt: 'text/plain', md: 'text/plain', js: 'text/plain', py: 'text/plain', html: 'text/html' }
+const mimeOf = name => MIMES[String(name).split('.').pop().toLowerCase()] || 'application/octet-stream'
 
-    let msg = generateWAMessageFromContent(m.chat, {
-      viewOnceMessage: { message: { interactiveMessage } }
-    }, { userJid: conn.user.jid, quoted: m });
+const handler = async (m, { conn, text, usedPrefix, command }) => {
+    const reply = t => conn.sendMessage(m.chat, { text: t }, { quoted: m })
+    const react = async e => { try { await conn.sendMessage(m.chat, { react: { text: e, key: m.key } }) } catch {} }
 
-    await conn.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
-    conn.relayMessage(m.chat, msg.message, { messageId: msg.key.id });
+    const given = String(text || '')
+    const urlMatch = (`${given} ${m.quoted?.text || ''}`).match(/(?:https?:\/\/)?(?:raw\.githubusercontent\.com|github\.com)\/[^\s]+|(?<![\w/])[\w.-]+\/[\w.-]+(?![\w/.:])/i)
+    const parsed = urlMatch ? parseGithub(urlMatch[0]) : null
 
-  } catch (error) {
-    conn.sendMessage(m.chat, {
-      image: { url: "https://files.catbox.moe/00p88l.png" },
-      caption: `❌ *حدث خطأ أثناء البحث في GitHub!*\n⚠️ *التفاصيل:* ${error.message}`
-    }, { quoted: m });
-  }
-};
+    if (!parsed) {
+        return reply(`🐙 *تحميل من جيتهاب*\n\n*${usedPrefix}${command} <رابط الريبو>* ← الريبو كامل ZIP\n*${usedPrefix}${command} <رابط ملف>* ← الملف ده بس\n*${usedPrefix}${command} <رابط ملف> zip* ← الريبو كامل\n\n💡 مثال:\n${usedPrefix}${command} https://github.com/mohab3mkhh/sukuna\n\n> ${FOOTER}`)
+    }
 
-// ✅ **تحميل المستودع مباشرة**
-const downloadGitHubRepo = async (m, { conn, args, usedPrefix, command }) => {
-  if (!args[0]) return conn.sendMessage(m.chat, {
-    image: { url: "https://files.catbox.moe/00p88l.png" },
-    caption: `*╭━━━━━━❨🔗❩━━━━━━╮*\n` +
-             `🚨 *يرجى إدخال رابط المستودع للتحميل!*\n` +
-             `🔽 *مثال:*\n➤  ${usedPrefix + command} https://github.com/user/repo\n` +
-             `*╰━━━━━━❨🔗❩━━━━━━╯*`
-  }, { quoted: m });
+    const wantRepo = /(^|\s)(zip|repo|كامل|الريبو)(\s|$)/i.test(given.replace(urlMatch[0], ' '))
+    const maxBytes = MAX_MB * 1048576
+    const tmp = path.join(os.tmpdir(), `gh_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`)
 
-  if (!regex.test(args[0])) throw "⚠️ *الرابط المدخل غير صحيح! تأكد من أنه رابط GitHub صالح.*";
+    await react('⏳')
+    try {
+        // ───── ملف واحد ─────
+        if (parsed.file && !wantRepo) {
+            const rawUrl = `https://raw.githubusercontent.com/${parsed.owner}/${parsed.repo}/${parsed.branch || 'HEAD'}/${parsed.file.split('/').map(encodeURIComponent).join('/')}`
+            const bytes = await downloadToFile(rawUrl, tmp, maxBytes)
+            const fileName = parsed.file.split('/').pop()
+            await conn.sendMessage(m.chat, {
+                document: { url: tmp }, mimetype: mimeOf(fileName), fileName,
+                caption: `📄 *${fileName}*\n🐙 ${parsed.owner}/${parsed.repo}${parsed.branch ? ` (${parsed.branch})` : ''}\n💾 ${fmtSize(bytes)}\n\n> ${FOOTER}`
+            }, { quoted: m })
+            await react('✅')
+            return
+        }
 
-  let [_, user, repo] = args[0].match(regex) || [];
-  repo = repo.replace(/.git$/, '');
-  const url = `https://api.github.com/repos/${user}/${repo}/zipball`;
+        // ───── الريبو كامل ─────
+        const errors = []
+        let info = null
+        try { info = await viaPrexzy(parsed) } catch (e) { errors.push(e.message) }
 
-  try {
-    await conn.sendMessage(m.chat, { react: { text: '📥', key: m.key } });
+        if (info?.sizeBytes && info.sizeBytes > maxBytes * 1.5) {
+            throw new Error(`الريبو حجمه ${fmtSize(info.sizeBytes)} وأكبر من الحد (${MAX_MB}MB)`)
+        }
 
-    await conn.sendMessage(m.chat, {
-      document: { url },
-      mimetype: 'application/zip',
-      fileName: `${repo}.zip`,
-      caption: `📂 *تم تحميل المستودع من GitHub!*\n🔗 *الرابط:* ${args[0]}`
-    }, { quoted: m });
+        const sources = []
+        if (info) sources.push({ url: info.downloadUrl, name: 'prexzy' })
+        sources.push({ url: `https://codeload.github.com/${parsed.owner}/${parsed.repo}/zip/${parsed.branch || 'HEAD'}`, name: 'github' })
 
-    await conn.sendMessage(m.chat, { react: { text: '✔️', key: m.key } });
+        let bytes = 0
+        let ok = false
+        for (const s of sources) {
+            try {
+                bytes = await downloadToFile(s.url, tmp, maxBytes)
+                const head = fs.readFileSync(tmp).subarray(0, 2).toString('latin1')
+                if (head !== 'PK') throw new Error('الملف مش ZIP')
+                ok = true
+                break
+            } catch (e) {
+                errors.push(`${s.name}: ${e.message}`)
+                try { fs.unlinkSync(tmp) } catch {}
+                if (/أكبر من الحد/.test(e.message)) break
+            }
+        }
+        if (!ok) throw new Error(errors.join(' | '))
 
-  } catch (error) {
-    conn.sendMessage(m.chat, {
-      image: { url: "https://files.catbox.moe/00p88l.png" },
-      caption: `❌ *حدث خطأ أثناء تحميل المستودع!*\n⚠️ *التفاصيل:* ${error.message}`
-    }, { quoted: m });
-  }
-};
+        const branch = info?.branch || parsed.branch || 'main'
+        const fileName = info?.fileName || `${parsed.repo}-${branch}.zip`
+        const lines = [
+            `📦 *${parsed.repo}*`,
+            `👤 ${parsed.owner}`,
+            `🌿 ${branch}${info?.stars != null ? `  |  ⭐ ${info.stars}` : ''}`,
+            `💾 ${fmtSize(bytes)}`,
+            info?.description ? `📝 ${String(info.description).slice(0, 150)}` : '',
+            '',
+            `> ${FOOTER}`
+        ].filter((l, i, a) => l !== '' || a[i - 1] !== '')
+        await conn.sendMessage(m.chat, {
+            document: { url: tmp }, mimetype: 'application/zip', fileName, caption: lines.join('\n')
+        }, { quoted: m })
+        await react('✅')
+    } catch (e) {
+        await react('❌')
+        reply(`❌ فشل التحميل\n\n${String(e.message).slice(0, 400)}\n\n> ${FOOTER}`)
+    } finally {
+        try { fs.unlinkSync(tmp) } catch {}
+    }
+}
 
-// ✅ **دمج أوامر البحث والتحميل**
-const handler = async (m, context) => {
-  const { usedPrefix, command } = context;
-  if (command === 'جيتهاب') return searchGitHub(m, context);
-  if (command === 'تحميل') return downloadGitHubRepo(m, context);
-};
+handler.help = ['جيتهاب <رابط>']
+handler.tags = ['downloader']
+handler.command = /^(جيتهاب|github|gitclone|ريبو)$/i
 
-handler.command = /^(جيتهاب|تحميل)$/i;
-export default handler;
+export default handler
