@@ -1,165 +1,283 @@
+/**
+ * plugins/animekill.js
+ * تحويل الصورة المردود عليها إلى أنمي عبر https://prexzyapis.com/ai/animekill
+ */
+
 import axios from 'axios'
-import fetch from 'node-fetch'
 import FormData from 'form-data'
-import { Readable } from 'stream'
-import fs from 'fs'
-import path from 'path'
 
-function randomIP() {
-  return Array(4).fill(0).map(() => Math.floor(Math.random() * 256)).join('.')
+const ENDPOINT = 'https://prexzyapis.com/ai/animekill'
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
+
+const react = async (conn, m, emoji) => {
+  try { await conn.sendMessage(m.chat, { react: { text: emoji, key: m.key } }) } catch {}
 }
 
-function randomUserAgent() {
-  const userAgents = [
-    'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36',
-    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Android 12; Mobile; rv:102.0) Gecko/102.0 Firefox/102.0',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Safari/605.1.15'
-  ]
-  return userAgents[Math.floor(Math.random() * userAgents.length)]
+function getQuotedImageMsg(m) {
+  const q = m?.quoted
+  if (!q) return null
+
+  const mime = String(q.mimetype || q.msg?.mimetype || '').toLowerCase()
+  const isImage =
+    mime.startsWith('image/') ||
+    Boolean(q.msg?.imageMessage) ||
+    Boolean(q.message?.imageMessage) ||
+    q.mtype === 'imageMessage'
+
+  if (!isImage) return null
+  return q
 }
 
-const sessionIP = randomIP()
-const sessionUA = randomUserAgent()
+function isBase64Image(str = '') {
+  const s = String(str).trim()
+  return /^data:image\/[a-zA-Z0-9+.-]+;base64,/i.test(s) || /^[A-Za-z0-9+/=]{250,}$/.test(s)
+}
 
-function getBaseHeaders() {
-  return {
-    'fp': 'c74f54010942b009eaa50cd58a1f4419',
-    'fp1': '3LXezMA2LSO2kESzl2EYNEQBUWOCDQ/oQMQaeP5kWWHbtCWoiTptGi2EUCOLjkdD',
-    'origin': 'https://pixnova.ai',
-    'referer': 'https://pixnova.ai/',
-    'theme-version': '83EmcUoQTUv50LhNx0VrdcK8rcGexcP35FcZDcpgWsAXEyO4xqL5shCY6sFIWB2Q',
-    'x-code': '1752930995556',
-    'x-guide': 'SjwMWX+LcTqkoPt48PIOgZzt3eQ93zxCGvzs1VpdikRR9b9+HvKM0Qiceq6Zusjrv8bUEtDGZdVqjQf/bdOXBb0vEaUUDRZ29EXYW0kt047grMMceXzd3zppZoHZj9DeXZOTGaG50PpTHxTjX3gb0D1wmfjol2oh7d5jJFSIsY0=',
-    'accept-language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
-    'accept': 'application/json, text/plain, */*',
-    'user-agent': sessionUA,
-    'X-Forwarded-For': sessionIP,
-    'Client-IP': sessionIP
+function decodeBase64Image(str = '') {
+  const clean = String(str).replace(/^data:image\/[a-zA-Z0-9+.-]+;base64,/i, '').trim()
+  const buf = Buffer.from(clean, 'base64')
+  return buf.length > 1500 ? buf : null
+}
+
+function findImageUrlDeep(obj, depth = 0) {
+  if (!obj || depth > 5) return ''
+  if (typeof obj === 'string') {
+    const s = obj.trim()
+    if (/^https?:\/\//i.test(s) && !s.includes(' ')) return s
+    if (isBase64Image(s)) return s
+    return ''
   }
-}
-
-async function uploadImageFromBuffer(buffer) {
-  const stream = Readable.from(buffer)
-  const form = new FormData()
-  form.append('file', stream, { filename: 'image.jpg' })
-  form.append('fn_name', 'demo-photo2anime')
-  form.append('request_from', '2')
-  form.append('origin_from', '111977c0d5def647')
-
-  const upload = await axios.post('https://api.pixnova.ai/aitools/upload-img', form, {
-    headers: {
-      ...getBaseHeaders(),
-      ...form.getHeaders()
+  if (Array.isArray(obj)) {
+    for (const item of obj) {
+      const found = findImageUrlDeep(item, depth + 1)
+      if (found) return found
     }
-  })
-  return upload.data?.data?.path
+    return ''
+  }
+  if (typeof obj === 'object') {
+    const keys = [
+      'image', 'imageUrl', 'image_url', 'output', 'result_url',
+      'url', 'link', 'download', 'img', 'anime'
+    ]
+    for (const k of keys) {
+      if (k in obj) {
+        const found = findImageUrlDeep(obj[k], depth + 1)
+        if (found) return found
+      }
+    }
+    for (const v of Object.values(obj)) {
+      const found = findImageUrlDeep(v, depth + 1)
+      if (found) return found
+    }
+  }
+  return ''
 }
 
-async function createTask(sourceImage) {
-  const payload = {
-    fn_name: 'demo-photo2anime',
-    call_type: 3,
-    input: {
-      source_image: sourceImage,
-      strength: 0.6,
-      prompt: 'use anime style, hd, 8k, smooth, aesthetic',
-      negative_prompt: '(worst quality, low quality:1.4), cropped, blurry, text, watermark',
-      request_from: 2
-    },
-    request_from: 2,
-    origin_from: '111977c0d5def647'
+function extractErrorMessage(payload) {
+  if (!payload || typeof payload !== 'object') return ''
+  if (payload.status === false) {
+    return String(payload.error || payload.message || payload.data?.message || 'فشل التحويل من السيرفر').trim()
   }
-
-  const headers = {
-    ...getBaseHeaders(),
-    'content-type': 'application/json'
+  if (payload.data?.name === 'AxiosError' && payload.data?.message) {
+    return String(payload.data.message).trim()
   }
-
-  const res = await axios.post('https://api.pixnova.ai/aitools/of/create', payload, { headers })
-  return res.data?.data?.task_id
+  return ''
 }
 
-async function waitForResult(taskId) {
-  const payload = {
-    task_id: taskId,
-    fn_name: 'demo-photo2anime',
-    call_type: 3,
-    request_from: 2,
-    origin_from: '111977c0d5def647'
-  }
-
-  const delay = ms => new Promise(resolve => setTimeout(resolve, ms))
-
-  for (let i = 1; i <= 30; i++) {
-    const headers = {
-      ...getBaseHeaders(),
-      'content-type': 'application/json'
+async function fetchBufferFromUrl(url) {
+  try {
+    const r = await axios.get(url, {
+      responseType: 'arraybuffer',
+      timeout: 60000,
+      headers: { 'User-Agent': UA },
+      validateStatus: () => true
+    })
+    if (r.status < 400 && r.data && r.data.length > 1500) {
+      const ct = String(r.headers['content-type'] || '').toLowerCase()
+      if (!ct.includes('text/html') && !ct.includes('application/json')) {
+        return Buffer.from(r.data)
+      }
     }
-
-    const check = await axios.post('https://api.pixnova.ai/aitools/of/check-status', payload, { headers })
-    const data = check.data?.data
-    if (data?.status === 2 && data?.result_image) {
-      const url = data.result_image.startsWith('http')
-        ? data.result_image
-        : `https://oss-global.pixnova.ai/${data.result_image}`
-      return url
-    }
-    await delay(2000)
-  }
-
+  } catch {}
   return null
 }
 
-// 🧠 handler
-let handler = async (m, { conn }) => {
-  const q = m.quoted || m
-  const mime = (q.msg || q).mimetype || ''
+async function parseApiResponse(res) {
+  if (!res?.data) return { buffer: null, error: `HTTP ${res?.status || 500}` }
 
-  if (!/image\/(jpe?g|png|webp)/.test(mime)) {
-    return m.reply('📌 من فضلك رد على صورة لاستخدام هذا الأمر.\n\nمثال:\n.لانمي')
+  const rawBuf = Buffer.from(res.data)
+  const ct = String(res.headers['content-type'] || '').toLowerCase()
+
+  if (res.status >= 400) {
+    let msg = `HTTP ${res.status}`
+    try {
+      const j = JSON.parse(rawBuf.toString('utf8'))
+      msg = extractErrorMessage(j) || j?.message || j?.error || msg
+    } catch {}
+    return { buffer: null, error: msg }
   }
 
-  const buffer = await q.download()
-  
-  // ✅ إضافة تفاعل رمز الساعة بدلاً من رسالة نصية
-  await m.react('🕓')
+  if (ct.includes('image/') && rawBuf.length > 1500) {
+    return { buffer: rawBuf, error: '' }
+  }
+
+  const str = rawBuf.toString('utf8').trim()
+  if (!str) return { buffer: null, error: 'رد فارغ من السيرفر' }
+
+  if (isBase64Image(str)) {
+    const dec = decodeBase64Image(str)
+    if (dec) return { buffer: dec, error: '' }
+  }
+
+  if (/^https?:\/\//i.test(str) && !str.includes('\n')) {
+    const fetched = await fetchBufferFromUrl(str)
+    if (fetched) return { buffer: fetched, error: '' }
+  }
+
+  let parsed = null
+  try {
+    parsed = JSON.parse(str)
+  } catch {
+    return { buffer: null, error: str.slice(0, 200) }
+  }
+
+  const apiErr = extractErrorMessage(parsed)
+  if (apiErr) {
+    return { buffer: null, error: apiErr }
+  }
+
+  const src = findImageUrlDeep(parsed)
+  if (src) {
+    if (isBase64Image(src)) {
+      const dec = decodeBase64Image(src)
+      if (dec) return { buffer: dec, error: '' }
+    }
+    const fetched = await fetchBufferFromUrl(src)
+    if (fetched) return { buffer: fetched, error: '' }
+  }
+
+  return { buffer: null, error: 'لم يرجع السيرفر صورة في النتيجة' }
+}
+
+async function convertImageToAnime(imgBuffer, prompt) {
+  const base64Data = imgBuffer.toString('base64')
+  const dataUri = `data:image/jpeg;base64,${base64Data}`
+  let lastErr = ''
+
+  for (const fieldName of ['image', 'file']) {
+    try {
+      const form = new FormData()
+      form.append(fieldName, imgBuffer, {
+        filename: 'input.jpg',
+        contentType: 'image/jpeg'
+      })
+      form.append('prompt', prompt)
+
+      const res = await axios.post(ENDPOINT, form, {
+        headers: {
+          ...form.getHeaders(),
+          'User-Agent': UA,
+          Accept: 'image/*, application/json, */*'
+        },
+        responseType: 'arraybuffer',
+        timeout: 90000,
+        maxContentLength: Infinity,
+        maxBodyLength: Infinity,
+        validateStatus: () => true
+      })
+
+      const parsed = await parseApiResponse(res)
+      if (parsed.buffer) return parsed.buffer
+      if (parsed.error) lastErr = parsed.error
+    } catch (e) {
+      lastErr = e.message
+    }
+  }
 
   try {
-    const sourceImage = await uploadImageFromBuffer(buffer)
-    const taskId = await createTask(sourceImage)
-    const resultUrl = await waitForResult(taskId)
+    const res = await axios.post(
+      ENDPOINT,
+      { prompt, image: dataUri, base64: base64Data },
+      {
+        headers: {
+          'User-Agent': UA,
+          'Content-Type': 'application/json',
+          Accept: 'image/*, application/json, */*'
+        },
+        responseType: 'arraybuffer',
+        timeout: 90000,
+        validateStatus: () => true
+      }
+    )
+    const parsed = await parseApiResponse(res)
+    if (parsed.buffer) return parsed.buffer
+    if (parsed.error) lastErr = parsed.error
+  } catch (e) {
+    lastErr = e.message
+  }
 
-    if (!resultUrl) return m.reply('❌ فشل في توليد الصورة على شكل أنمي.')
+  try {
+    const res = await axios.get(ENDPOINT, {
+      params: { prompt, image: dataUri },
+      headers: { 'User-Agent': UA, Accept: 'image/*, application/json, */*' },
+      responseType: 'arraybuffer',
+      timeout: 90000,
+      validateStatus: () => true
+    })
+    const parsed = await parseApiResponse(res)
+    if (parsed.buffer) return parsed.buffer
+    if (parsed.error) lastErr = parsed.error
+  } catch (e) {
+    lastErr = e.message
+  }
 
-    // تحميل الصورة الناتجة كـ Buffer وحفظها مؤقتًا
-    const res = await fetch(resultUrl)
-    const imgBuffer = Buffer.from(await res.arrayBuffer())
-    const out = path.join("./tmp", `${Date.now()}.jpg`)
-    fs.writeFileSync(out, imgBuffer)
+  throw new Error(lastErr || 'تعذر تحويل الصورة إلى أنمي')
+}
+
+let handler = async (m, { conn, text, usedPrefix, command }) => {
+  const quotedImg = getQuotedImageMsg(m)
+  if (!quotedImg) {
+    return m.reply(
+      `⛩️ *تحويل الصورة إلى أنمي*\n\nرد على صورة واكتب الوصف:\n💡 *مثال:* ${usedPrefix + command} بأسلوب أنمي ياباني فخم`
+    )
+  }
+
+  const userPrompt = (text || '').trim()
+  const finalPrompt = userPrompt || 'anime style, high quality anime illustration, detailed characters'
+
+  await react(conn, m, '⏳')
+  const wait = await m.reply('🎨 *جاري تحويل الصورة إلى أنمي...*')
+
+  try {
+    const imgBuffer = await quotedImg.download()
+    if (!imgBuffer || !Buffer.isBuffer(imgBuffer) || imgBuffer.length < 1500) {
+      throw new Error('تعذر قراءة الصورة المردود عليها')
+    }
+
+    const animeBuffer = await convertImageToAnime(imgBuffer, finalPrompt)
+    try { await conn.sendMessage(m.chat, { delete: wait.key }) } catch {}
 
     await conn.sendMessage(
       m.chat,
-      { image: { url: out }, caption: "✨ ها هي صورتك بعد التحويل إلى أنمي!" },
+      {
+        image: animeBuffer,
+        caption: userPrompt
+          ? `⛩️ *تم التحويل إلى أنمي*\n📝 *الوصف:* ${userPrompt}`
+          : '⛩️ *تم التحويل إلى أنمي*'
+      },
       { quoted: m }
     )
-
-    // ✅ إزالة التفاعل بعد الانتهاء (اختياري)
-    await m.react('✅')
-
-    setTimeout(() => {
-      if (fs.existsSync(out)) fs.unlinkSync(out)
-    }, 15000) // يحذف الصورة بعد 15 ثانية
+    await react(conn, m, '✅')
   } catch (e) {
-    console.error('❌ خطأ:', e)
-    await m.react('❌')
-    m.reply('❌ حدث خطأ أثناء معالجة الصورة.')
+    console.error('[animekill]', e.message)
+    try { await conn.sendMessage(m.chat, { delete: wait.key }) } catch {}
+    await react(conn, m, '❌')
+    await m.reply(`❌ *فشل تحويل الصورة:*\n${e.message}`)
   }
 }
 
-handler.help = ['photo2anime', 'لانمي', 'لنمي'] 
+handler.help = ['لانمي <وصف>']
 handler.tags = ['ai']
-handler.command = ['photo2anime', 'لانمي', 'لنمي'] 
+handler.command = /^لانمي$/i
 
 export default handler
