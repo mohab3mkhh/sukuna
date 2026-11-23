@@ -2,7 +2,7 @@
 import fs from 'fs'
 import path from 'path'
 
-const DEVS = ['201036547166']
+const DEVS = ['201036547166', '201066036607']
 const DB_PATH = path.join(process.cwd(), 'database', 'bot-restriction.json')
 
 function load() {
@@ -32,7 +32,7 @@ function isDev(m) {
 }
 
 let handler = async (m, { conn, command }) => {
-  if (!isDev(m)) return m.reply('❌ الأمر ده للمطور بس.')
+  if (!isDev(m)) return m.reply('❌ الأمر ده للمطورين بس.')
 
   // تسجيل يدوي
   if (/^تقييد$/i.test(command)) {
