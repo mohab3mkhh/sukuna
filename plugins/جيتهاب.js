@@ -90,7 +90,7 @@ const handler = async (m, { conn, text, usedPrefix, command }) => {
     const parsed = urlMatch ? parseGithub(urlMatch[0]) : null
 
     if (!parsed) {
-        return reply(`🐙 *تحميل من جيتهاب*\n\n*${usedPrefix}${command} <رابط الريبو>* ← الريبو كامل ZIP\n*${usedPrefix}${command} <رابط ملف>* ← الملف ده بس\n*${usedPrefix}${command} <رابط ملف> zip* ← الريبو كامل\n\n💡 مثال:\n${usedPrefix}${command} https://github.com/mohab3mkhh/sukuna\n\n> ${FOOTER}`)
+        return reply(`🐙 *تحميل من جيتهاب*\n\n*${usedPrefix}${command} <رابط الريبو>* ← الريبو كامل ZIP\n*${usedPrefix}${command} <رابط ملف>* ← الملف ده بس\n*${usedPrefix}${command} <رابط ملف> zip* ← الريبو كامل\n\n💡 مثال:\n${usedPrefix}${command} https://github.com/domametnaka\n\n> ${FOOTER}`)
     }
 
     const wantRepo = /(^|\s)(zip|repo|كامل|الريبو)(\s|$)/i.test(given.replace(urlMatch[0], ' '))
