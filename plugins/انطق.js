@@ -62,11 +62,27 @@ async function fetchVoice(endpoint, text) {
     // حمّل الملف الصوتي
     const r2 = await axios.get(link, {
         responseType: 'arraybuffer',
-        timeout: 30000,
-        headers: { 'User-Agent': 'Mozilla/5.0' }
+        timeout: 60000,
+        maxRedirects: 10,
+        headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Accept': 'audio/mpeg, audio/*, */*',
+            'Referer': 'https://tmpfiles.org/'
+        },
+        validateStatus: () => true
     })
+
+    if (r2.status >= 400) throw new Error(`فشل تحميل الصوت: HTTP ${r2.status}`)
+
     const buf = Buffer.from(r2.data)
     if (buf.length < 100) throw new Error('الملف الصوتي فارغ')
+
+    // تأكد إنه مش HTML (بعض المواقع بترجع صفحة بدل الملف)
+    const start = buf.slice(0, 15).toString('utf8').toLowerCase()
+    if (start.includes('<!doc') || start.includes('<html')) {
+        throw new Error('الموقع رجع صفحة HTML بدل الصوت — الرابط انتهت صلاحيته')
+    }
+
     return buf
 }
 
