@@ -132,22 +132,19 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
         if (!voice || !state || Date.now() > state.expires) {
             return reply('❌ انتهت المهلة، ابعت الأمر من أول')
         }
+        const savedText = state.text
         delete global._ttsState[origUser]
 
         await react('⏳')
         try {
-            const audioBuf = await fetchVoice(voice.endpoint, state.text)
+            // نجيب الصوت الآن مباشرة بالنص المحفوظ
+            const audioBuf = await fetchVoice(voice.endpoint, savedText)
             await conn.sendMessage(jid, {
-                audio:    audioBuf,
-                mimetype: 'audio/mpeg',
-                ptt:      false,
-                fileName: 'voice.mp3'
+                audio: audioBuf, mimetype: 'audio/mpeg', ptt: false, fileName: 'voice.mp3'
             }, { quoted: m })
-
             await conn.sendMessage(jid, {
-                text: `╭━━━〔 ✅ *تـم* 〕━━━⬣\n┃ 🔊 *الصوت:* ${voice.name}\n┃ 📝 *النص:* ${state.text.slice(0, 80)}\n╰━━━━━━━━━━━━━━⬣\n\n> ${FOOTER}`
+                text: `╭━━━〔 ✅ *تـم* 〕━━━⬣\n┃ 🔊 *الصوت:* ${voice.name}\n┃ 📝 *النص:* ${savedText.slice(0, 80)}\n╰━━━━━━━━━━━━━━⬣\n\n> ${FOOTER}`
             }, { quoted: m })
-
             await react('✅')
         } catch (e) {
             await react('❌')
@@ -162,16 +159,17 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
     if (state && Date.now() < state.expires) {
         const num = parseInt(input)
         if (!isNaN(num) && num >= 1 && num <= VOICES.length) {
-            const voice = VOICES[num - 1]
+            const voice    = VOICES[num - 1]
+            const savedText = state.text
             delete global._ttsState[sender]
             await react('⏳')
             try {
-                const audioBuf = await fetchVoice(voice.endpoint, state.text)
+                const audioBuf = await fetchVoice(voice.endpoint, savedText)
                 await conn.sendMessage(jid, {
                     audio: audioBuf, mimetype: 'audio/mpeg', ptt: false, fileName: 'voice.mp3'
                 }, { quoted: m })
                 await conn.sendMessage(jid, {
-                    text: `╭━━━〔 ✅ *تـم* 〕━━━⬣\n┃ 🔊 *الصوت:* ${voice.name}\n┃ 📝 *النص:* ${state.text.slice(0, 80)}\n╰━━━━━━━━━━━━━━⬣\n\n> ${FOOTER}`
+                    text: `╭━━━〔 ✅ *تـم* 〕━━━⬣\n┃ 🔊 *الصوت:* ${voice.name}\n┃ 📝 *النص:* ${savedText.slice(0, 80)}\n╰━━━━━━━━━━━━━━⬣\n\n> ${FOOTER}`
                 }, { quoted: m })
                 await react('✅')
             } catch (e) {
