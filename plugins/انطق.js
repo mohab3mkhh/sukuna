@@ -59,15 +59,20 @@ async function fetchVoice(endpoint, text) {
     const link = json?.audio_url || json?.url || json?.audio || json?.link || json?.data?.url
     if (!link) throw new Error('مفيش رابط صوت في الرد: ' + JSON.stringify(json).slice(0, 120))
 
-    // حمّل الملف الصوتي
-    const r2 = await axios.get(link, {
+    // tmpfiles.org بيكون الرابط على شكل /dl/xxx — نحوّله لـ /xxx عشان التحميل المباشر
+    // مثال: https://tmpfiles.org/dl/weAEjAFrlD6u/audio.mp3
+    //   →   https://tmpfiles.org/weAEjAFrlD6u/audio.mp3  (مباشر)
+    let directLink = link
+    const tmpm = link.match(/tmpfiles\.org\/dl\/([^/]+\/[^?]+)/)
+    if (tmpm) directLink = `https://tmpfiles.org/${tmpm[1]}`
+
+    const r2 = await axios.get(directLink, {
         responseType: 'arraybuffer',
         timeout: 60000,
         maxRedirects: 10,
         headers: {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Accept': 'audio/mpeg, audio/*, */*',
-            'Referer': 'https://tmpfiles.org/'
+            'Accept': 'audio/mpeg, audio/*, */*'
         },
         validateStatus: () => true
     })
@@ -77,10 +82,10 @@ async function fetchVoice(endpoint, text) {
     const buf = Buffer.from(r2.data)
     if (buf.length < 100) throw new Error('الملف الصوتي فارغ')
 
-    // تأكد إنه مش HTML (بعض المواقع بترجع صفحة بدل الملف)
+    // تأكد إنه مش HTML
     const start = buf.slice(0, 15).toString('utf8').toLowerCase()
     if (start.includes('<!doc') || start.includes('<html')) {
-        throw new Error('الموقع رجع صفحة HTML بدل الصوت — الرابط انتهت صلاحيته')
+        throw new Error('الموقع رجع صفحة HTML بدل الصوت — جرّب تاني')
     }
 
     return buf
