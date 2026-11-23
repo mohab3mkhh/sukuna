@@ -1,9 +1,6 @@
 /**
  * plugins/تخيل.js
- * توليد صور بـ 3 اختيارات عبر أزرار القائمة:
- * 1) التوليد الأساسي (aiappgen / aimelody + Pollinations fallback)
- * 2) ChatPro Image (/ai/chatpro-image)
- * 3) GenImage (/ai/genimage)
+ * توليد صور بـ 3 اختيارات عبر أزرار القائمة (أمر: تخيل فقط)
  */
 
 import axios from 'axios'
@@ -124,7 +121,7 @@ function extractImageSourceDeep(obj, depth = 0) {
   }
   if (typeof obj === 'object') {
     const priorityKeys = [
-      'image', 'imageUrl', 'image_url', 'output', 'result_url',
+      'image_url', 'imageUrl', 'image', 'output', 'result_url',
       'url', 'link', 'download', 'img', 'images'
     ]
     for (const k of priorityKeys) {
@@ -148,7 +145,7 @@ async function resolveImageBufferFromSource(src) {
   try {
     const r = await axios.get(src, {
       responseType: 'arraybuffer',
-      timeout: 40000,
+      timeout: 45000,
       headers: { 'User-Agent': UA },
       validateStatus: () => true
     })
@@ -228,7 +225,6 @@ async function generateByChoice(choiceKey, enPrompt, rawPrompt) {
     return null
   }
 
-  // الاختيار الأول: التوليد الأساسي (aiappgen / aimelody + Pollinations fallback)
   for (const p of prompts) {
     for (const ep of PRIMARY_IMG_ENDPOINTS) {
       const buf = await trySingleEndpoint(ep, p)
@@ -398,6 +394,6 @@ global.takhayyalCleanup = setInterval(() => {
 handler.before = before
 handler.help = ['تخيل <وصف الصورة>']
 handler.tags = ['ai']
-handler.command = /^(تخيل|ارسم)$/i
+handler.command = /^تخيل$/i
 
 export default handler
