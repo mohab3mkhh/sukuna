@@ -1,6 +1,6 @@
 /**
  * plugins/aiapk.js
- * محادثة AI + توليد صور عبر /ai/aiapk
+ * محادثة AI + توليد صور عبر /ai/aiapk مع معالجة HTTP 500 في توليد الصور
  */
 
 import axios from 'axios'
@@ -65,11 +65,7 @@ function extractReplyText(payload) {
   return ''
 }
 
-async function queryAiApk({ prompt, mode = '', image = '' }) {
-  const params = { prompt }
-  if (mode) params.mode = mode
-  if (image) params.image = image
-
+async function requestAiApk(params) {
   const res = await axios.get(ENDPOINT, {
     params,
     timeout: 60000,
@@ -86,10 +82,30 @@ async function queryAiApk({ prompt, mode = '', image = '' }) {
     throw new Error(data.error || data.message || 'فشل طلب الذكاء الاصطناعي')
   }
 
-  const imageUrl = extractImageUrl(data)
-  const textReply = extractReplyText(data)
+  return {
+    imageUrl: extractImageUrl(data),
+    textReply: extractReplyText(data),
+    raw: data
+  }
+}
 
-  return { imageUrl, textReply, raw: data }
+async function generateImageWithFallback(prompt) {
+  const attempts = [
+    { prompt: `generate image: ${prompt}`, mode: 'image' },
+    { prompt: `draw an image of: ${prompt}`, mode: 'image' },
+    { prompt: `generate image: ${prompt}` }
+  ]
+
+  let lastErr = null
+  for (const params of attempts) {
+    try {
+      const res = await requestAiApk(params)
+      if (res.imageUrl || res.textReply) return res
+    } catch (e) {
+      lastErr = e
+    }
+  }
+  throw lastErr || new Error('فشل توليد الصورة من السيرفر')
 }
 
 async function downloadImageBuffer(url) {
@@ -121,8 +137,9 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
   const wait = await m.reply(isImageCmd ? '🎨 *جاري توليد الصورة...*' : '🤖 *جاري التفكير...*')
 
   try {
-    const mode = isImageCmd ? 'image' : ''
-    const { imageUrl, textReply } = await queryAiApk({ prompt, mode })
+    const { imageUrl, textReply } = isImageCmd
+      ? await generateImageWithFallback(prompt)
+      : await requestAiApk({ prompt })
 
     try { await conn.sendMessage(m.chat, { delete: wait.key }) } catch {}
 
@@ -146,13 +163,21 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
       return
     }
 
-    await m.reply('❌ لم يرجع الـ API رداً نصياً أو صورة.')
-    await react(conn, m, '❌')
+    await m.reply(
+      isImageCmd
+        ? '⚠️ سيرفر `/ai/aiapk` لم يرجع صورة (قد يكون توليد الصور معطلاً أو يحتاج model/modelId معين في السيرفر).'
+        : '❌ لم يرجع الـ API رداً نصياً أو صورة.'
+    )
+    await react(conn, m, '⚠️')
   } catch (e) {
     console.error('[aiapk]', e.message)
     try { await conn.sendMessage(m.chat, { delete: wait.key }) } catch {}
     await react(conn, m, '❌')
-    await m.reply(`❌ *خطأ:* ${e.message}`)
+    await m.reply(
+      isImageCmd
+        ? `❌ *فشل توليد الصورة:* ${e.message}\n💡 غالباً قسم الصور في /ai/aiapk بيرجع خطأ 500 من السيرفر نفسه.`
+        : `❌ *خطأ:* ${e.message}`
+    )
   }
 }
 
