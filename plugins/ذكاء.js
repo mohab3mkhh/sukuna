@@ -1,31 +1,39 @@
 /**
  * plugins/aiapk.js
- * محادثة AI عبر /ai/aiapk + توليد صور مع بدائل تلقائية
+ * محادثة AI عبر /ai/aiapk + توليد صور عبر /ai/aiappgen و /ai/aimelody مع بديل تلقائي
  */
 
 import axios from 'axios'
 
-const ENDPOINT = 'https://prexzyapis.com/ai/aiapk'
+const CHAT_ENDPOINT = 'https://prexzyapis.com/ai/aiapk'
+const IMG_ENDPOINTS = [
+  'https://prexzyapis.com/ai/aiappgen',
+  'https://prexzyapis.com/ai/aimelody'
+]
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
 
 const react = async (conn, m, emoji) => {
   try { await conn.sendMessage(m.chat, { react: { text: emoji, key: m.key } }) } catch {}
 }
 
-function isCannotGenerateImageText(str = '') {
-  const s = String(str).toLowerCase()
-  return (
-    s.includes('unable to generate') ||
-    s.includes('cannot generate') ||
-    s.includes("can't generate") ||
-    s.includes('display images') ||
-    s.includes('لا أستطيع توليد') ||
-    s.includes('لا يمكنني توليد')
-  )
+function isBase64Image(str = '') {
+  return /^data:image\/[a-zA-Z0-9+.-]+;base64,/i.test(str.trim()) || /^[A-Za-z0-9+/=]{200,}$/.test(str.trim())
 }
 
-function extractImageUrl(payload) {
-  if (!payload || typeof payload !== 'object') return ''
+function base64ToBuffer(str = '') {
+  const clean = str.replace(/^data:image\/[a-zA-Z0-9+.-]+;base64,/i, '').trim()
+  const buf = Buffer.from(clean, 'base64')
+  return buf.length > 2000 ? buf : null
+}
+
+function extractImageSource(payload) {
+  if (!payload) return ''
+  if (typeof payload === 'string') {
+    const s = payload.trim()
+    if (/^https?:\/\//i.test(s) || isBase64Image(s)) return s
+    return ''
+  }
+  if (typeof payload !== 'object') return ''
 
   const candidates = [
     payload.image,
@@ -45,7 +53,7 @@ function extractImageUrl(payload) {
   ]
 
   for (const c of candidates) {
-    if (typeof c === 'string' && /^https?:\/\//i.test(c.trim())) {
+    if (typeof c === 'string' && (/^https?:\/\//i.test(c.trim()) || isBase64Image(c))) {
       return c.trim()
     }
   }
@@ -77,9 +85,97 @@ function extractReplyText(payload) {
   return ''
 }
 
-async function requestAiApk(params) {
-  const res = await axios.get(ENDPOINT, {
-    params,
+async function resolveImageBufferFromSource(src) {
+  if (!src) return null
+  if (isBase64Image(src)) return base64ToBuffer(src)
+
+  try {
+    const r = await axios.get(src, {
+      responseType: 'arraybuffer',
+      timeout: 35000,
+      headers: { 'User-Agent': UA },
+      validateStatus: () => true
+    })
+    if (r.status < 400 && r.data && r.data.length > 2000) {
+      const ct = String(r.headers['content-type'] || '').toLowerCase()
+      if (!ct.includes('text/html') && !ct.includes('application/json')) {
+        return Buffer.from(r.data)
+      }
+    }
+  } catch {}
+  return null
+}
+
+async function tryImageEndpoint(endpoint, prompt) {
+  const paramVariants = [
+    { prompt },
+    { q: prompt },
+    { text: prompt }
+  ]
+
+  for (const params of paramVariants) {
+    try {
+      const res = await axios.get(endpoint, {
+        params,
+        timeout: 60000,
+        responseType: 'arraybuffer',
+        headers: { 'User-Agent': UA, Accept: 'image/*, application/json, */*' },
+        validateStatus: () => true
+      })
+
+      if (res.status >= 400 || !res.data) continue
+      const buf = Buffer.from(res.data)
+      if (buf.length < 2000) continue
+
+      const ct = String(res.headers['content-type'] || '').toLowerCase()
+      if (ct.includes('image/')) return buf
+
+      if (ct.includes('application/json') || buf[0] === 0x7b) {
+        try {
+          const json = JSON.parse(buf.toString('utf8'))
+          if (json && json.status === false) continue
+          const src = extractImageSource(json)
+          if (src) {
+            const imgBuf = await resolveImageBufferFromSource(src)
+            if (imgBuf) return imgBuf
+          }
+        } catch {}
+      } else {
+        const str = buf.toString('utf8').trim()
+        if (/^https?:\/\//i.test(str) || isBase64Image(str)) {
+          const imgBuf = await resolveImageBufferFromSource(str)
+          if (imgBuf) return imgBuf
+        }
+      }
+    } catch {}
+  }
+
+  return null
+}
+
+async function generateImageBuffer(prompt) {
+  for (const ep of IMG_ENDPOINTS) {
+    const buf = await tryImageEndpoint(ep, prompt)
+    if (buf) return buf
+  }
+
+  const seed = Math.floor(Math.random() * 1000000)
+  const fallbackUrls = [
+    `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?seed=${seed}&width=1024&height=1024&nologo=true`,
+    `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?seed=${seed}`
+  ]
+
+  for (const u of fallbackUrls) {
+    const buf = await resolveImageBufferFromSource(u)
+    if (buf) return buf
+  }
+
+  return null
+}
+
+async function requestChat(prompt) {
+  const res = await axios.get(CHAT_ENDPOINT, {
+    params: { prompt },
     timeout: 60000,
     headers: { 'User-Agent': UA, Accept: 'application/json' },
     validateStatus: () => true
@@ -95,38 +191,9 @@ async function requestAiApk(params) {
   }
 
   return {
-    imageUrl: extractImageUrl(data),
+    imageSrc: extractImageSource(data),
     textReply: extractReplyText(data)
   }
-}
-
-async function downloadImageBuffer(url) {
-  try {
-    const r = await axios.get(url, {
-      responseType: 'arraybuffer',
-      timeout: 35000,
-      headers: { 'User-Agent': UA },
-      validateStatus: () => true
-    })
-    if (r.status < 400 && r.data && r.data.length > 2000) {
-      return Buffer.from(r.data)
-    }
-  } catch {}
-  return null
-}
-
-async function generateFallbackImageBuffer(prompt) {
-  const seed = Math.floor(Math.random() * 1000000)
-  const candidates = [
-    `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?seed=${seed}&width=1024&height=1024&nologo=true`,
-    `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?seed=${seed}`
-  ]
-
-  for (const u of candidates) {
-    const buf = await downloadImageBuffer(u)
-    if (buf) return buf
-  }
-  return null
 }
 
 let handler = async (m, { conn, text, usedPrefix, command }) => {
@@ -144,64 +211,37 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
 
   try {
     if (isImageCmd) {
-      let sent = false
+      const imgBuf = await generateImageBuffer(prompt)
+      try { await conn.sendMessage(m.chat, { delete: wait.key }) } catch {}
 
-      try {
-        const aiRes = await requestAiApk({ prompt, mode: 'image' })
-        if (aiRes.imageUrl) {
-          const buf = await downloadImageBuffer(aiRes.imageUrl)
-          if (buf) {
-            try { await conn.sendMessage(m.chat, { delete: wait.key }) } catch {}
-            await conn.sendMessage(
-              m.chat,
-              { image: buf, caption: `🎨 *النتيجة:* ${prompt}` },
-              { quoted: m }
-            )
-            sent = true
-          }
-        } else if (aiRes.textReply && !isCannotGenerateImageText(aiRes.textReply)) {
-          try { await conn.sendMessage(m.chat, { delete: wait.key }) } catch {}
-          await conn.sendMessage(m.chat, { text: aiRes.textReply }, { quoted: m })
-          sent = true
-        }
-      } catch {}
-
-      if (!sent) {
-        const fallbackBuf = await generateFallbackImageBuffer(prompt)
-        try { await conn.sendMessage(m.chat, { delete: wait.key }) } catch {}
-
-        if (fallbackBuf) {
-          await conn.sendMessage(
-            m.chat,
-            { image: fallbackBuf, caption: `🎨 *النتيجة:* ${prompt}` },
-            { quoted: m }
-          )
-        } else {
-          await m.reply('❌ تعذر توليد الصورة حالياً، جرّب وصفاً آخر أو أعد المحاولة.')
-          await react(conn, m, '❌')
-          return
-        }
+      if (!imgBuf) {
+        await react(conn, m, '❌')
+        return m.reply('❌ تعذر توليد الصورة حالياً، جرّب وصفاً آخر.')
       }
 
-      await react(conn, m, '✅')
-      return
-    }
-
-    const { imageUrl, textReply } = await requestAiApk({ prompt })
-    try { await conn.sendMessage(m.chat, { delete: wait.key }) } catch {}
-
-    if (imageUrl) {
-      const imgBuf = await downloadImageBuffer(imageUrl)
       await conn.sendMessage(
         m.chat,
-        {
-          image: imgBuf || { url: imageUrl },
-          caption: textReply || `🎨 *النتيجة:* ${prompt}`
-        },
+        { image: imgBuf, caption: `🎨 *النتيجة:* ${prompt}` },
         { quoted: m }
       )
       await react(conn, m, '✅')
       return
+    }
+
+    const { imageSrc, textReply } = await requestChat(prompt)
+    try { await conn.sendMessage(m.chat, { delete: wait.key }) } catch {}
+
+    if (imageSrc) {
+      const imgBuf = await resolveImageBufferFromSource(imageSrc)
+      if (imgBuf) {
+        await conn.sendMessage(
+          m.chat,
+          { image: imgBuf, caption: textReply || `🎨 *النتيجة:* ${prompt}` },
+          { quoted: m }
+        )
+        await react(conn, m, '✅')
+        return
+      }
     }
 
     if (textReply) {
