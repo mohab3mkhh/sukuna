@@ -1,426 +1,175 @@
-// plugins/تحميل انمي.js
-// ⁦✨ geo Alm - Witanime Scraper + Download 📺
+// plugins/انمي.js — بحث الأنمي
+// الاستخدام: .انمي <الاسم>   أو   .anime <name>
+// المصدر: prexzyapis.com/anime/animekill-search
 
 import axios from 'axios'
-import * as cheerio from 'cheerio'
-import { exec } from 'child_process'
-import * as pkg from '@whiskeysockets/baileys'
+import { sendButtons, btn } from '../lib/buttons.js'
 
-const { prepareWAMessageMedia, generateWAMessageFromContent, proto } = pkg
+const API   = 'https://prexzyapis.com/anime/animekill-search'
+const UA    = 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Mobile Safari/537.36'
+const FOOTER = '⛩️ SUKUNA BOT ⛩️'
+const MAX_RESULTS = 10
+const TTL = 30 * 60 * 1000     // نتائج البحث تفضل متاحة 30 دقيقة
+
+// ───────────── كاش نتائج البحث (عشان الضغط على الاختيار ما يحتاجش طلب تاني) ─────────────
+const CACHE = new Map()
+
+function putCache(query, items) {
+    const now = Date.now()
+    for (const [k, v] of CACHE) if (now - v.at > TTL) CACHE.delete(k)
+    if (CACHE.size >= 100) CACHE.delete(CACHE.keys().next().value)
+    const token = Math.random().toString(36).slice(2, 7)
+    CACHE.set(token, { query, items, at: now })
+    return token
+}
+
+// ───────────── أدوات ─────────────
+const clip = (s, n) => {
+    const t = String(s ?? '').replace(/\s+/g, ' ').trim()
+    return t.length > n ? t.slice(0, n - 1) + '…' : t
+}
+
+const posterOf = (a) =>
+    [a?.large_poster, a?.orginal_poster, a?.small_poster].find(u => typeof u === 'string' && /^https?:\/\//i.test(u)) || null
+
+const statusLabel = (s) => ({ complete: 'مكتمل ✅', completed: 'مكتمل ✅', ongoing: 'مستمر 🔄' }[String(s || '').toLowerCase()] || (s ? String(s).toUpperCase() : '—'))
+
+const scoreLabel = (s) => (s && String(s) !== '5' ? `⭐ ${s}` : '—')   // "5" قيمة افتراضية في الـ API
+
+const dateLabel = (d) => {
+    try { return new Date(d).toLocaleDateString('ar-EG', { timeZone: 'Africa/Cairo', dateStyle: 'medium' }) } catch { return '—' }
+}
 
 async function searchAnime(query) {
-    try {
-        const { data } = await axios.get(`https://ristoanime.me/?s=${encodeURIComponent(query)}`, {
-            headers: { 'User-Agent': 'Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36' },
-            timeout: 15000,
-            validateStatus: () => true
-        })
-
-        if (!data || data.length === 0) return []
-
-        const $ = cheerio.load(data)
-        const results = []
-
-        $('.MovieItem a').each((i, el) => {
-            const link = $(el).attr('href') || ''
-            const title = $(el).find('h4').text().trim() || $(el).text().trim().slice(0, 60)
-            const posterStyle = $(el).find('.poster').attr('data-style') || $(el).find('.poster').attr('style') || ''
-            const thumbMatch = posterStyle.match(/url\(([^)]+)\)/)
-            const thumb = thumbMatch ? thumbMatch[1].replace(/["']/g, '').trim() : ''
-            const genre = $(el).find('.genre').text().trim()
-            const year = $(el).find('.release-year').text().trim()
-            const quality = $(el).find('.quality').text().trim()
-
-            if (link && title && !results.find(r => r.link === link)) {
-                results.push({ title: title.slice(0, 60), link, thumb, genre, year, quality })
-            }
-        })
-
-        return results
-    } catch (e) {
-        return []
-    }
-}
-
-async function getAnimes() {
-    try {
-        const { data } = await axios.get('https://ristoanime.me/', {
-            headers: { 'User-Agent': 'Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36' },
-            timeout: 15000,
-            validateStatus: () => true
-        })
-
-        const $ = cheerio.load(data)
-        const animes = []
-
-        $('.MovieItem a').each((i, el) => {
-            const link = $(el).attr('href') || ''
-            const title = $(el).find('h4').text().trim() || $(el).text().trim().slice(0, 60)
-            const posterStyle = $(el).find('.poster').attr('data-style') || $(el).find('.poster').attr('style') || ''
-            const thumbMatch = posterStyle.match(/url\(([^)]+)\)/)
-            const thumb = thumbMatch ? thumbMatch[1].replace(/["']/g, '').trim() : ''
-
-            if (link && title && !animes.find(a => a.link === link)) {
-                animes.push({ title: title.slice(0, 60), link, thumb })
-            }
-        })
-
-        return animes
-    } catch (e) {
-        return []
-    }
-}
-
-async function getEpisodes(animeUrl) {
-    try {
-        const { data } = await axios.get(animeUrl, {
-            headers: { 'User-Agent': 'Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36' },
-            timeout: 15000,
-            validateStatus: () => true
-        })
-
-        const $ = cheerio.load(data)
-        const episodes = []
-
-        $('.EpisodesList a').each((i, el) => {
-            const href = $(el).attr('href') || ''
-            const text = $(el).text().trim()
-
-            if (href.startsWith('http') && text) {
-                episodes.push({ title: text.slice(0, 60), link: href })
-            }
-        })
-
-        return [...new Map(episodes.map(e => [e.link, e])).values()]
-    } catch (e) {
-        return []
-    }
-}
-
-async function getEpisodeInfo(episodeUrl) {
-    try {
-        const { data } = await axios.get(episodeUrl, {
-            headers: { 'User-Agent': 'Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36' },
-            timeout: 15000,
-            validateStatus: () => true
-        })
-
-        const $ = cheerio.load(data)
-        const title = $('h1').text().trim()
-        const img = $('.Poster img').attr('src') || ''
-        const desc = $('.StoryArea p').text().trim() || ''
-        const rating = $('.imdbRBox').text().trim() || ''
-
-        const genres = []
-        $('.TaxContent a').each((i, el) => {
-            genres.push($(el).text().trim())
-        })
-
-        return { title, img, desc, rating, genres }
-    } catch (e) {
-        return null
-    }
-}
-
-async function getServers(watchUrl) {
-    try {
-        let url = watchUrl
-        if (!url.includes('/watch')) {
-            url = url.replace(/\/$/, '') + '/watch/'
-        }
-
-        const { data } = await axios.get(url, {
-            headers: { 'User-Agent': 'Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36' },
-            timeout: 15000,
-            validateStatus: () => true
-        })
-
-        const matches = [...new Set(data.match(/https?:\/\/[^"'\s]+embed-[^"'\s]+/g) || [])]
-
-        return matches.map(url => ({
-            name: url.replace(/https?:\/\/(www\.)?/, '').split('/')[0].replace(/\..*/, ''),
-            url
-        }))
-    } catch (e) {
-        return []
-    }
-}
-
-async function getM3u8Url(embedUrl) {
-    try {
-        const { data } = await axios.get(embedUrl, {
-            headers: { 'User-Agent': 'Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36' },
-            timeout: 15000,
-            validateStatus: () => true
-        })
-
-        const m3u8 = data.match(/https?:\/\/[^"'\s]+\.m3u8[^"'\s]*/g) || []
-        return m3u8[0] || ''
-    } catch (e) {
-        return ''
-    }
-}
-
-async function downloadVideo(m3u8Url) {
-    return new Promise(async (resolve, reject) => {
-        try {
-            const { data } = await axios.get(m3u8Url, { headers: { 'User-Agent': 'Mozilla/5.0' }, timeout: 15000 })
-
-            const qualityUrls = data.match(/https?:\/\/[^"'\s]+_l[^"'\s]*\.m3u8[^"'\s]*/g) ||
-                               data.match(/https?:\/\/[^"'\s]+_480[^"'\s]*\.m3u8[^"'\s]*/g) ||
-                               [m3u8Url]
-
-            const selectedUrl = qualityUrls[0] || m3u8Url
-            const outputPath = `/home/container/anime_${Date.now()}.mp4`
-
-            exec(`cd /home/container && ffmpeg -i "${selectedUrl}" -c copy -bsf:a aac_adtstoasc -y "${outputPath}"`,
-                { timeout: 300000, maxBuffer: 10 * 1024 * 1024 },
-                (err, stdout, stderr) => {
-                    if (err) {
-                        reject(new Error(stderr.slice(-200) || err.message))
-                    } else {
-                        resolve(outputPath)
-                    }
-                }
-            )
-        } catch (e) {
-            reject(e)
-        }
+    const r = await axios.get(`${API}?query=${encodeURIComponent(query)}`, {
+        timeout: 20000,
+        headers: { 'User-Agent': UA, Accept: 'application/json' }
     })
+    const d = r.data
+    if (d?.status === false) throw new Error(String(d?.message || 'الـ API رجّع خطأ').slice(0, 100))
+    const list = d?.data?.data?.animelist
+    if (!Array.isArray(list)) throw new Error('شكل رد الـ API غير متوقع')
+    return list.filter(a => a?.name)
 }
 
-async function createImageMessage(conn, url) {
-    if (!url || !url.startsWith('http')) return null
-    try {
-        const res = await axios.get(url, {
-            responseType: 'arraybuffer',
-            headers: { 'User-Agent': 'Mozilla/5.0' },
-            timeout: 10000,
-            validateStatus: () => true
-        })
-        if (res.status !== 200 || !res.data?.length || res.data.length < 1000) return null
-        const media = await prepareWAMessageMedia({ image: Buffer.from(res.data) }, { upload: conn.waUploadToServer })
-        return media.imageMessage || null
-    } catch {
-        return null
-    }
-}
+// ───────────── العرض ─────────────
+async function sendResults(conn, m, entry, token) {
+    const items = entry.items.slice(0, MAX_RESULTS)
 
-async function downloadEpisode(conn, m, episodeUrl) {
-    const react = async (e) => {
-        try { await conn.sendMessage(m.chat, { react: { text: e, key: m.key } }); } catch {}
-    }
-
-    await react('⏳')
-
-    const info = await getEpisodeInfo(episodeUrl)
-
-    let infoMsg = ''
-    if (info) {
-        infoMsg = `📺 *${info.title}*\n\n`
-        if (info.desc) infoMsg += `📝 *القصة:* ${info.desc.slice(0, 200)}\n\n`
-        if (info.rating) infoMsg += `⭐ ${info.rating}\n\n`
-        if (info.genres.length) infoMsg += `🏷️ ${info.genres.slice(0, 5).join(' • ')}\n\n`
-    }
-
-    infoMsg += '⏳ *جاري تجهيز التحميل...*'
-
-    if (info?.img) {
-        try {
-            const res = await axios.get(info.img, { responseType: 'arraybuffer', headers: { 'User-Agent': 'Mozilla/5.0' }, timeout: 10000, validateStatus: () => true })
-            if (res.status === 200 && res.data?.length > 1000) {
-                await conn.sendMessage(m.chat, {
-                    image: Buffer.from(res.data),
-                    caption: infoMsg
-                }, { quoted: m })
-            } else {
-                await m.reply(infoMsg)
-            }
-        } catch {
-            await m.reply(infoMsg)
-        }
-    } else {
-        await m.reply(infoMsg)
-    }
-
-    const servers = await getServers(episodeUrl)
-    if (!servers.length) return m.reply('❌ *لا توجد سيرفرات*')
-
-    await m.reply(`📺 *${servers.length} سيرفر*\n⏳ جاري التحميل...`)
-
-    const errors = []
-
-    for (const server of servers) {
-        try {
-            const m3u8 = await getM3u8Url(server.url)
-            if (!m3u8) {
-                errors.push(`${server.name}: مفيش رابط m3u8`)
-                continue
-            }
-
-            await m.reply(`📥 *جاري التحميل من ${server.name}...*`)
-
-            const videoPath = await downloadVideo(m3u8)
-
-            const fs = await import('fs')
-            const videoBuffer = fs.readFileSync(videoPath)
-            const fileSizeMB = (videoBuffer.length / 1024 / 1024).toFixed(2)
-
-            if (videoBuffer.length < 100000) {
-                try { fs.unlinkSync(videoPath) } catch {}
-                errors.push(`${server.name}: الملف صغير`)
-                continue
-            }
-
-            await conn.sendMessage(m.chat, {
-                video: videoBuffer,
-                mimetype: 'video/mp4',
-                fileName: `anime_${Date.now()}.mp4`,
-                caption: `✅ *تم التحميل*\n📁 ${fileSizeMB} MB\n🎬 ${server.name}`
-            }, { quoted: m })
-
-            try { fs.unlinkSync(videoPath) } catch {}
-            await react('✅')
-            return
-        } catch (e) {
-            errors.push(`${server.name}: ${e.message.slice(0, 100)}`)
-            continue
-        }
-    }
-
-    await react('❌')
-
-    let errorMsg = `❌ *فشل التحميل*\n\n📋 *الأسباب:*\n`
-    for (const err of errors) {
-        errorMsg += `• ${err}\n`
-    }
-
-    return m.reply(errorMsg)
-}
-
-let handler = async (m, { conn, text, usedPrefix, command }) => {
-    const react = async (e) => {
-        try { await conn.sendMessage(m.chat, { react: { text: e, key: m.key } }); } catch {}
-    }
-
-    if (command === 'تحميل_انمي') {
-        if (!text || !text.startsWith('http')) return m.reply(`❌ *الاستخدام:*\n${usedPrefix}تحميل_انمي [رابط الحلقة]`)
-        return downloadEpisode(conn, m, text)
-    }
-
-    if (command === 'سيرفرات_انمي') {
-        if (!text || !text.startsWith('http')) return m.reply(`❌ *الاستخدام:*\n${usedPrefix}سيرفرات_انمي [رابط الحلقة]`)
-
-        await react('🎬')
-
-        const servers = await getServers(text)
-        if (!servers.length) return m.reply('❌ لا توجد سيرفرات')
-
-        let msg = `🎬 *سيرفرات المشاهدة*\n📊 *العدد:* ${servers.length}\n\n`
-
-        for (let i = 0; i < servers.length; i++) {
-            msg += `*${i + 1}.* ${servers[i].name}\n${servers[i].url}\n\n`
-        }
-
-        await m.reply(msg)
-        await react('✅')
-        return
-    }
-
-    if (command === 'حلقات_انمي') {
-        if (!text || !text.startsWith('http')) return m.reply(`❌ *الاستخدام:*\n${usedPrefix}حلقات_انمي [رابط الانمي]`)
-
-        await react('📺')
-
-        const episodes = await getEpisodes(text)
-        if (!episodes.length) return m.reply('❌ لا توجد حلقات')
-
-        let animeImage = null
-        try {
-            const { data } = await axios.get(text, {
-                headers: { 'User-Agent': 'Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36' },
-                timeout: 15000,
-                validateStatus: () => true
-            })
-            const $ = cheerio.load(data)
-            const imgUrl = $('.Poster img').attr('src') || $('img').first().attr('src') || ''
-            if (imgUrl) {
-                animeImage = await createImageMessage(conn, imgUrl)
-            }
-        } catch {}
-
-        const rows = episodes.map((ep, i) => ({
-            title: `${i + 1}. ${ep.title}`,
-            description: '📥 اضغط للتحميل',
-            id: `${usedPrefix}تحميل_انمي ${ep.link}`
-        }))
-
-        const nativeFlowPayload = {
-            body: { text: `📺 *الحلقات*\n📊 *العدد:* ${episodes.length}\n\n👇 *اختر حلقة للتحميل*` },
-            footer: { text: '✧ G_A - Witanime' },
-            header: { hasMediaAttachment: animeImage ? true : false, imageMessage: animeImage },
-            nativeFlowMessage: {
-                buttons: [{ name: 'single_select', buttonParamsJson: JSON.stringify({ title: '📥 اختر حلقة', sections: [{ title: 'الحلقات', rows }] }) }],
-                messageParamsJson: JSON.stringify({})
-            }
-        }
-
-        const interactiveMessage = proto.Message.InteractiveMessage.fromObject(nativeFlowPayload)
-        const msg = generateWAMessageFromContent(m.chat, { interactiveMessage }, { userJid: conn.user.jid, quoted: m })
-        await conn.relayMessage(m.chat, msg.message, { messageId: msg.key.id })
-
-        await react('✅')
-        return
-    }
-
-    await react('🔍')
-
-    let results
-
-    if (text) {
-        results = await searchAnime(text)
-    } else {
-        results = await getAnimes()
-    }
-
-    if (!results.length) {
-        await react('❌')
-        return m.reply(`❌ *لا توجد نتائج*\n\n🔍 *بحثت عن:* ${text || 'الرئيسية'}`)
-    }
-
-    const rows = results.slice(0, 50).map((a, i) => ({
-        title: `${i + 1}. ${a.title}`,
-        description: [a.genre, a.year, a.quality].filter(Boolean).join(' | ') || '📥 اضغط للاختيار',
-        id: `${usedPrefix}حلقات_انمي ${a.link}`
+    const rows = items.map((a, i) => ({
+        title: clip(a.name, 24),
+        description: clip(`${a.genre || '—'} • ${scoreLabel(a.score)} • ${statusLabel(a.airing_status)}`, 72),
+        id: `anime:${token}:${i}`
     }))
 
-    let headerImage = null
-    for (const a of results) {
-        if (a.thumb) {
-            headerImage = await createImageMessage(conn, a.thumb)
-            if (headerImage) break
-        }
+    const text =
+        `╭┈➤🔎 *نتائج البحث عن:* ${entry.query}\n` +
+        `╰──────────── ೄྀ࿐ ˊˎ-\n\n` +
+        `📊 عدد النتائج: *${entry.items.length}*${entry.items.length > MAX_RESULTS ? ` (عرض أول ${MAX_RESULTS})` : ''}\n\n` +
+        `اختر الأنمي من القائمة 👇`
+
+    const fallback = text + '\n\n' + items.map((a, i) => `*${i + 1}.* ${a.name}`).join('\n')
+
+    try {
+        await sendButtons(conn, m.chat, {
+            title: '🎌 بحث الأنمي',
+            text,
+            footer: FOOTER,
+            image: posterOf(items[0]) || undefined,
+            buttons: [btn.list('📜 اختر أنمي', [{ title: 'النتائج', rows }])]
+        }, m)
+    } catch (e) {
+        console.error('[انمي] buttons failed:', e?.message || e)
+        await conn.sendMessage(m.chat, { text: fallback }, { quoted: m })
     }
-
-    const titleText = text ? `🔍 *نتائج البحث: ${text}*` : `📺 *أحدث الحلقات*`
-
-    const nativeFlowPayload = {
-        body: { text: `${titleText}\n📊 *العدد:* ${results.length}\n\n👇 *اختر*` },
-        footer: { text: '✧ G_A - Witanime' },
-        header: { hasMediaAttachment: headerImage ? true : false, imageMessage: headerImage },
-        nativeFlowMessage: {
-            buttons: [{ name: 'single_select', buttonParamsJson: JSON.stringify({ title: '📺 اختر', sections: [{ title: 'النتائج', rows }] }) }],
-            messageParamsJson: JSON.stringify({})
-        }
-    }
-
-    const interactiveMessage = proto.Message.InteractiveMessage.fromObject(nativeFlowPayload)
-    const msg = generateWAMessageFromContent(m.chat, { interactiveMessage }, { userJid: conn.user.jid, quoted: m })
-    await conn.relayMessage(m.chat, msg.message, { messageId: msg.key.id })
-
-    await react('✅')
 }
 
-handler.command = /^(witanime|وايت_انمي|انمي_وايت|سيرفرات_انمي)$/i
+async function sendCard(conn, m, entry, token, a) {
+    const views = Number(a.total_watch)
+    const mal = typeof a.synonyms_collection_source === 'string' && /^https?:\/\//i.test(a.synonyms_collection_source)
+        ? a.synonyms_collection_source : null
+
+    const text =
+        `🎬 *${a.name}*\n` +
+        `━━━━━━━━━━━━━━━\n` +
+        `🎭 *النوع:* ${a.genre ? a.genre.split(',').join(' • ') : '—'}\n` +
+        `📺 *التصنيف:* ${a.anime_type || '—'}\n` +
+        `📡 *الحالة:* ${statusLabel(a.airing_status)}\n` +
+        `⭐ *التقييم:* ${scoreLabel(a.score)}\n` +
+        `👁️ *المشاهدات:* ${Number.isFinite(views) ? views.toLocaleString('en-US') : '—'}\n` +
+        `🌏 *المنشأ:* ${a.anime_origin || '—'}\n` +
+        `🕒 *آخر تحديث:* ${dateLabel(a.last_update)}\n` +
+        (a.synonyms ? `🔤 *أسماء أخرى:* ${clip(a.synonyms, 160)}\n` : '')
+
+    const buttons = [btn.reply('🔙 رجوع للنتائج', `anime:${token}:back`)]
+    if (mal) buttons.push(btn.url('🔗 MyAnimeList', mal))
+
+    try {
+        await sendButtons(conn, m.chat, {
+            title: '🎌 تفاصيل الأنمي',
+            text,
+            footer: FOOTER,
+            image: posterOf(a) || undefined,
+            buttons
+        }, m)
+    } catch (e) {
+        console.error('[انمي] card failed:', e?.message || e)
+        await conn.sendMessage(m.chat, { text }, { quoted: m })
+    }
+}
+
+// ───────────── الأمر ─────────────
+const handler = async (m, { conn, text, usedPrefix, command }) => {
+    const query = String(text || '').trim()
+    if (!query) {
+        return m.reply(`╭┈➤🎌 *بحث الأنمي*\n╰──────────── ೄྀ࿐ ˊˎ-\n\nاكتب اسم الأنمي:\n• ${usedPrefix}${command} One Piece\n• ${usedPrefix}${command} ناروتو`)
+    }
+
+    await m.react('🔎')
+    try {
+        const items = await searchAnime(query)
+        if (!items.length) {
+            await m.react('❌')
+            return m.reply(`❌ ما لقيتش نتايج لـ *${query}*\nجرّب تكتب الاسم بالإنجليزي أو بشكل تاني`)
+        }
+        const token = putCache(query, items)
+        await sendResults(conn, m, CACHE.get(token), token)
+        await m.react('✅')
+    } catch (e) {
+        console.error('[انمي]', e?.response?.status ? `HTTP ${e.response.status}` : (e?.message || e))
+        await m.react('❌')
+        await m.reply('❌ حصل خطأ في البحث، حاول مرة أخرى')
+    }
+}
+
+// ───────────── اختيار من القائمة / زراير الرجوع ─────────────
+handler.before = async function (m, { conn } = {}) {
+    conn = conn || this
+    if (!m || typeof m.text !== 'string' || !m.chat || m.fromMe) return false
+
+    const t = m.text.trim()
+    if (!t.startsWith('anime:')) return false
+
+    const [, token, arg] = t.split(':')
+    const entry = CACHE.get(token)
+    if (!entry || Date.now() - entry.at > TTL) {
+        await conn.sendMessage(m.chat, { react: { text: '⌛', key: m.key } }).catch(() => {})
+        await conn.sendMessage(m.chat, { text: '⌛ انتهت صلاحية نتائج البحث، ابحث من جديد' }, { quoted: m })
+        return true
+    }
+
+    if (arg === 'back') {
+        await sendResults(conn, m, entry, token)
+        return true
+    }
+
+    const item = entry.items[Number(arg)]
+    if (item) await sendCard(conn, m, entry, token, item)
+    return true
+}
+
+handler.help = ['انمي <الاسم>', 'anime <name>']
 handler.tags = ['anime']
+handler.command = /^(انمي|anime)$/i
+
 export default handler
