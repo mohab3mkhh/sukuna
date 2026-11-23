@@ -1,6 +1,6 @@
 /**
  * plugins/aiapk.js
- * محادثة AI عبر /ai/aiapk + توليد صور عبر /ai/aiappgen و /ai/aimelody مع بديل تلقائي
+ * محادثة AI عبر /ai/aiapk + ترجمة أي لغة للإنجليزية تلقائياً وتوليد صور عبر /ai/aiappgen و /ai/aimelody مع بديل تلقائي
  */
 
 import axios from 'axios'
@@ -14,6 +14,77 @@ const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,
 
 const react = async (conn, m, emoji) => {
   try { await conn.sendMessage(m.chat, { react: { text: emoji, key: m.key } }) } catch {}
+}
+
+function isAlreadyEnglish(str = '') {
+  const s = String(str).trim()
+  if (!s) return true
+  const hasNonLatin = /[^\u0000-\u007F]/.test(s)
+  return !hasNonLatin
+}
+
+async function getJson(url) {
+  const ctl = new AbortController()
+  const t = setTimeout(() => ctl.abort(), 12000)
+  try {
+    const r = await fetch(url, {
+      headers: { 'User-Agent': UA },
+      signal: ctl.signal
+    })
+    const body = await r.text()
+    if (!r.ok) throw new Error(`HTTP ${r.status}`)
+    try { return JSON.parse(body) } catch { throw new Error('الرد مش JSON') }
+  } finally {
+    clearTimeout(t)
+  }
+}
+
+const TRANSLATE_PROVIDERS = [
+  ['google-gtx', async (q, tl = 'en') => {
+    const d = await getJson(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${tl}&dt=t&q=${encodeURIComponent(q)}`)
+    const text = (d?.[0] || []).map(x => x?.[0]).filter(Boolean).join('')
+    if (!text) throw new Error('رد فاضي')
+    return text.trim()
+  }],
+  ['google-chrome', async (q, tl = 'en') => {
+    const d = await getJson(`https://clients5.google.com/translate_a/t?client=dict-chrome-ex&sl=auto&tl=${tl}&q=${encodeURIComponent(q)}`)
+    const text = d?.sentences
+      ? d.sentences.map(s => s.trans).filter(Boolean).join('')
+      : (Array.isArray(d) ? (Array.isArray(d[0]) ? d[0][0] : d[0]) : '')
+    if (!text) throw new Error('رد فاضي')
+    return String(text).trim()
+  }],
+  ['google-package', async (q, tl = 'en') => {
+    const mod = await import('@vitalets/google-translate-api')
+    const fn = mod.translate || mod.default?.translate || mod.default
+    const r = await fn(q, { to: tl })
+    if (!r?.text) throw new Error('رد فاضي')
+    return String(r.text).trim()
+  }],
+  ['lingva', async (q, tl = 'en') => {
+    if (q.length > 1500) throw new Error('النص طويل')
+    const d = await getJson(`https://lingva.ml/api/v1/auto/${tl}/${encodeURIComponent(q)}`)
+    if (!d?.translation) throw new Error('رد فاضي')
+    return String(d.translation).trim()
+  }]
+]
+
+async function translateToEnglish(prompt) {
+  if (isAlreadyEnglish(prompt)) return prompt
+
+  for (const [name, fn] of TRANSLATE_PROVIDERS) {
+    try {
+      const translated = await fn(prompt, 'en')
+      if (translated) {
+        console.log('[aiapk] 🌐 translated via', name, '->', translated)
+        return translated
+      }
+    } catch (e) {
+      console.error('[aiapk] ❌ translate', name, e.message)
+    }
+  }
+
+  return prompt
 }
 
 function isBase64Image(str = '') {
@@ -153,16 +224,20 @@ async function tryImageEndpoint(endpoint, prompt) {
   return null
 }
 
-async function generateImageBuffer(prompt) {
-  for (const ep of IMG_ENDPOINTS) {
-    const buf = await tryImageEndpoint(ep, prompt)
-    if (buf) return buf
+async function generateImageBuffer(enPrompt, rawPrompt) {
+  const promptsToTry = enPrompt !== rawPrompt ? [enPrompt, rawPrompt] : [enPrompt]
+
+  for (const p of promptsToTry) {
+    for (const ep of IMG_ENDPOINTS) {
+      const buf = await tryImageEndpoint(ep, p)
+      if (buf) return buf
+    }
   }
 
   const seed = Math.floor(Math.random() * 1000000)
   const fallbackUrls = [
-    `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?seed=${seed}&width=1024&height=1024&nologo=true`,
-    `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?seed=${seed}`
+    `https://image.pollinations.ai/prompt/${encodeURIComponent(enPrompt)}?seed=${seed}&width=1024&height=1024&nologo=true`,
+    `https://image.pollinations.ai/prompt/${encodeURIComponent(enPrompt)}?seed=${seed}`
   ]
 
   for (const u of fallbackUrls) {
@@ -207,11 +282,12 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
   }
 
   await react(conn, m, '⏳')
-  const wait = await m.reply(isImageCmd ? '🎨 *جاري توليد الصورة...*' : '🤖 *جاري التفكير...*')
+  const wait = await m.reply(isImageCmd ? '🎨 *جاري ترجمة الوصف وتوليد الصورة...*' : '🤖 *جاري التفكير...*')
 
   try {
     if (isImageCmd) {
-      const imgBuf = await generateImageBuffer(prompt)
+      const enPrompt = await translateToEnglish(prompt)
+      const imgBuf = await generateImageBuffer(enPrompt, prompt)
       try { await conn.sendMessage(m.chat, { delete: wait.key }) } catch {}
 
       if (!imgBuf) {
@@ -219,9 +295,13 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
         return m.reply('❌ تعذر توليد الصورة حالياً، جرّب وصفاً آخر.')
       }
 
+      const caption = enPrompt !== prompt
+        ? `🎨 *النتيجة:* ${prompt}\n🌐 *بالإنجليزية:* ${enPrompt}`
+        : `🎨 *النتيجة:* ${prompt}`
+
       await conn.sendMessage(
         m.chat,
-        { image: imgBuf, caption: `🎨 *النتيجة:* ${prompt}` },
+        { image: imgBuf, caption },
         { quoted: m }
       )
       await react(conn, m, '✅')
