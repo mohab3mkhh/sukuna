@@ -43,68 +43,78 @@ const BASE_URL = 'https://prexzyapis.com/tts'
 
 if (!global._ttsState) global._ttsState = {}
 
-// ━━━━━━━━ جيب الصوت من API (arraybuffer مباشرة) ━━━━━━━━
+// ━━━━━━━━ جيب الصوت من API ━━━━━━━━
 async function fetchVoice(endpoint, text) {
-    // بنطلب الـ API مباشرة كـ arraybuffer — لو رجع JSON نجيب الـ audio_url ونحمّله فوراً
     const r = await axios.get(`${BASE_URL}/${endpoint}`, {
         params: { text },
-        responseType: 'arraybuffer',
         timeout: 40000,
-        maxRedirects: 10,
         validateStatus: () => true,
-        headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Accept': 'audio/mpeg, audio/*, application/json, */*'
-        }
+        headers: { 'User-Agent': 'Mozilla/5.0' }
     })
 
     if (r.status >= 400) throw new Error(`HTTP ${r.status}`)
 
-    const buf = Buffer.from(r.data)
-    const start = buf.slice(0, 5).toString('utf8')
+    // الـ API بيرجع JSON فيه audio_url من tmpfiles
+    const json = r.data
+    const tmpUrl = json?.audio_url
+    if (!tmpUrl) throw new Error('مفيش audio_url في الرد')
 
-    // لو رجع JSON — جيب audio_url وحمّله كـ stream
-    if (start.startsWith('{') || start.startsWith('[')) {
-        let json
-        try { json = JSON.parse(buf.toString()) } catch { throw new Error('رد مش JSON صح') }
+    // tmpfiles بيمنع السيرفرات من التحميل المباشر
+    // الحل: نستخدم tmpfiles API الرسمي
+    // https://tmpfiles.org/api/v1/get?url=<url>  → بيرجع رابط مباشر
+    let audioBuf = null
 
-        const link = json?.audio_url || json?.url || json?.audio || json?.link
-        if (!link) throw new Error('مفيش رابط في الرد: ' + JSON.stringify(json).slice(0, 100))
-
-        // حمّل الصوت بـ stream مباشرة بدون تخزين الرابط
-        const { data: stream, headers } = await axios.get(link, {
-            responseType: 'stream',
-            timeout: 60000,
-            maxRedirects: 10,
-            headers: {
-                'User-Agent': 'Mozilla/5.0',
-                'Accept': '*/*',
-                // لو tmpfiles محتاج referer
-                'Referer': new URL(link).origin + '/'
-            },
+    // محاولة 1: tmpfiles API
+    try {
+        const apiRes = await axios.get('https://tmpfiles.org/api/v1/get', {
+            params: { url: tmpUrl },
+            timeout: 15000,
             validateStatus: () => true
         })
+        const dlUrl = apiRes.data?.data?.url
+        if (dlUrl) {
+            const dlRes = await axios.get(dlUrl, {
+                responseType: 'arraybuffer',
+                timeout: 30000,
+                validateStatus: () => true,
+                headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': '*/*' }
+            })
+            if (dlRes.status === 200) {
+                const b = Buffer.from(dlRes.data)
+                const s = b.slice(0, 10).toString('utf8').toLowerCase()
+                if (!s.includes('<!doc') && !s.includes('<html') && b.length > 500) audioBuf = b
+            }
+        }
+    } catch (e) { console.log('[انطق] tmpfiles api:', e.message) }
 
-        // جمّع الـ chunks
-        const chunks = []
-        await new Promise((res, rej) => {
-            stream.on('data', c => chunks.push(c))
-            stream.on('end', res)
-            stream.on('error', rej)
-        })
-
-        const audioBuf = Buffer.concat(chunks)
-        if (audioBuf.length < 500) throw new Error(`الملف صغير جداً (${audioBuf.length} bytes) — الرابط انتهى`)
-
-        const s = audioBuf.slice(0, 15).toString('utf8').toLowerCase()
-        if (s.includes('<!doc') || s.includes('<html')) throw new Error('الموقع محتاج login — الرابط محمي')
-
-        return audioBuf
+    // محاولة 2: استخدم catbox أو filebin كـ mirror — مش ممكن هنا
+    // محاولة 3: اطلب الـ Prexzy API تاني بس بـ responseType arraybuffer مباشرة
+    // بعض الـ APIs بترجع audio لو مفيش Accept header JSON
+    if (!audioBuf) {
+        try {
+            const r2 = await axios.get(`${BASE_URL}/${endpoint}`, {
+                params: { text },
+                responseType: 'arraybuffer',
+                timeout: 40000,
+                validateStatus: () => true,
+                headers: {
+                    'User-Agent': 'Mozilla/5.0',
+                    'Accept': 'audio/mpeg, audio/mp3, audio/*, application/octet-stream'
+                }
+            })
+            if (r2.status === 200) {
+                const b = Buffer.from(r2.data)
+                const s = b.slice(0, 5).toString('utf8')
+                // لو مش JSON يبقى audio
+                if (!s.startsWith('{') && !s.startsWith('[') && b.length > 500) audioBuf = b
+            }
+        } catch (e) { console.log('[انطق] direct arraybuffer:', e.message) }
     }
 
-    // رجع audio مباشرة (ID3 / ftyp / ...)
-    if (buf.length < 500) throw new Error('الملف فارغ')
-    return buf
+    // لو كل المحاولات فشلت — ابعت الرابط كـ string والـ handler يعرضه
+    if (!audioBuf) return tmpUrl
+
+    return audioBuf
 }
 
 // ━━━━━━━━ ابعت قايمة الزراير ━━━━━━━━
@@ -158,14 +168,28 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
 
         await react('⏳')
         try {
-            // نجيب الصوت الآن مباشرة بالنص المحفوظ
             const audioBuf = await fetchVoice(voice.endpoint, savedText)
-            await conn.sendMessage(jid, {
-                audio: audioBuf, mimetype: 'audio/mpeg', ptt: false, fileName: 'voice.mp3'
-            }, { quoted: m })
-            await conn.sendMessage(jid, {
-                text: `╭━━━〔 ✅ *تـم* 〕━━━⬣\n┃ 🔊 *الصوت:* ${voice.name}\n┃ 📝 *النص:* ${savedText.slice(0, 80)}\n╰━━━━━━━━━━━━━━⬣\n\n> ${FOOTER}`
-            }, { quoted: m })
+
+            if (Buffer.isBuffer(audioBuf)) {
+                // نجح التحميل — ابعت الصوت مباشرة
+                await conn.sendMessage(jid, {
+                    audio: audioBuf, mimetype: 'audio/mpeg', ptt: false, fileName: 'voice.mp3'
+                }, { quoted: m })
+                await conn.sendMessage(jid, {
+                    text: `╭━━━〔 ✅ *تـم* 〕━━━⬣\n┃ 🔊 *الصوت:* ${voice.name}\n┃ 📝 *النص:* ${savedText.slice(0, 80)}\n╰━━━━━━━━━━━━━━⬣\n\n> ${FOOTER}`
+                }, { quoted: m })
+            } else {
+                // audioBuf فيه رابط مباشر (string)
+                await reply(
+                    `╭━━━〔 🔊 *الصوت جاهز* 〕━━━⬣\n` +
+                    `┃ 🎙️ *الصوت:* ${voice.name}\n` +
+                    `┃ 📝 *النص:* ${savedText.slice(0, 80)}\n` +
+                    `┃\n` +
+                    `┃ 🔗 *رابط التحميل:*\n` +
+                    `┃ ${audioBuf}\n` +
+                    `╰━━━━━━━━━━━━━━⬣\n\n> ${FOOTER}`
+                )
+            }
             await react('✅')
         } catch (e) {
             await react('❌')
@@ -180,15 +204,19 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
     if (state && Date.now() < state.expires) {
         const num = parseInt(input)
         if (!isNaN(num) && num >= 1 && num <= VOICES.length) {
-            const voice    = VOICES[num - 1]
+            const voice     = VOICES[num - 1]
             const savedText = state.text
             delete global._ttsState[sender]
             await react('⏳')
             try {
                 const audioBuf = await fetchVoice(voice.endpoint, savedText)
-                await conn.sendMessage(jid, {
-                    audio: audioBuf, mimetype: 'audio/mpeg', ptt: false, fileName: 'voice.mp3'
-                }, { quoted: m })
+                if (Buffer.isBuffer(audioBuf)) {
+                    await conn.sendMessage(jid, {
+                        audio: audioBuf, mimetype: 'audio/mpeg', ptt: false, fileName: 'voice.mp3'
+                    }, { quoted: m })
+                } else {
+                    await reply(`🔗 رابط الصوت:\n${audioBuf}`)
+                }
                 await conn.sendMessage(jid, {
                     text: `╭━━━〔 ✅ *تـم* 〕━━━⬣\n┃ 🔊 *الصوت:* ${voice.name}\n┃ 📝 *النص:* ${savedText.slice(0, 80)}\n╰━━━━━━━━━━━━━━⬣\n\n> ${FOOTER}`
                 }, { quoted: m })
