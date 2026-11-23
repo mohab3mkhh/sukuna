@@ -696,12 +696,7 @@ export async function yukiJadiBot({ sessionPath, pathYukiJadiBot, m, conn, userI
         // ✅ شلت 405 من الحذف النهائي (بيحصل أحياناً بسبب نسخة واتساب مش بسبب الجلسة)
         if ([DisconnectReason.loggedOut, 401, 403].includes(reason)) {
           console.warn(chalk.red(`[JADIBOT] 🚫 جلسة (+${userId}) أُغلقت نهائياً — كود: ${reason}`))
-          if (registeredAtStart || st.wasOpen) {
-            try {
-              await conn.sendMessage(`${userId}@s.whatsapp.net`,
-                { text: '⚠️ تم قطع جلستك في البوت. أعد التنصيب للاستمرار.' })
-            } catch {}
-          }
+          // 🚫 مفيش رسايل خاص بتتبعت لحد
           removeConnSocket(userId)
           removeInstall(userId)
           cleanupSession(userId, true)
@@ -711,10 +706,7 @@ export async function yukiJadiBot({ sessionPath, pathYukiJadiBot, m, conn, userI
 
         if (reason === 440) {
           console.warn(chalk.yellow(`[JADIBOT] ⚠️ جلسة (+${userId}) استُبدلت بجهاز آخر`))
-          try {
-            await conn.sendMessage(`${userId}@s.whatsapp.net`,
-              { text: '⚠️ تم اكتشاف جلسة جديدة. احذف الجلسة القديمة وأعد الربط.' })
-          } catch {}
+          // 🚫 مفيش رسايل خاص بتتبعت لحد
           return
         }
 
