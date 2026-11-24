@@ -88,6 +88,30 @@ global.botname   = global.botName
 // ════════════════════════════════════════════════════════
 // 📁 المجلدات الضرورية
 // ════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════
+// 💽 Railway Volume — الجلسات وقاعدة البيانات تفضل بعد كل Deploy/Restart
+//   Railway بيسمح بـ Volume واحد بس للخدمة، فبنوصّل session/ و Sessions/ و database.json جواه بـ symlink.
+//   (بيشتغل لوحده لو Volume متوصّل — Railway بيحط المتغير RAILWAY_VOLUME_MOUNT_PATH تلقائياً)
+// ════════════════════════════════════════════════════════
+try {
+  const VOL = process.env.RAILWAY_VOLUME_MOUNT_PATH
+  if (VOL) {
+    for (const [name, isDir] of [['session', true], ['Sessions', true], ['database.json', false]]) {
+      const link = join(__dirname, name), target = join(VOL, name)
+      let isLink = false
+      try { isLink = fs.lstatSync(link).isSymbolicLink() } catch {}
+      if (isLink) continue
+      if (!existsSync(target)) {
+        if (existsSync(link)) fs.cpSync(link, target, { recursive: true })
+        else if (isDir) mkdirSync(target, { recursive: true })
+      }
+      try { fs.rmSync(link, { recursive: true, force: true }) } catch {}
+      fs.symlinkSync(target, link, isDir ? 'dir' : 'file')
+      console.log(chalk.green(`[Volume] ${name} → ${target}`))
+    }
+  }
+} catch (e) { console.error(chalk.red('[Volume]'), e.message) }
+
 const AUTH_DIR   = join(__dirname, 'session')
 const PLUGIN_DIR = join(__dirname, 'plugins')
 const SUBBOT_DIR = join(__dirname, global.subbotDir || 'Sessions/SubBot')
@@ -199,13 +223,13 @@ const connectionOptions = {
     creds: state.creds,
     keys:  makeCacheableSignalKeyStore(state.keys, Pino({ level: 'fatal' }).child({ level: 'fatal' }))
   },
-  browser:                       ['MacOs', 'Safari', '17.0'],
+  browser:                       ['Mac OS', 'Firefox', '10.15.7'],
   markOnlineOnConnect:           true,
   generateHighQualityLinkPreview: true,
   syncFullHistory:               false,
-  keepAliveIntervalMs:           55_000,
-  maxIdleTimeMs:                 60_000,
-  defaultQueryTimeoutMs:         undefined,
+  keepAliveIntervalMs:           25_000,   // كان 55 ثانية: قريب جداً من مهلة السيرفر فكان واتساب يقفل الاتصال "فجأة" (408)
+  connectTimeoutMs:              60_000,
+  defaultQueryTimeoutMs:         60_000,   // كان undefined: أي طلب معلّق كان بيفضل للأبد
   msgRetryCounterCache,
   userDevicesCache,
   getMessage: async key => {
@@ -277,11 +301,20 @@ let _handler = { handler, loadPlugins, watchPlugins, participantsUpdate, groupsU
 let _reconnectTimer = null
 let _replacedCount = 0
 let _replacedSince = 0
+let _holdUntil = 0          // لحد الوقت ده الـ watchdog مايحاولش يعيد الاتصال (بعد تعارض 440)
+let _failStreak = 0         // عدد محاولات إعادة الاتصال الفاشلة ورا بعض (للتأخير المتزايد)
 function scheduleReconnect(ms = 5000) {
   if (_reconnectTimer) return
   _reconnectTimer = setTimeout(async () => {
     _reconnectTimer = null
-    await global.reloadHandler(true).catch(console.error)
+    try {
+      await global.reloadHandler(true)
+    } catch (e) {
+      // ✅ كان بيطبع الخطأ بس ويسيب البوت أوفلاين للأبد — دلوقتي بيحاول تاني
+      console.error(chalk.red('[reconnect] فشل:'), e?.message || e)
+      _failStreak++
+      scheduleReconnect(Math.min(5000 * 2 ** Math.min(_failStreak, 5), 120_000))
+    }
   }, ms)
 }
 
@@ -459,6 +492,8 @@ async function connectionUpdate(update) {
     if (conn.user) conn.user.jid = jid
 
     global.timestamp.connect = new Date()
+    _failStreak = 0
+    _replacedCount = 0
 
     console.log(chalk.hex('#00FFFF').bold(
       `\n╔══════════════════════════════════╗\n` +
@@ -491,7 +526,11 @@ async function connectionUpdate(update) {
       if (now - _replacedSince > 5 * 60_000) { _replacedSince = now; _replacedCount = 0 }
       _replacedCount++
       if (_replacedCount > 3) {
-        console.log(chalk.red.bold('🔴 الجلسة شغّالة في مكانين في نفس الوقت (تعارض) — وقفت إعادة الاتصال.\n   اقفل النسخة التانية (جهازك/Deploy قديم) وبعدين اعمل Restart.'))
+        // ✅ كان بيوقف نهائياً لحد ما تعمل Restart يدوي. دلوقتي بيستنى 5 دقايق ويحاول تاني (غالباً النسخة القديمة من الـ Deploy بتكون قفلت)
+        console.log(chalk.red.bold('🔴 الجلسة شغّالة في مكانين في نفس الوقت (تعارض 440) — هستنى 5 دقايق وأحاول تاني.\n   لو بيتكرر: اقفل النسخة التانية (جهازك/Deploy قديم/Replica تانية في Railway).'))
+        _holdUntil = Date.now() + 5 * 60_000
+        _replacedCount = 0
+        scheduleReconnect(5 * 60_000)
         return
       }
       console.log(chalk.yellow('⚠️ الجلسة استُبدلت — إعادة اتصال بعد 30 ثانية...'))
@@ -500,8 +539,10 @@ async function connectionUpdate(update) {
     }
 
     // ✅ أي كود تاني (405 / 500 / 428 / 515 ...): نحافظ على الجلسة ونعيد الاتصال — مبقاش بنمسح creds
-    console.log(chalk.yellow('♻️ إعادة الاتصال بعد 5 ثوانٍ...'))
-    scheduleReconnect(5000)
+    _failStreak++
+    const wait = Math.min(5000 * 2 ** Math.min(_failStreak - 1, 4), 60_000)   // 5ث ← 10 ← 20 ← 40 ← 60
+    console.log(chalk.yellow(`♻️ إعادة الاتصال بعد ${wait / 1000} ثانية...`))
+    scheduleReconnect(wait)
   }
 }
 
@@ -576,8 +617,11 @@ setInterval(() => {
 // 🤖 Sub-Bots — إعادة تشغيل عند البدء
 // ════════════════════════════════════════════════════════
 function getInstalledIds() {
-  const f = join(PLUGIN_DIR, 'yuki_installs.json')
-  try { return JSON.parse(readFileSync(f, 'utf8')) || [] } catch { return [] }
+  // تنصيب.js بيحفظ القايمة في Sessions/ (قبل كده كانت في plugins/ — ولسه بنقرا منها لو الجديد مش موجود)
+  for (const f of [join(__dirname, 'Sessions', 'yuki_installs.json'), join(PLUGIN_DIR, 'yuki_installs.json')]) {
+    try { if (existsSync(f)) return JSON.parse(readFileSync(f, 'utf8')) || [] } catch {}
+  }
+  return []
 }
 
 function isSubBotAlive(uid) {
@@ -602,6 +646,11 @@ async function reviveSubBot(uid) {
 
 // revival عند البدء (بعد 12 ثانية)
 setTimeout(async () => {
+  // ✅ لو تنصيب.js محمّل: هو اللي بيشغّل البوتات الفرعية وعنده مراقب بيرجّع الواقع (بيحترم فترات الانتظار بعد 440/403)
+  if (typeof global.initSubBots === 'function') {
+    await global.initSubBots(global.conn).catch(e => console.error('[SubBot] init:', e.message))
+    return
+  }
   const ids = getInstalledIds()
   if (!ids.length) return
   console.log(chalk.cyan(`[SubBot] 🔄 إعادة تشغيل ${ids.length} بوت فرعي...`))
@@ -626,8 +675,17 @@ setTimeout(() => {
       if (global.conns.length < before)
         console.log(chalk.yellow(`[Watchdog] 🧹 أزال ${before - global.conns.length} بوت ميت`))
 
-      for (const uid of getInstalledIds()) {
-        if (!isSubBotAlive(uid)) await reviveSubBot(uid)
+      // لو مراقب تنصيب.js شغّال، هو المسؤول (عشان ماحصلش تشغيل مكرر لنفس الجلسة = 440)
+      if (!global.__jadiSup) {
+        for (const uid of getInstalledIds()) {
+          if (!isSubBotAlive(uid)) await reviveSubBot(uid)
+        }
+      }
+
+      // ✅ حارس البوت الرئيسي: لو السوكت مقفول ومفيش إعادة اتصال مجدولة → ارجع اتصل
+      if (Date.now() >= _holdUntil && !_reconnectTimer && global.conn?.ws?.readyState === 3) {
+        console.log(chalk.yellow('[Watchdog] البوت الرئيسي مقفول ومفيش إعادة اتصال مجدولة — بعيد الاتصال'))
+        scheduleReconnect(1000)
       }
     } catch (e) { console.error('[Watchdog]', e.message) }
   }, 2 * 60_000)
