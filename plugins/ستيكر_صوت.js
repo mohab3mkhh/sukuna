@@ -8,7 +8,7 @@ import { execFile, spawn } from 'child_process'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
-import { prepareWAMessageMedia, proto } from '@whiskeysockets/baileys'
+import { delay, prepareWAMessageMedia, proto } from '@whiskeysockets/baileys'
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
 const MAX_MB = 60
@@ -36,6 +36,43 @@ function getQuotedSticker(m) {
     Boolean(q.message?.stickerMessage) ||
     mime.includes('webp')
   return isSticker ? q : null
+}
+
+function isSocketReady(conn) {
+  if (!conn || !conn.user) return false
+  const ws = conn.ws
+  if (!ws) return true
+  if (typeof ws.isOpen === 'boolean') return ws.isOpen
+  if (typeof ws.readyState === 'number') return ws.readyState === 1
+  return true
+}
+
+async function waitForSocket(conn, maxWaitMs = 8000) {
+  const start = Date.now()
+  while (!isSocketReady(conn)) {
+    if (Date.now() - start > maxWaitMs) {
+      throw new Error('اتصال واتساب مغلق حالياً، أعد المحاولة بعد ثوانٍ')
+    }
+    await delay(400)
+  }
+}
+
+async function withSocketRetry(conn, fn, retries = 2) {
+  let lastErr
+  for (let i = 0; i <= retries; i++) {
+    try {
+      await waitForSocket(conn)
+      return await fn()
+    } catch (e) {
+      lastErr = e
+      const msg = String(e?.message || e || '')
+      const isConnErr = /connection closed|timed out|socket|stream errored/i.test(msg)
+      if (!isConnErr || i === retries) throw e
+      logErr(`إعادة محاولة عملية الاتصال (${i + 1}/${retries}):`, msg)
+      await delay(1500)
+    }
+  }
+  throw lastErr
 }
 
 async function searchFirstYouTubeVideo(query) {
@@ -141,7 +178,7 @@ async function cnvAudio(videoId) {
     timeout: 20000
   })
   if (!k.data?.key) throw new Error('cnv: تعذر جلب المفتاح')
-  await new Promise(r => setTimeout(r, 1500))
+  await delay(1500)
 
   const params = new URLSearchParams({
     link: `https://youtu.be/${videoId}`,
@@ -179,7 +216,7 @@ async function cnvAudio(videoId) {
     } catch (e) {
       logErr(`cnv dl attempt ${i + 1}:`, e?.message || e)
     }
-    await new Promise(r => setTimeout(r, 2000))
+    await delay(2000)
   }
   throw new Error('cnv: ملف التحميل فارغ')
 }
@@ -266,7 +303,7 @@ const handler = async (m, { conn, text, usedPrefix, command }) => {
   }
 
   try {
-    const stickerBuf = await quotedSticker.download()
+    const stickerBuf = await withSocketRetry(conn, () => quotedSticker.download())
     if (!stickerBuf || !Buffer.isBuffer(stickerBuf) || stickerBuf.length < 500) {
       return m.reply('❌ تعذر تحميل الستيكر المردود عليه.')
     }
@@ -274,14 +311,15 @@ const handler = async (m, { conn, text, usedPrefix, command }) => {
     const rawAudioBuf = await fetchSongAudioBuffer(songName)
     const opusBuf = await toOpusOggBuffer(rawAudioBuf)
 
-    const stickerMedia = await prepareWAMessageMedia(
-      { sticker: stickerBuf },
-      { upload: conn.waUploadToServer }
+    const stickerMedia = await withSocketRetry(conn, () =>
+      prepareWAMessageMedia({ sticker: stickerBuf }, { upload: conn.waUploadToServer })
     )
 
-    const audioMedia = await prepareWAMessageMedia(
-      { audio: opusBuf, mimetype: 'audio/ogg; codecs=opus', ptt: false },
-      { upload: conn.waUploadToServer }
+    const audioMedia = await withSocketRetry(conn, () =>
+      prepareWAMessageMedia(
+        { audio: opusBuf, mimetype: 'audio/ogg; codecs=opus', ptt: false },
+        { upload: conn.waUploadToServer }
+      )
     )
 
     const payload = proto.Message.fromObject({
@@ -293,11 +331,15 @@ const handler = async (m, { conn, text, usedPrefix, command }) => {
       }
     })
 
-    await conn.relayMessage(m.chat, payload, { quoted: m })
+    await withSocketRetry(conn, () => conn.relayMessage(m.chat, payload, { quoted: m }))
     log('✅ تم إرسال الستيكر المدمج معه الصوت بنجاح')
   } catch (err) {
     logErr('handler error:', err?.stack || err?.message || err)
-    await m.reply(`❌ *خطأ:* ${err?.message || err}`)
+    try {
+      if (isSocketReady(conn)) {
+        await m.reply(`❌ *خطأ:* ${err?.message || err}`)
+      }
+    } catch {}
   }
 }
 
