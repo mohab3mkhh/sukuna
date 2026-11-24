@@ -1,6 +1,6 @@
 // plugins/edit-search.js
 // ⛩️ SUKUNA BOT - بحث إيديتات تيك توك (كاروسيل) 🎬
-// v2: بحث أدق — ترجمة الأسماء العربي→إنجليزي، أكتر من صيغة بحث، فلترة بالصلة، وترتيب بالتفاعل
+// v3: التحميل بدون علامة مائية بقى من tikwmapi (بالمفتاح) بدل tikwm.com
 
 import * as _baileys from '@whiskeysockets/baileys'
 
@@ -13,6 +13,10 @@ const CONCURRENCY = 3
 const CACHE_TTL = 30 * 60 * 1000
 const CACHE = new Map()
 const TR_CACHE = new Map()
+
+const TIK_KEY = process.env.TIKWMAPI_KEY || '34ce144ad4984df4fbbc79480a131395'
+const TIK_API = 'https://api.tikwmapi.com'
+const TIK_GAP_MS = 300    // فاصل بسيط بين طلبات الـ API
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36'
 
@@ -179,31 +183,37 @@ async function searchTikTok(name) {
     return results
 }
 
-// ━━━ tikwm (بدون علامة مائية) — لو بيرجّع 403 بنوقفه 10 دقايق بدل ما نضيّع وقت ━━━
-let lastTikwm = 0
-let tikwmDisabledUntil = 0
-async function tikwmGate() {
-    const slot = Math.max(Date.now(), lastTikwm + 1100)
-    lastTikwm = slot
+// ━━━ tikwmapi (بدون علامة مائية، بالمفتاح) ━━━
+// لو المفتاح مرفوض (401/403) بنوقفه 10 دقايق، ولو 429 بنوقفه دقيقة، والكارت بيرجع للرابط المباشر
+let lastTikCall = 0
+let tikDisabledUntil = 0
+async function tikGate() {
+    const slot = Math.max(Date.now(), lastTikCall + TIK_GAP_MS)
+    lastTikCall = slot
     const wait = slot - Date.now()
     if (wait > 0) await sleep(wait)
 }
 
 async function getVideoNoWatermark(tiktokUrl) {
-    if (Date.now() < tikwmDisabledUntil) throw new Error('tikwm موقوف مؤقتاً')
-    await tikwmGate()
-    const r = await fetch('https://www.tikwm.com/api/?url=' + encodeURIComponent(tiktokUrl), {
-        headers: { 'User-Agent': UA },
+    if (Date.now() < tikDisabledUntil) throw new Error('tikwmapi موقوف مؤقتاً')
+    await tikGate()
+    const r = await fetch(`${TIK_API}/?url=${encodeURIComponent(tiktokUrl)}`, {
+        headers: { 'x-tikwmapi-key': TIK_KEY, 'User-Agent': UA },
         signal: AbortSignal.timeout(30000)
     })
-    if (r.status === 403 || r.status === 429) {
-        tikwmDisabledUntil = Date.now() + 10 * 60 * 1000
-        throw new Error('HTTP ' + r.status)
+    if (r.status === 401 || r.status === 403) {
+        tikDisabledUntil = Date.now() + 10 * 60 * 1000
+        throw new Error('tikwmapi: HTTP ' + r.status + ' (تأكد من المفتاح)')
     }
-    if (!r.ok) throw new Error('HTTP ' + r.status)
+    if (r.status === 429) {
+        tikDisabledUntil = Date.now() + 60 * 1000
+        throw new Error('tikwmapi: HTTP 429')
+    }
+    if (!r.ok) throw new Error('tikwmapi: HTTP ' + r.status)
     const j = await r.json()
-    if (j.code !== 0) throw new Error(j.msg || 'Failed')
-    const url = j.data.hdplay || j.data.play
+    if (j?.code !== undefined && j.code !== 0) throw new Error(j?.msg || 'tikwmapi: Failed')
+    const d = j?.data
+    const url = d?.hdplay || d?.play
     if (!url) throw new Error('No video URL')
     return url
 }
@@ -220,13 +230,13 @@ async function downloadVideo(url) {
     return buf
 }
 
-// الأفضل: بدون علامة مائية (tikwm)، وإلا الرابط المباشر
+// الأفضل: بدون علامة مائية (tikwmapi)، وإلا الرابط المباشر
 async function getVideoBuffer(video) {
-    if (Date.now() >= tikwmDisabledUntil) {
+    if (Date.now() >= tikDisabledUntil) {
         try {
             return await downloadVideo(await getVideoNoWatermark(video.url))
         } catch (e) {
-            console.log('[edit-search] tikwm فشل:', e.message)
+            console.log('[edit-search] tikwmapi فشل:', e.message)
         }
     }
     if (video.videoUrl) return await downloadVideo(video.videoUrl)
