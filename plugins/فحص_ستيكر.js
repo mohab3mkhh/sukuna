@@ -24,6 +24,26 @@ function clean(v, depth = 0) {
   return v
 }
 
+// تحليل ملف الـ webp نفسه: ممكن الصوت مدفون جواه (RIFF chunk / EXIF) مش في حقول الرسالة
+function analyzeWebp(buf) {
+  const res = { size: buf.length, riff: buf.slice(0, 4).toString('latin1'), webp: buf.slice(8, 12).toString('latin1'), chunks: [], signatures: [], exifStrings: null }
+  if (res.riff === 'RIFF') {
+    let off = 12
+    while (off + 8 <= buf.length && res.chunks.length < 40) {
+      const id = buf.slice(off, off + 4).toString('latin1'), size = buf.readUInt32LE(off + 4)
+      res.chunks.push(`${id}:${size}`)
+      if (id === 'EXIF') {
+        const t = buf.slice(off + 8, off + 8 + Math.min(size, 4000)).toString('latin1').replace(/[^\x20-\x7e]+/g, ' ').replace(/\s+/g, ' ').trim()
+        res.exifStrings = t.slice(0, 1200)
+      }
+      off += 8 + size + (size % 2)
+    }
+  }
+  const sigs = { ID3: 'ID3', OggS: 'OggS', ftyp: 'ftyp', fLaC: 'fLaC', 'RIFF..WAVE': null, audio: 'audio', opus: 'Opus', mp4a: 'mp4a', sound: 'sound' }
+  for (const [name, needle] of Object.entries(sigs)) if (needle && buf.includes(Buffer.from(needle))) res.signatures.push(name)
+  return res
+}
+
 const handler = async (m, { conn, usedPrefix = '.', command }) => {
   const reply = t => conn.sendMessage(m.chat, { text: t }, { quoted: m })
   const q = m.quoted
@@ -38,6 +58,11 @@ const handler = async (m, { conn, usedPrefix = '.', command }) => {
     message: clean(raw),
     contextOfCommand: clean(m.msg?.contextInfo || {})
   }
+  try {
+    const buf = await q.download?.()
+    if (buf?.length) dump.webpAnalysis = analyzeWebp(Buffer.from(buf))
+    else dump.webpAnalysis = 'download غير متاح'
+  } catch (e) { dump.webpAnalysis = 'فشل التحميل: ' + e.message }
   const json = JSON.stringify(dump, null, 2)
   console.log('[فحص_ستيكر]\n' + json)
 
@@ -51,7 +76,7 @@ const handler = async (m, { conn, usedPrefix = '.', command }) => {
     document: Buffer.from(json),
     mimetype: 'application/json',
     fileName: 'sound_sticker_dump.json',
-    caption: `🔬 النوع: *${dump.mtype}*\nالمفاتيح: ${dump.topLevelKeys.join(', ')}\n\nابعت الملف ده لـ Claude.`
+    caption: `🔬 النوع: *${dump.mtype}*\nالمفاتيح: ${dump.topLevelKeys.join(', ')}\n\nابعت الملف ده لـ Claude.\n(فيه كمان تحليل لملف الستيكر نفسه)`
   }, { quoted: m })
 }
 
