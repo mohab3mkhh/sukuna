@@ -4,20 +4,26 @@
  */
 
 import axios from 'axios'
-import fetch from 'node-fetch'
-import { spawn } from 'child_process'
+import { execFile, spawn } from 'child_process'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import { prepareWAMessageMedia, proto } from '@whiskeysockets/baileys'
 
-const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36'
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
+const MAX_MB = 60
 
-const HEADERS = {
+const YTDLP = fs.existsSync('/root/.nix-profile/bin/yt-dlp') ? '/root/.nix-profile/bin/yt-dlp' : 'yt-dlp'
+const FFMPEG = fs.existsSync('/root/.nix-profile/bin/ffmpeg') ? '/root/.nix-profile/bin/ffmpeg' : 'ffmpeg'
+const COOKIES = '/app/cookies.txt'
+
+const CNV_HEADERS = {
   'User-Agent': UA,
-  'Origin': 'https://iframe.y2meta-uk.com',
-  'Referer': 'https://iframe.y2meta-uk.com/'
+  Origin: 'https://iframe.y2meta-uk.com',
+  Referer: 'https://iframe.y2meta-uk.com/'
 }
+
+const log = (...a) => console.log('[ستيكر_صوت]', ...a)
 
 function getQuotedSticker(m) {
   const q = m?.quoted
@@ -32,35 +38,40 @@ function getQuotedSticker(m) {
 }
 
 async function searchFirstYouTubeVideo(query) {
-  const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`
-  const res = await fetch(url, {
-    headers: {
-      'User-Agent': UA,
-      'Accept-Language': 'en-US,en;q=0.9',
-      'Cookie': 'SOCS=CAI'
-    },
-    timeout: 20000
-  })
+  try {
+    const mod = await import('yt-search')
+    const yts = mod.default || mod
+    const res = await yts(query)
+    let vids = (res?.videos || []).filter(v => v.seconds > 0 && v.seconds < 1800)
+    if (!vids.length) vids = res?.videos || []
+    if (vids.length) {
+      return {
+        id: vids[0].videoId,
+        title: vids[0].title || query
+      }
+    }
+  } catch (e) {
+    log('yt-search:', e.message)
+  }
 
-  if (!res.ok) throw new Error('HTTP ' + res.status)
-  const html = await res.text()
-
-  const match = html.match(/var ytInitialData = ({.+?});<\/script>/)
+  const r = await axios.get(
+    `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`,
+    {
+      headers: { 'User-Agent': UA, 'Accept-Language': 'en-US,en;q=0.9', Cookie: 'SOCS=CAI' },
+      timeout: 15000
+    }
+  )
+  const match = String(r.data).match(/var ytInitialData = ({.+?});<\/script>/)
   if (!match) throw new Error('تعذر قراءة بيانات البحث من يوتيوب')
-
   const data = JSON.parse(match[1])
-  const contents = data.contents?.twoColumnSearchResultsRenderer?.primaryContents
-    ?.sectionListRenderer?.contents || []
-
-  for (const section of contents) {
-    const items = section.itemSectionRenderer?.contents || []
-    for (const item of items) {
+  const sections = data.contents?.twoColumnSearchResultsRenderer?.primaryContents?.sectionListRenderer?.contents || []
+  for (const s of sections) {
+    for (const item of s.itemSectionRenderer?.contents || []) {
       const v = item.videoRenderer
       if (v?.videoId) {
         return {
           id: v.videoId,
-          title: v.title?.runs?.[0]?.text || query,
-          url: `https://youtu.be/${v.videoId}`
+          title: v.title?.runs?.[0]?.text || query
         }
       }
     }
@@ -69,23 +80,72 @@ async function searchFirstYouTubeVideo(query) {
   return null
 }
 
-async function getDownloadKey(videoId) {
-  const r = await axios.get(`https://cnv.cx/v2/sanity/key?id=${videoId}`, {
-    headers: HEADERS,
-    timeout: 20000
+function runYtDlp(args) {
+  return new Promise((resolve, reject) => {
+    execFile(YTDLP, args, { timeout: 180000, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
+      if (err) {
+        return reject(
+          new Error((stderr || err.message).toString().trim().split('\n').slice(-2).join(' ').slice(0, 300))
+        )
+      }
+      resolve(stdout)
+    })
   })
-  if (!r.data?.key) throw new Error('فشل جلب مفتاح التحويل من cnv.cx')
-  return r.data.key
 }
 
-async function convertViaCnv(videoId, audioBitrate = '128') {
-  const key = await getDownloadKey(videoId)
+async function ytdlpAudio(videoId) {
+  log('cookies file:', fs.existsSync(COOKIES) ? 'found' : 'MISSING')
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stk-audio-'))
+  const out = path.join(dir, `${videoId}.%(ext)s`)
+  const url = `https://www.youtube.com/watch?v=${videoId}`
+
+  const base = [
+    '-x', '--audio-format', 'mp3', '--audio-quality', '5',
+    '--no-playlist', '--no-warnings',
+    '--max-filesize', `${MAX_MB}M`,
+    '--ffmpeg-location', FFMPEG,
+    '-o', out
+  ]
+  if (fs.existsSync(COOKIES)) base.push('--cookies', COOKIES)
+
+  const attempts = [
+    [...base, url],
+    [...base, '--extractor-args', 'youtube:player_client=android,web', url]
+  ]
+
+  try {
+    let lastErr
+    for (const args of attempts) {
+      try {
+        await runYtDlp(args)
+        const file = fs.readdirSync(dir).find(f => f.endsWith('.mp3'))
+        if (!file) throw new Error('no mp3 produced')
+        const buffer = fs.readFileSync(path.join(dir, file))
+        if (buffer.length < 20 * 1024) throw new Error('الملف صغير جداً')
+        return buffer
+      } catch (e) {
+        lastErr = e
+        log('yt-dlp:', e.message)
+      }
+    }
+    throw lastErr || new Error('فشل التحميل عبر yt-dlp')
+  } finally {
+    try { fs.rmSync(dir, { recursive: true, force: true }) } catch {}
+  }
+}
+
+async function cnvAudio(videoId) {
+  const k = await axios.get(`https://cnv.cx/v2/sanity/key?id=${videoId}`, {
+    headers: CNV_HEADERS,
+    timeout: 20000
+  })
+  if (!k.data?.key) throw new Error('cnv: no key')
   await new Promise(r => setTimeout(r, 1500))
 
   const params = new URLSearchParams({
     link: `https://youtu.be/${videoId}`,
     format: 'mp3',
-    audioBitrate,
+    audioBitrate: '128',
     videoQuality: '720',
     filenameStyle: 'pretty',
     vCodec: 'h264'
@@ -93,97 +153,48 @@ async function convertViaCnv(videoId, audioBitrate = '128') {
 
   const r = await axios.post('https://cnv.cx/v2/converter', params.toString(), {
     headers: {
-      ...HEADERS,
+      ...CNV_HEADERS,
       'Content-Type': 'application/x-www-form-urlencoded',
-      'accept': '*/*',
-      'key': key
+      accept: '*/*',
+      key: k.data.key
     },
     timeout: 120000,
     validateStatus: () => true
   })
-
-  if (r.status === 200 && r.data?.url) return r.data.url
-  if (r.data?.errorMsg) throw new Error(r.data.errorMsg)
-  throw new Error('فشل تحويل cnv.cx: HTTP ' + r.status)
-}
-
-function extractAudioUrlDeep(obj, depth = 0) {
-  if (!obj || depth > 5) return ''
-  if (typeof obj === 'string') {
-    const s = obj.trim()
-    if (/^https?:\/\//i.test(s) && !s.includes(' ')) return s
-    return ''
+  if (!(r.status === 200 && r.data?.url)) {
+    throw new Error(r.data?.errorMsg || `cnv: status ${r.status}`)
   }
-  if (Array.isArray(obj)) {
-    for (const item of obj) {
-      const found = extractAudioUrlDeep(item, depth + 1)
-      if (found) return found
-    }
-    return ''
-  }
-  if (typeof obj === 'object') {
-    const keys = ['url', 'download', 'download_url', 'audio', 'audio_url', 'mp3', 'link', 'result', 'data']
-    for (const k of keys) {
-      if (k in obj) {
-        const found = extractAudioUrlDeep(obj[k], depth + 1)
-        if (found) return found
-      }
-    }
-  }
-  return ''
-}
 
-async function resolveFallbackAudioUrls(video, query) {
-  const candidates = []
-  const encodedUrl = encodeURIComponent(video.url)
-  const encodedQuery = encodeURIComponent(query)
-
-  const apiEndpoints = [
-    `https://prexzyapis.com/download/ytmp3?url=${encodedUrl}`,
-    `https://prexzyapis.com/download/ytaudio?url=${encodedUrl}`,
-    `https://prexzyapis.com/ai/song?q=${encodedQuery}`
-  ]
-
-  for (const ep of apiEndpoints) {
+  for (let i = 0; i < 3; i++) {
     try {
-      const r = await axios.get(ep, {
-        timeout: 35000,
-        headers: { 'User-Agent': UA, Accept: 'application/json, */*' },
-        validateStatus: () => true
-      })
-      if (r.status < 400 && r.data) {
-        const found = extractAudioUrlDeep(r.data)
-        if (found) candidates.push(found)
-      }
-    } catch {}
-  }
-
-  return candidates
-}
-
-async function downloadAudioBuffer(url, retries = 3) {
-  for (let i = 0; i < retries; i++) {
-    try {
-      const r = await axios.get(url, {
-        headers: {
-          'User-Agent': UA,
-          'Referer': 'https://cnv.cx/',
-          'Origin': 'https://cnv.cx'
-        },
-        timeout: 180000,
+      const d = await axios.get(r.data.url, {
+        headers: { 'User-Agent': UA, Referer: 'https://cnv.cx/', Origin: 'https://cnv.cx' },
         responseType: 'arraybuffer',
-        maxRedirects: 5,
-        maxContentLength: Infinity,
-        maxBodyLength: Infinity,
+        timeout: 180000,
+        maxContentLength: MAX_MB * 1024 * 1024,
         validateStatus: () => true
       })
-      if (r.status === 200 && r.data?.length > 2000) {
-        return Buffer.from(r.data)
-      }
-    } catch {}
-    if (i < retries - 1) await new Promise(r => setTimeout(r, 2000))
+      if (d.status === 200 && d.data?.length > 20 * 1024) return Buffer.from(d.data)
+    } catch (e) {
+      log('cnv dl:', e.message)
+    }
+    await new Promise(r => setTimeout(r, 2000))
   }
-  throw new Error('فشل تحميل ملف الصوت من الرابط')
+  throw new Error('cnv: الملف فاضي')
+}
+
+async function downloadAudio(videoId) {
+  try {
+    const b = await cnvAudio(videoId)
+    log('✅ cnv.cx')
+    return b
+  } catch (e) {
+    log('cnv.cx:', e.message)
+  }
+
+  const b = await ytdlpAudio(videoId)
+  log('✅ yt-dlp')
+  return b
 }
 
 function toOpusOggBuffer(inputBuffer) {
@@ -195,7 +206,7 @@ function toOpusOggBuffer(inputBuffer) {
 
     fs.writeFileSync(inPath, inputBuffer)
 
-    const ff = spawn('ffmpeg', [
+    const ff = spawn(FFMPEG, [
       '-y',
       '-i', inPath,
       '-vn',
@@ -230,29 +241,7 @@ async function fetchSongAudioBuffer(query) {
   if (!video) {
     throw new Error('لم يتم العثور على أغنية مطابقة للاسم المطلوب')
   }
-
-  let lastErr = ''
-
-  // 1) المحاولة الأساسية عبر cnv.cx
-  try {
-    const mp3Url = await convertViaCnv(video.id, '128')
-    return await downloadAudioBuffer(mp3Url)
-  } catch (e) {
-    lastErr = e?.message || 'فشل cnv.cx'
-  }
-
-  // 2) المحاولات الاحتياطية
-  const fallbackUrls = await resolveFallbackAudioUrls(video, query)
-  for (const u of fallbackUrls) {
-    try {
-      const buf = await downloadAudioBuffer(u)
-      if (buf) return buf
-    } catch (e) {
-      lastErr = e?.message || lastErr
-    }
-  }
-
-  throw new Error(lastErr || 'تعذر تحميل الصوت من جميع المصادر المتاحة')
+  return downloadAudio(video.id)
 }
 
 const handler = async (m, { conn, text, usedPrefix, command }) => {
