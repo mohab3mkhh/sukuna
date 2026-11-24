@@ -1,212 +1,231 @@
-// plugins/ستيكر_صوت.js — ربط ستيكر بصوت/أغنية
-// لما أي حد يبعت الستيكر المربوط، البوت يرد عليه بالصوت المخصص.
-//
-// الأوامر (للأدمن في الجروب أو المطور):
-//   رد على ستيكر + .ربط_صوت   ← بعدها ابعت/رد بالصوت (خلال 90 ثانية)
-//   رد على صوت   + .ربط_صوت   ← بعدها ابعت الستيكر المطلوب (خلال 90 ثانية)
-//   رد على ستيكر + .فك_ربط    ← يشيل الربط
-//   .اصوات_الستيكر            ← عرض عدد الاستيكرات المربوطة
+/**
+ * plugins/ستيكر_صوت.js
+ * الرد على ستيكر + اسم الأغنية لإرسال ستيكر مدمج معه صوت عبر Baileys (ESM)
+ */
 
+import axios from 'axios'
+import fetch from 'node-fetch'
+import { spawn } from 'child_process'
 import fs from 'fs'
+import os from 'os'
 import path from 'path'
-import crypto from 'crypto'
+import { prepareWAMessageMedia, proto } from '@whiskeysockets/baileys'
 
-const DIR        = path.join(process.cwd(), 'Sessions', 'sticker_sounds')
-const INDEX_FILE = path.join(process.cwd(), 'Sessions', 'sticker_sounds.json')
-const MAX_BYTES  = 2 * 1024 * 1024     // أكبر حجم للصوت
-const MAX_SECONDS = 60
-const MAX_ITEMS  = 200
-const PENDING_MS = 90 * 1000
-const COOLDOWN_MS = 4000
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36'
 
-// ───────────── التخزين ─────────────
-let INDEX = null
-
-function loadIndex() {
-    if (INDEX) return INDEX
-    try { INDEX = JSON.parse(fs.readFileSync(INDEX_FILE, 'utf8')) } catch { INDEX = {} }
-    if (!INDEX || typeof INDEX !== 'object') INDEX = {}
-    return INDEX
+const HEADERS = {
+  'User-Agent': UA,
+  'Origin': 'https://iframe.y2meta-uk.com',
+  'Referer': 'https://iframe.y2meta-uk.com/'
 }
 
-function saveIndex() {
+function getQuotedSticker(m) {
+  const q = m?.quoted
+  if (!q) return null
+  const mime = String(q.mimetype || q.msg?.mimetype || '').toLowerCase()
+  const isSticker =
+    q.mtype === 'stickerMessage' ||
+    Boolean(q.msg?.stickerMessage) ||
+    Boolean(q.message?.stickerMessage) ||
+    mime.includes('webp')
+  return isSticker ? q : null
+}
+
+async function searchFirstYouTubeVideo(query) {
+  const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`
+  const res = await fetch(url, {
+    headers: {
+      'User-Agent': UA,
+      'Accept-Language': 'en-US,en;q=0.9',
+      'Cookie': 'SOCS=CAI'
+    },
+    timeout: 20000
+  })
+
+  if (!res.ok) throw new Error('HTTP ' + res.status)
+  const html = await res.text()
+
+  const match = html.match(/var ytInitialData = ({.+?});<\/script>/)
+  if (!match) throw new Error('تعذر قراءة بيانات البحث من يوتيوب')
+
+  const data = JSON.parse(match[1])
+  const contents = data.contents?.twoColumnSearchResultsRenderer?.primaryContents
+    ?.sectionListRenderer?.contents || []
+
+  for (const section of contents) {
+    const items = section.itemSectionRenderer?.contents || []
+    for (const item of items) {
+      const v = item.videoRenderer
+      if (v?.videoId) {
+        return {
+          id: v.videoId,
+          title: v.title?.runs?.[0]?.text || query
+        }
+      }
+    }
+  }
+
+  return null
+}
+
+async function getDownloadKey(videoId) {
+  const r = await axios.get(`https://cnv.cx/v2/sanity/key?id=${videoId}`, {
+    headers: HEADERS,
+    timeout: 20000
+  })
+  if (!r.data?.key) throw new Error('فشل جلب مفتاح التحويل')
+  return r.data.key
+}
+
+async function convertSongToMp3Url(videoId, audioBitrate = '128') {
+  const key = await getDownloadKey(videoId)
+  await new Promise(r => setTimeout(r, 1500))
+
+  const params = new URLSearchParams({
+    link: `https://youtu.be/${videoId}`,
+    format: 'mp3',
+    audioBitrate,
+    videoQuality: '720',
+    filenameStyle: 'pretty',
+    vCodec: 'h264'
+  })
+
+  const r = await axios.post('https://cnv.cx/v2/converter', params.toString(), {
+    headers: {
+      ...HEADERS,
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'accept': '*/*',
+      'key': key
+    },
+    timeout: 120000,
+    validateStatus: () => true
+  })
+
+  if (r.status === 200 && r.data?.url) return r.data.url
+  if (r.data?.errorMsg) throw new Error(r.data.errorMsg)
+  throw new Error('فشل تحويل الأغنية: ' + r.status)
+}
+
+async function downloadAudioBuffer(url, retries = 3) {
+  for (let i = 0; i < retries; i++) {
     try {
-        fs.mkdirSync(path.dirname(INDEX_FILE), { recursive: true })
-        fs.writeFileSync(INDEX_FILE, JSON.stringify(INDEX, null, 2))
-    } catch (e) { console.error('[ستيكر_صوت] save index fail:', e.message) }
+      const r = await axios.get(url, {
+        headers: {
+          'User-Agent': UA,
+          'Referer': 'https://cnv.cx/',
+          'Origin': 'https://cnv.cx'
+        },
+        timeout: 180000,
+        responseType: 'arraybuffer',
+        maxRedirects: 5,
+        maxContentLength: Infinity,
+        maxBodyLength: Infinity,
+        validateStatus: () => true
+      })
+      if (r.status === 200 && r.data?.length > 2000) {
+        return Buffer.from(r.data)
+      }
+    } catch {}
+    if (i < retries - 1) await new Promise(r => setTimeout(r, 2000))
+  }
+  throw new Error('فشل تحميل ملف الصوت بعد عدة محاولات')
 }
 
-const fileNameFor = (hash, ext) => crypto.createHash('sha1').update(hash).digest('hex').slice(0, 12) + '.' + ext
+function toOpusOggBuffer(inputBuffer) {
+  return new Promise((resolve, reject) => {
+    const tmpDir = os.tmpdir()
+    const id = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+    const inPath = path.join(tmpDir, `${id}_in`)
+    const outPath = path.join(tmpDir, `${id}_out.ogg`)
 
-const extFor = (mime = '') =>
-    /ogg|opus/i.test(mime) ? 'ogg' : /mpeg|mp3/i.test(mime) ? 'mp3' : /mp4|m4a|aac/i.test(mime) ? 'm4a' : /wav/i.test(mime) ? 'wav' : 'bin'
+    fs.writeFileSync(inPath, inputBuffer)
 
-function saveMapping(hash, buffer, { mimetype, ptt, by }) {
-    const idx = loadIndex()
-    if (!idx[hash] && Object.keys(idx).length >= MAX_ITEMS) throw new Error(`وصلت للحد الأقصى (${MAX_ITEMS} ستيكر)`)
+    const ff = spawn('ffmpeg', [
+      '-y',
+      '-i', inPath,
+      '-vn',
+      '-c:a', 'libopus',
+      '-b:a', '64k',
+      '-ar', '48000',
+      '-ac', '1',
+      outPath
+    ])
 
-    fs.mkdirSync(DIR, { recursive: true })
-    const old = idx[hash]
-    const file = fileNameFor(hash, extFor(mimetype))
-    fs.writeFileSync(path.join(DIR, file), buffer)
-    if (old && old.file !== file) { try { fs.unlinkSync(path.join(DIR, old.file)) } catch {} }
+    ff.on('error', (err) => {
+      try { fs.unlinkSync(inPath) } catch {}
+      try { fs.unlinkSync(outPath) } catch {}
+      reject(err)
+    })
 
-    idx[hash] = { file, mimetype: mimetype || 'audio/mpeg', ptt: !!ptt, by, at: Date.now() }
-    saveIndex()
+    ff.on('close', (code) => {
+      try { fs.unlinkSync(inPath) } catch {}
+      if (code !== 0 || !fs.existsSync(outPath)) {
+        try { fs.unlinkSync(outPath) } catch {}
+        return reject(new Error('فشل تحويل الصوت إلى OGG/Opus عبر ffmpeg'))
+      }
+      const outBuf = fs.readFileSync(outPath)
+      try { fs.unlinkSync(outPath) } catch {}
+      resolve(outBuf)
+    })
+  })
 }
 
-function removeMapping(hash) {
-    const idx = loadIndex()
-    const item = idx[hash]
-    if (!item) return false
-    try { fs.unlinkSync(path.join(DIR, item.file)) } catch {}
-    delete idx[hash]
-    saveIndex()
-    return true
+async function fetchSongAudioBuffer(query) {
+  const video = await searchFirstYouTubeVideo(query)
+  if (!video) {
+    throw new Error('لم يتم العثور على أغنية مطابقة للاسم المطلوب')
+  }
+  const mp3Url = await convertSongToMp3Url(video.id, '128')
+  return downloadAudioBuffer(mp3Url)
 }
 
-// ───────────── أدوات ─────────────
-const toB64 = (v) => {
-    if (!v) return null
-    if (typeof v === 'string') return v
-    try { return Buffer.from(v).toString('base64') } catch { return null }
-}
+const handler = async (m, { conn, text, usedPrefix, command }) => {
+  const quotedSticker = getQuotedSticker(m)
+  const songName = (text || '').trim()
 
-const stickerHash = (m) =>
-    toB64(m?.msg?.fileSha256 || m?.fakeObj?.message?.stickerMessage?.fileSha256 || m?.message?.stickerMessage?.fileSha256)
+  if (!quotedSticker || !songName) {
+    return m.reply(
+      `🎵 *ستيكر بصوت*\n\nرد على ستيكر واكتب اسم الأغنية:\n*مثال:* ${usedPrefix + command} Funk Da Montanha`
+    )
+  }
 
-const sendMime = (mime = '') =>
-    /ogg|opus/i.test(mime) ? 'audio/ogg; codecs=opus' : /mp4|m4a|aac/i.test(mime) ? 'audio/mp4' : /wav/i.test(mime) ? 'audio/wav' : 'audio/mpeg'
-
-const pendingOf = (conn) => (conn.stickerSoundPending ||= {})
-const lastPlay = new Map()
-
-async function readAudio(msg) {
-    const seconds = Number(msg?.msg?.seconds || 0)
-    if (seconds && seconds > MAX_SECONDS) throw new Error(`الصوت أطول من ${MAX_SECONDS} ثانية`)
-    const buffer = await msg.download()
-    if (!buffer?.length) throw new Error('ما قدرتش أحمّل الصوت')
-    if (buffer.length > MAX_BYTES) throw new Error(`الصوت أكبر من ${(MAX_BYTES / 1048576).toFixed(0)} MB`)
-    return {
-        buffer: Buffer.from(buffer),
-        mimetype: msg?.msg?.mimetype || 'audio/mpeg',
-        ptt: !!msg?.msg?.ptt
-    }
-}
-
-// ───────────── الأوامر ─────────────
-const handler = async (m, { conn, command, isAdmin, isROwner, usedPrefix }) => {
-    const idx = loadIndex()
-
-    if (/^اصوات_الستيكر$/i.test(command)) {
-        const n = Object.keys(idx).length
-        return m.reply(`🎵 *استيكرات الصوت*\n\nعدد الاستيكرات المربوطة: *${n}* / ${MAX_ITEMS}`)
-    }
-
-    if (!isROwner && !(m.isGroup && isAdmin)) return m.reply('❌ الأمر ده للأدمن (في الجروب) أو المطور بس')
-
-    const q = m.quoted
-
-    // فك الربط
-    if (/^(فك_ربط|حذف_ربط)$/i.test(command)) {
-        if (q?.mtype !== 'stickerMessage') return m.reply(`📌 رد على الستيكر بـ *${usedPrefix}${command}*`)
-        const hash = stickerHash(q)
-        if (!hash) return m.reply('❌ ما قدرتش أقرا الستيكر')
-        return m.reply(removeMapping(hash) ? '✅ تم فك ربط الصوت من الستيكر' : '⚠️ الستيكر ده مش مربوط بصوت')
-    }
-
-    // الربط
-    const key = `${m.chat}|${m.sender}`
-    const pending = pendingOf(conn)
-
-    if (q?.mtype === 'stickerMessage') {
-        const hash = stickerHash(q)
-        if (!hash) return m.reply('❌ ما قدرتش أقرا الستيكر')
-        pending[key] = { type: 'wait-audio', hash, exp: Date.now() + PENDING_MS }
-        return m.reply('🎵 تمام! ابعت *الصوت أو الأغنية* دلوقتي (أو رد على صوت) خلال 90 ثانية.\nللإلغاء اكتب: *الغاء*')
+  try {
+    const stickerBuf = await quotedSticker.download()
+    if (!stickerBuf || !Buffer.isBuffer(stickerBuf) || stickerBuf.length < 500) {
+      return m.reply('❌ تعذر تحميل الستيكر المردود عليه.')
     }
 
-    if (q?.mtype === 'audioMessage') {
-        try {
-            const audio = await readAudio(q)
-            pending[key] = { type: 'wait-sticker', audio, exp: Date.now() + PENDING_MS }
-            return m.reply('🎴 تمام! ابعت *الستيكر* اللي عايز تربطه بالصوت ده خلال 90 ثانية.\nللإلغاء اكتب: *الغاء*')
-        } catch (e) {
-            return m.reply(`❌ ${e.message}`)
+    const rawAudioBuf = await fetchSongAudioBuffer(songName)
+    const opusBuf = await toOpusOggBuffer(rawAudioBuf)
+
+    const stickerMedia = await prepareWAMessageMedia(
+      { sticker: stickerBuf },
+      { upload: conn.waUploadToServer }
+    )
+
+    const audioMedia = await prepareWAMessageMedia(
+      { audio: opusBuf, mimetype: 'audio/ogg; codecs=opus', ptt: false },
+      { upload: conn.waUploadToServer }
+    )
+
+    const payload = proto.Message.fromObject({
+      134: {
+        1: {
+          26: stickerMedia.stickerMessage,
+          26: audioMedia.audioMessage
         }
-    }
+      }
+    })
 
-    return m.reply(`📌 *طريقة الاستخدام:*\n• رد على ستيكر بـ ${usedPrefix}${command} وبعدها ابعت الصوت\n• أو رد على صوت بـ ${usedPrefix}${command} وبعدها ابعت الستيكر`)
+    await conn.relayMessage(m.chat, payload, { quoted: m })
+  } catch (err) {
+    console.error('[sticker-audio]', err)
+    await m.reply(`❌ *خطأ:* ${err?.message || err}`)
+  }
 }
 
-// ───────────── الرسائل العادية: إكمال الربط + تشغيل الصوت ─────────────
-handler.before = async function (m, { conn } = {}) {
-    conn = conn || this
-    if (!m || !m.chat || m.fromMe || typeof m.mtype !== 'string') return false
-
-    const key = `${m.chat}|${m.sender}`
-    const pending = pendingOf(conn)
-    const p = pending[key]
-
-    // 1) إكمال ربط جارٍ
-    if (p) {
-        if (Date.now() > p.exp) {
-            delete pending[key]
-        } else if (typeof m.text === 'string' && /^(الغاء|إلغاء|cancel)$/i.test(m.text.trim())) {
-            delete pending[key]
-            await conn.sendMessage(m.chat, { text: '🚫 تم إلغاء الربط' }, { quoted: m })
-            return true
-        } else if (p.type === 'wait-audio' && m.mtype === 'audioMessage') {
-            try {
-                const audio = await readAudio(m)
-                saveMapping(p.hash, audio.buffer, { mimetype: audio.mimetype, ptt: audio.ptt, by: m.sender })
-                delete pending[key]
-                await conn.sendMessage(m.chat, { text: '✅ تم! الستيكر ده دلوقتي بيشغّل الصوت لما حد يبعته 🎵' }, { quoted: m })
-            } catch (e) {
-                await conn.sendMessage(m.chat, { text: `❌ ${e.message}` }, { quoted: m })
-            }
-            return true
-        } else if (p.type === 'wait-sticker' && m.mtype === 'stickerMessage') {
-            try {
-                const hash = stickerHash(m)
-                if (!hash) throw new Error('ما قدرتش أقرا الستيكر')
-                saveMapping(hash, p.audio.buffer, { mimetype: p.audio.mimetype, ptt: p.audio.ptt, by: m.sender })
-                delete pending[key]
-                await conn.sendMessage(m.chat, { text: '✅ تم! الستيكر ده دلوقتي بيشغّل الصوت لما حد يبعته 🎵' }, { quoted: m })
-            } catch (e) {
-                await conn.sendMessage(m.chat, { text: `❌ ${e.message}` }, { quoted: m })
-            }
-            return true
-        }
-    }
-
-    // 2) تشغيل الصوت لو الستيكر مربوط
-    if (m.mtype === 'stickerMessage') {
-        const hash = stickerHash(m)
-        const item = hash ? loadIndex()[hash] : null
-        if (!item) return false
-
-        const now = Date.now()
-        if (now - (lastPlay.get(m.chat) || 0) < COOLDOWN_MS) return false
-        lastPlay.set(m.chat, now)
-
-        try {
-            const buffer = fs.readFileSync(path.join(DIR, item.file))
-            await conn.sendMessage(m.chat, {
-                audio: buffer,
-                mimetype: sendMime(item.mimetype),
-                ptt: item.ptt
-            }, { quoted: m })
-        } catch (e) {
-            console.error('[ستيكر_صوت] play fail:', e?.message || e)
-        }
-    }
-
-    return false
-}
-
-handler.help = ['ربط_صوت', 'فك_ربط', 'اصوات_الستيكر']
-handler.tags = ['tools']
-handler.command = /^(ربط_صوت|ستيكر_صوت|فك_ربط|حذف_ربط|اصوات_الستيكر)$/i
+handler.help = ['ستيكر_صوت <اسم الأغنية>']
+handler.tags = ['sticker']
+handler.command = /^(ستيكر_صوت|ستيكر_اغنية|songsticker)$/i
 
 export default handler
