@@ -1,85 +1,62 @@
-// plugins/فحص_ستيكر.js
-// 🔬 أداة كشف: بتطلّع كل حقول رسالة الستيكر (ستيكر الصوت) عشان نعرف صيغته
-//   رد على ستيكر الصوت بـ .فحص_ستيكر  → البوت يبعتلك ملف JSON فيه كل الحقول
-//   (البيانات الثنائية الكبيرة بتتلخص "<bytes N>" والمفاتيح السرية للتشفير بتتشال)
+import { proto } from '@whiskeysockets/baileys'
 
-import fs from 'fs'
-import path from 'path'
-
-const SECRET_KEYS = new Set(['mediaKey', 'fileEncSha256', 'fileSha256', 'directPath', 'url', 'jpegThumbnail', 'pngThumbnail', 'thumbnail'])
-
-function clean(v, depth = 0) {
-  if (v == null) return v
-  if (depth > 8) return '<deep>'
-  if (typeof v === 'bigint') return v.toString()
-  if (v instanceof Uint8Array || Buffer.isBuffer(v)) return `<bytes ${v.length}>`
-  if (typeof v === 'object' && typeof v.toNumber === 'function') return v.toNumber()   // Long
-  if (typeof v === 'object' && 'low' in v && 'high' in v && 'unsigned' in v) return Number(v.low)
-  if (Array.isArray(v)) return v.slice(0, 20).map(x => clean(x, depth + 1))
-  if (typeof v === 'object') {
-    const o = {}
-    for (const [k, x] of Object.entries(v)) o[k] = SECRET_KEYS.has(k) ? `<hidden ${k}>` : clean(x, depth + 1)
-    return o
+function rv(b, i) {
+  let r = 0, s = 0
+  while (i < b.length) {
+    const c = b[i++]
+    r += (c & 0x7f) * 2 ** s; s += 7
+    if (c < 0x80) return [r, i]
+    if (s > 63) break
   }
-  return v
+  return [0, -1]
 }
 
-// تحليل ملف الـ webp نفسه: ممكن الصوت مدفون جواه (RIFF chunk / EXIF) مش في حقول الرسالة
-function analyzeWebp(buf) {
-  const res = { size: buf.length, riff: buf.slice(0, 4).toString('latin1'), webp: buf.slice(8, 12).toString('latin1'), chunks: [], signatures: [], exifStrings: null }
-  if (res.riff === 'RIFF') {
-    let off = 12
-    while (off + 8 <= buf.length && res.chunks.length < 40) {
-      const id = buf.slice(off, off + 4).toString('latin1'), size = buf.readUInt32LE(off + 4)
-      res.chunks.push(`${id}:${size}`)
-      if (id === 'EXIF') {
-        const t = buf.slice(off + 8, off + 8 + Math.min(size, 4000)).toString('latin1').replace(/[^\x20-\x7e]+/g, ' ').replace(/\s+/g, ' ').trim()
-        res.exifStrings = t.slice(0, 1200)
+function parse(b, d = 0) {
+  const out = []; let i = 0
+  while (i < b.length) {
+    let tag; [tag, i] = rv(b, i); if (i < 0) return null
+    const f = Math.floor(tag / 8), w = tag % 8
+    if (w === 0) { let v; [v, i] = rv(b, i); if (i < 0) return null; out.push(`${f}:${v}`) }
+    else if (w === 2) {
+      let l; [l, i] = rv(b, i); if (i < 0 || i + l > b.length) return null
+      const sub = b.subarray(i, i + l); i += l
+      const s = sub.toString('utf8')
+      if (/^[\x20-\x7e]{1,40}$/.test(s)) out.push(`${f}:"${s}"`)
+      else {
+        const inner = l > 1 && d < 4 ? parse(sub, d + 1) : null
+        out.push(inner ? `${f}:{${inner.join(' ')}}` : `${f}:<${l}b>`)
       }
-      off += 8 + size + (size % 2)
     }
+    else if (w === 1) { i += 8; out.push(`${f}:f64`) }
+    else if (w === 5) { i += 4; out.push(`${f}:f32`) }
+    else return null
   }
-  const sigs = { ID3: 'ID3', OggS: 'OggS', ftyp: 'ftyp', fLaC: 'fLaC', 'RIFF..WAVE': null, audio: 'audio', opus: 'Opus', mp4a: 'mp4a', sound: 'sound' }
-  for (const [name, needle] of Object.entries(sigs)) if (needle && buf.includes(Buffer.from(needle))) res.signatures.push(name)
-  return res
+  return out
 }
 
-const handler = async (m, { conn, usedPrefix = '.', command }) => {
-  const reply = t => conn.sendMessage(m.chat, { text: t }, { quoted: m })
-  const q = m.quoted
-  if (!q) return reply(`📌 رد على ستيكر الصوت بـ *${usedPrefix}${command}*`)
-
-  const raw = q.fakeObj?.message || q.message || (q.mtype ? { [q.mtype]: q.msg } : null)
-  if (!raw) return reply('❌ معرفتش أقرا الرسالة المردود عليها.')
-
-  const dump = {
-    mtype: q.mtype || Object.keys(raw)[0],
-    topLevelKeys: Object.keys(raw),
-    message: clean(raw),
-    contextOfCommand: clean(m.msg?.contextInfo || {})
+globalThis.__rawLog = globalThis.__rawLog || []
+if (!globalThis.__stkHook) {
+  globalThis.__stkHook = true
+  const orig = proto.Message.decode
+  proto.Message.decode = function (buf, ...args) {
+    try {
+      const t = parse(Buffer.from(buf))
+      if (t && !t.every(x => /^(1|2|6|12|35):/.test(x))) {
+        globalThis.__rawLog.push(t.join(' '))
+        if (globalThis.__rawLog.length > 6) globalThis.__rawLog.shift()
+      }
+    } catch {}
+    return orig.call(this, buf, ...args)
   }
-  try {
-    const buf = await q.download?.()
-    if (buf?.length) dump.webpAnalysis = analyzeWebp(Buffer.from(buf))
-    else dump.webpAnalysis = 'download غير متاح'
-  } catch (e) { dump.webpAnalysis = 'فشل التحميل: ' + e.message }
-  const json = JSON.stringify(dump, null, 2)
-  console.log('[فحص_ستيكر]\n' + json)
-
-  try {
-    const dir = path.join(process.cwd(), 'Sessions')
-    fs.mkdirSync(dir, { recursive: true })
-    fs.writeFileSync(path.join(dir, 'sound_sticker_dump.json'), json)
-  } catch {}
-
-  await conn.sendMessage(m.chat, {
-    document: Buffer.from(json),
-    mimetype: 'application/json',
-    fileName: 'sound_sticker_dump.json',
-    caption: `🔬 النوع: *${dump.mtype}*\nالمفاتيح: ${dump.topLevelKeys.join(', ')}\n\nابعت الملف ده لـ Claude.\n(فيه كمان تحليل لملف الستيكر نفسه)`
-  }, { quoted: m })
 }
 
+const handler = async (m, { conn }) => {
+  const log = globalThis.__rawLog
+  const text = log.length
+    ? log.map((x, i) => `#${i + 1}\n${x}`).join('\n\n')
+    : 'مفيش رسائل اتسجلت لسه. ابعت الستيكر الأول.'
+  await conn.sendMessage(m.chat, { text }, { quoted: m })
+}
 handler.command = /^(فحص_ستيكر|stickerdump)$/i
 handler.owner = true
 export default handler
