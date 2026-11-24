@@ -3,6 +3,7 @@
  * الرد على ستيكر + اسم الأغنية لإرسال ستيكر مدمج معه صوت عبر Baileys (ESM)
  * الشكل: audioStickerMessage.message.stickerMessage.audioMessage
  * المصدر: يوتيوب أولاً، ولو مفيش نتيجة (أو فشل التحميل) يجيب من تيك توك
+ * لو الأمر اتبعت على ستيكر من غير اسم أغنية → يستنى ساوند دقيقتين ويدمجه
  */
 
 import axios from 'axios'
@@ -312,14 +313,50 @@ async function fetchSongAudioBuffer(query) {
   }
 }
 
+/* ---------- انتظار الساوند (لو الستيكر اتبعت من غير اسم أغنية) ---------- */
+const WAIT_MS = 2 * 60 * 1000
+const pending = new Map() // key: chat:sender → { stickerBuf, expires, timer }
+const keyOf = (m) => `${m.chat}:${m.sender}`
+
+async function buildAndSend(conn, m, stickerBuf, rawAudio) {
+  const opusBuf = await toOpusOggBuffer(rawAudio, 10)
+
+  const stickerMedia = await runWithSocket(conn, () =>
+    prepareWAMessageMedia({ sticker: stickerBuf }, { upload: conn.waUploadToServer })
+  )
+
+  const audioMedia = await runWithSocket(conn, () =>
+    prepareWAMessageMedia(
+      { audio: opusBuf, mimetype: 'audio/ogg; codecs=opus', ptt: false },
+      { upload: conn.waUploadToServer }
+    )
+  )
+
+  const sm = { ...stickerMedia.stickerMessage }
+  const am = { ...audioMedia.audioMessage, seconds: audioMedia.audioMessage.seconds || 10 }
+  const payload = buildAudioStickerPayload(sm, am)
+
+  await runWithSocket(conn, () => conn.relayMessage(m.chat, payload, { quoted: m }))
+  log('✅ تم الإرسال')
+}
+
+async function replyError(conn, m, err) {
+  errLog(err?.message || err)
+  try {
+    if (isSocketReady(conn)) {
+      await m.reply(`❌ *خطأ:* ${String(err?.message || err).slice(0, 180)}`)
+    }
+  } catch {}
+}
+
 /* ---------- handler ---------- */
 const handler = async (m, { conn, text, usedPrefix, command }) => {
   const quotedSticker = getQuotedSticker(m)
   const songName = (text || '').trim()
 
-  if (!quotedSticker || !songName) {
+  if (!quotedSticker) {
     return m.reply(
-      `🎵 *ستيكر بصوت*\n\nرد على ستيكر واكتب اسم الأغنية:\n*مثال:* ${usedPrefix + command} Funk Da Montanha`
+      `🎵 *ستيكر بصوت*\n\nرد على ستيكر واكتب اسم الأغنية:\n*مثال:* ${usedPrefix + command} Funk Da Montanha\n\nأو رد على ستيكر بالأمر لوحده وابعت الساوند بعدها.`
     )
   }
 
@@ -329,33 +366,56 @@ const handler = async (m, { conn, text, usedPrefix, command }) => {
       return m.reply('❌ تعذر تحميل الستيكر')
     }
 
-    const rawAudio = await fetchSongAudioBuffer(songName)
-    const opusBuf = await toOpusOggBuffer(rawAudio, 10)
-
-    const stickerMedia = await runWithSocket(conn, () =>
-      prepareWAMessageMedia({ sticker: stickerBuf }, { upload: conn.waUploadToServer })
-    )
-
-    const audioMedia = await runWithSocket(conn, () =>
-      prepareWAMessageMedia(
-        { audio: opusBuf, mimetype: 'audio/ogg; codecs=opus', ptt: false },
-        { upload: conn.waUploadToServer }
+    // مفيش اسم أغنية → استنى الساوند دقيقتين
+    if (!songName) {
+      const key = keyOf(m)
+      const old = pending.get(key)
+      if (old) clearTimeout(old.timer)
+      const timer = setTimeout(() => pending.delete(key), WAIT_MS)
+      pending.set(key, { stickerBuf, expires: Date.now() + WAIT_MS, timer })
+      return m.reply(
+        `🎵 *ستيكر بصوت*\n\nالستيكر ده مفيهوش صوت.\n` +
+        `اكتب اسم الساوند بعد الأمر:\n*${usedPrefix + command}* اسم الأغنية\n\n` +
+        `أو ابعت الساوند (صوت أو فويس) هنا خلال *دقيقتين* وأنا هدمجه معاه ⏳`
       )
-    )
+    }
 
-    const sm = { ...stickerMedia.stickerMessage }
-    const am = { ...audioMedia.audioMessage, seconds: audioMedia.audioMessage.seconds || 10 }
-    const payload = buildAudioStickerPayload(sm, am)
-
-    await runWithSocket(conn, () => conn.relayMessage(m.chat, payload, { quoted: m }))
-    log('✅ تم الإرسال')
+    // فيه اسم أغنية → جيبها ودمجها
+    const rawAudio = await fetchSongAudioBuffer(songName)
+    await buildAndSend(conn, m, stickerBuf, rawAudio)
   } catch (err) {
-    errLog(err?.message || err)
-    try {
-      if (isSocketReady(conn)) {
-        await m.reply(`❌ *خطأ:* ${String(err?.message || err).slice(0, 180)}`)
-      }
-    } catch {}
+    await replyError(conn, m, err)
+  }
+}
+
+// يشتغل على أي رسالة: لو المستخدم ماسك طلب معلّق وبعت صوت → يدمجه مع الستيكر
+handler.before = async function (m, { conn }) {
+  const key = keyOf(m)
+  const p = pending.get(key)
+  if (!p) return
+
+  if (Date.now() > p.expires) {
+    clearTimeout(p.timer)
+    pending.delete(key)
+    return
+  }
+
+  const mime = String(m.mimetype || m.msg?.mimetype || '').toLowerCase()
+  const isAudio = m.mtype === 'audioMessage' || mime.startsWith('audio/')
+  if (!isAudio) return
+
+  clearTimeout(p.timer)
+  pending.delete(key)
+
+  try {
+    await m.reply('⏳ جاري دمج الساوند مع الستيكر...')
+    const rawAudio = await runWithSocket(conn, () => m.download())
+    if (!rawAudio || !Buffer.isBuffer(rawAudio) || rawAudio.length < 1000) {
+      return m.reply('❌ تعذر تحميل الصوت')
+    }
+    await buildAndSend(conn, m, p.stickerBuf, rawAudio)
+  } catch (err) {
+    await replyError(conn, m, err)
   }
 }
 
