@@ -1,9 +1,12 @@
 /**
  * plugins/تيك-ساوند.js
- * جلب ساوندات من تيك توك (بلينك أو بكلمات بحث) وإرسالها كصوت
+ * جلب ساوندات من تيك توك عبر tikwmapi (بلينك أو بكلمات بحث) وإرسالها كصوت
  *   .تيك-ساوند funk da montanha        (أول نتيجة)
  *   .تيك-ساوند 3 funk da montanha      (النتيجة رقم 3)
  *   .تيك-ساوند https://vm.tiktok.com/xxxx
+ *
+ * المفتاح: الأفضل تحطه في متغير بيئة TIKWMAPI_KEY على الاستضافة،
+ * ولو مش موجود بياخد القيمة اللي تحت.
  */
 
 import axios from 'axios'
@@ -12,58 +15,53 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 
+const API_KEY = process.env.TIKWMAPI_KEY || '34ce144ad4984df4fbbc79480a131395'
+const API = 'https://api.tikwmapi.com'
+
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
 const MAX_MB = 30
-const HOSTS = ['https://www.tikwm.com', 'https://tikwm.com']
 
 const YTDLP = fs.existsSync('/root/.nix-profile/bin/yt-dlp') ? '/root/.nix-profile/bin/yt-dlp' : 'yt-dlp'
 const FFMPEG = fs.existsSync('/root/.nix-profile/bin/ffmpeg') ? '/root/.nix-profile/bin/ffmpeg' : 'ffmpeg'
 
 const log = (...a) => console.log('[تيك-ساوند]', ...a)
 const errLog = (msg) => console.error('[تيك-ساوند:ERR]', String(msg || '').slice(0, 300))
-
 const st = (e) => e?.response?.status ? `HTTP ${e.response.status}` : (e?.message || String(e))
 
-// ---------- tikwm (مع تجربة أكتر من دومين) ----------
-async function tikwmPost(pathname, params) {
-  let last
-  for (const host of HOSTS) {
-    try {
-      const r = await axios.post(host + pathname, new URLSearchParams(params).toString(), {
-        headers: {
-          'User-Agent': UA,
-          'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-          Accept: 'application/json, text/javascript, */*; q=0.01',
-          Origin: host,
-          Referer: host + '/',
-          'X-Requested-With': 'XMLHttpRequest'
-        },
-        timeout: 20000
-      })
-      if (r.data?.code !== undefined && r.data.code !== 0) throw new Error(r.data?.msg || 'tikwm error')
-      return r.data
-    } catch (e) { last = e }
+async function api(pathname, params) {
+  try {
+    const r = await axios.get(API + pathname, {
+      params,
+      headers: { 'x-tikwmapi-key': API_KEY, 'User-Agent': UA },
+      timeout: 25000
+    })
+    if (r.data?.code !== undefined && r.data.code !== 0) throw new Error(r.data?.msg || 'API error')
+    return r.data
+  } catch (e) {
+    const apiMsg = e?.response?.data?.msg
+    throw new Error('tikwmapi: ' + (apiMsg || st(e)))
   }
-  throw new Error('tikwm: ' + st(last))
 }
 
-const fullUrl = (u) => (u && u.startsWith('/') ? HOSTS[0] + u : u)
-
 async function soundFromLink(link) {
-  const j = await tikwmPost('/api/', { url: link, hd: '1' })
+  const j = await api('/', { url: link })
   const d = j?.data
-  const url = fullUrl(d?.music_info?.play || d?.music)
+  const url = d?.music_info?.play || d?.music
   if (!url) throw new Error('لا يوجد صوت في اللينك')
-  return { url, title: d?.music_info?.title || d?.title || 'TikTok Sound', author: d?.music_info?.author || d?.author?.nickname || '' }
+  return {
+    url,
+    title: d?.music_info?.title || d?.title || 'TikTok Sound',
+    author: d?.music_info?.author || d?.author?.nickname || ''
+  }
 }
 
 async function soundFromSearch(query, index = 1) {
-  const j = await tikwmPost('/api/feed/search', { keywords: query, count: '10', cursor: '0', HD: '1' })
+  const j = await api('/feed/search', { keywords: query, count: 10, cursor: 0 })
   const vids = (j?.data?.videos || []).filter(v => v?.music_info?.play || v?.music)
   if (!vids.length) throw new Error('لا توجد نتائج')
   const v = vids[Math.min(index, vids.length) - 1]
   return {
-    url: fullUrl(v.music_info?.play || v.music),
+    url: v.music_info?.play || v.music,
     title: v.music_info?.title || v.title || query,
     author: v.music_info?.author || v.author?.nickname || ''
   }
@@ -88,7 +86,7 @@ async function downloadAudio(url) {
   throw new Error('تحميل الصوت: ' + st(last))
 }
 
-// ---------- احتياطي: yt-dlp للينكات فقط ----------
+// احتياطي للينكات فقط
 function ytdlpTikTok(link) {
   return new Promise((resolve, reject) => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tts-'))
