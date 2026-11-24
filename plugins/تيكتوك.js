@@ -1,6 +1,7 @@
 // plugins/edit-search.js
-// ⛩️ SUKUNA BOT - بحث إيديتات تيك توك (كاروسيل) 🎬
-// v4: البحث والتحميل الاتنين من tikwmapi (بالمفتاح) — شلنا revid
+// ⛩️ SUKUNA BOT - بحث فيديوهات تيك توك (كاروسيل) 🎬
+// v5: بحث عام عن فيديوهات (مش ايديتات بس): كلمات/اسم فيديو، @حساب، أو لينك تيك توك
+//     البحث والتحميل من tikwmapi (بالمفتاح) وبديل tikwm.com
 
 import * as _baileys from '@whiskeysockets/baileys'
 
@@ -40,9 +41,8 @@ const norm = s => String(s ?? '')
     .replace(/\s+/g, ' ')
     .trim()
 
-// كلمات بتدل على "نوع المحتوى" مش على الشخصية — منستخدمهاش في تحديد الصلة
-const STOP = new Set(['edit', 'edits', 'amv', 'video', 'videos', 'tiktok', 'ايديت', 'اديت', 'ايديتات', 'اديتات', 'فيديو', 'فيديوهات', 'تيك', 'توك', 'تيكتوك'])
-const EDIT_WORDS = ['edit', 'amv', 'ايديت', 'اديت']
+// كلمات عامة مش بتحدد المطلوب — منستخدمهاش في تحديد الصلة
+const STOP = new Set(['video', 'videos', 'tiktok', 'فيديو', 'فيديوهات', 'تيك', 'توك', 'تيكتوك'])
 
 function tokens(s) {
     const all = norm(s).split(' ').filter(Boolean)
@@ -76,9 +76,9 @@ async function translateToEn(text) {
     return out
 }
 
-// ━━━ البحث عبر tikwmapi (/feed/search) ━━━
-const mapVideo = v => {
-    const user = v.author?.unique_id || ''
+// ━━━ تحويل نتيجة tikwmapi لشكل موحد ━━━
+const mapVideo = (v, fallbackUser = '') => {
+    const user = v.author?.unique_id || fallbackUser
     const id = v.video_id || v.id
     return {
         id,
@@ -93,9 +93,54 @@ const mapVideo = v => {
     }
 }
 
+const usable = v => v.url || v.videoUrl
+
+// بديل لو tikwmapi وقع (نفس الشكل، بس محدود بطلب كل ~ثانية)
+let lastPublicCall = 0
+async function tikwmPublic(pathname, params) {
+    const slot = Math.max(Date.now(), lastPublicCall + 1200)
+    lastPublicCall = slot
+    const wait = slot - Date.now()
+    if (wait > 0) await sleep(wait)
+    const r = await fetch(`https://www.tikwm.com/api${pathname}?${new URLSearchParams(params)}`, {
+        headers: { 'User-Agent': UA },
+        signal: AbortSignal.timeout(30000)
+    })
+    if (!r.ok) throw new Error('tikwm.com: HTTP ' + r.status)
+    const j = await r.json()
+    if (j?.code !== undefined && j.code !== 0) throw new Error(j?.msg || 'tikwm.com: Failed')
+    return j
+}
+
+async function apiWithFallback(pathname, params) {
+    try {
+        return await tikApiGet(pathname, params)
+    } catch (e) {
+        console.log(`[edit-search] tikwmapi ${pathname} فشل، بجرب tikwm.com:`, e.message)
+        return await tikwmPublic(pathname, params)
+    }
+}
+
+// بحث بالكلمات (اسم فيديو أو جزء منه)
 async function searchVariant(keywords) {
-    const j = await tikApiGet('/feed/search', { keywords, count: 20, cursor: 0 })
-    return (j?.data?.videos || []).filter(Boolean).map(mapVideo).filter(v => v.url || v.videoUrl)
+    const j = await apiWithFallback('/feed/search', { keywords, count: 20, cursor: 0 })
+    return (j?.data?.videos || []).filter(Boolean).map(v => mapVideo(v)).filter(usable)
+}
+
+// فيديوهات حساب معين
+async function fetchUserPosts(user) {
+    const j = await apiWithFallback('/user/posts', { unique_id: user, count: 30, cursor: 0 })
+    return (j?.data?.videos || []).filter(Boolean).map(v => mapVideo(v, user)).filter(usable)
+}
+
+// فيديو واحد من لينك
+async function fetchSingle(link) {
+    const j = await apiWithFallback('/', { url: link })
+    const d = j?.data
+    if (!d) return []
+    const v = mapVideo(d)
+    if (!v.url) v.url = link
+    return [v].filter(usable)
 }
 
 // ━━━ الترتيب بالصلة + التفاعل ━━━
@@ -107,10 +152,9 @@ function rank(videos, groups) {
             if (!g.length) continue
             ratio = Math.max(ratio, g.filter(t => has(hay, t)).length / g.length)
         }
-        const isEdit = EDIT_WORDS.some(w => hay.includes(w)) ? 1 : 0
         const eng = Math.log10(v.plays + 1) * 20 + Math.log10(v.likes + 1) * 30
-        const durPenalty = v.duration && (v.duration < 5 || v.duration > 180) ? -150 : 0
-        return { v, ratio, score: ratio * 1000 + isEdit * 120 + eng + durPenalty }
+        const durPenalty = 0
+        return { v, ratio, score: ratio * 1000 + eng + durPenalty }
     }).sort((a, b) => b.score - a.score)
 
     // لو فيه كفاية نتايج مطابقة فعلاً، نستبعد غير المطابقة
@@ -121,36 +165,59 @@ function rank(videos, groups) {
 }
 
 // ━━━ البحث ━━━
-async function searchTikTok(name) {
-    const key = norm(name)
+// لينك فيديو → الفيديو ده | لينك/@حساب → فيديوهات الحساب | غير كده → بحث بالكلمات
+function parseInput(input) {
+    const link = input.match(/https?:\/\/\S*tiktok\.com\S*/i)?.[0]
+    if (link) {
+        const prof = link.match(/tiktok\.com\/@([\w.]+)\/?(?:\?\S*)?$/i)
+        return prof ? { type: 'user', user: prof[1] } : { type: 'link', link }
+    }
+    const at = input.match(/^@([\w.]+)$/)
+    if (at) return { type: 'user', user: at[1] }
+    return { type: 'keywords' }
+}
+
+async function searchTikTok(input) {
+    const key = input.trim().toLowerCase()
     const cached = CACHE.get(key)
     if (cached && Date.now() - cached.time < CACHE_TTL) return cached.results
 
-    const en = await translateToEn(name)
-    const variants = [...new Set([`${name} edit`, en && `${en} edit`, en, name].filter(Boolean))].slice(0, 4)
+    const parsed = parseInput(input)
+    let results = []
 
-    const settled = await Promise.allSettled(variants.map(searchVariant))
-    const all = settled.flatMap(s => (s.status === 'fulfilled' ? s.value : []))
-    if (!all.length) {
-        const failed = settled.find(s => s.status === 'rejected')
-        if (failed) throw failed.reason
-        return []
+    if (parsed.type === 'link') {
+        results = await fetchSingle(parsed.link)
+    } else if (parsed.type === 'user') {
+        results = (await fetchUserPosts(parsed.user)).slice(0, SEARCH_COUNT)
+    } else {
+        const en = await translateToEn(input)
+        const variants = [...new Set([input, en].filter(Boolean))]
+
+        const settled = await Promise.allSettled(variants.map(searchVariant))
+        const all = settled.flatMap(s => (s.status === 'fulfilled' ? s.value : []))
+
+        if (all.length) {
+            const seen = new Set()
+            const unique = all.filter(v => {
+                const k = v.id || v.url
+                if (!k || seen.has(k)) return false
+                seen.add(k)
+                return true
+            })
+            const groups = [tokens(input), en ? tokens(en) : []]
+            results = rank(unique, groups).slice(0, SEARCH_COUNT)
+            console.log(`[edit-search] "${input}"${en ? ` (${en})` : ''}: ${all.length} نتيجة → ${unique.length} فريدة → ${results.length} بعد الترتيب`)
+        } else {
+            const failed = settled.find(s => s.status === 'rejected')
+            // مفيش نتايج بالكلمات والاسم شكله يوزر (كلمة واحدة) → جرب كحساب
+            if (/^[\w.]{2,24}$/.test(input)) {
+                results = (await fetchUserPosts(input).catch(() => [])).slice(0, SEARCH_COUNT)
+            }
+            if (!results.length && failed) throw failed.reason
+        }
     }
 
-    // إزالة التكرار
-    const seen = new Set()
-    const unique = all.filter(v => {
-        const k = v.id || v.url
-        if (!k || seen.has(k)) return false
-        seen.add(k)
-        return true
-    })
-
-    const groups = [tokens(name), en ? tokens(en) : []]
-    const results = rank(unique, groups).slice(0, SEARCH_COUNT)
-    console.log(`[edit-search] "${name}"${en ? ` (${en})` : ''}: ${all.length} نتيجة → ${unique.length} فريدة → ${results.length} بعد الترتيب`)
-
-    CACHE.set(key, { results, time: Date.now() })
+    if (results.length) CACHE.set(key, { results, time: Date.now() })
     return results
 }
 
@@ -167,23 +234,43 @@ async function tikGate() {
 
 async function tikApiGet(pathname, params) {
     if (Date.now() < tikDisabledUntil) throw new Error('tikwmapi موقوف مؤقتاً')
-    await tikGate()
-    const r = await fetch(`${TIK_API}${pathname}?${new URLSearchParams(params)}`, {
-        headers: { 'x-tikwmapi-key': TIK_KEY, 'User-Agent': UA },
-        signal: AbortSignal.timeout(30000)
-    })
-    if (r.status === 401 || r.status === 403) {
-        tikDisabledUntil = Date.now() + 10 * 60 * 1000
-        throw new Error('tikwmapi: HTTP ' + r.status + ' (تأكد من المفتاح)')
+    let lastErr
+    for (let attempt = 0; attempt < 2; attempt++) {
+        await tikGate()
+        try {
+            const r = await fetch(`${TIK_API}${pathname}?${new URLSearchParams(params)}`, {
+                headers: { 'x-tikwmapi-key': TIK_KEY, 'User-Agent': UA },
+                signal: AbortSignal.timeout(30000)
+            })
+            if (r.status === 401 || r.status === 403) {
+                tikDisabledUntil = Date.now() + 10 * 60 * 1000
+                const e = new Error('tikwmapi: HTTP ' + r.status + ' (تأكد من المفتاح)')
+                e.fatal = true
+                throw e
+            }
+            if (r.status === 429) {
+                tikDisabledUntil = Date.now() + 60 * 1000
+                const e = new Error('tikwmapi: HTTP 429')
+                e.fatal = true
+                throw e
+            }
+            if (r.status >= 500) {
+                const body = (await r.text().catch(() => '')).replace(/\s+/g, ' ').slice(0, 150)
+                lastErr = new Error(`tikwmapi: HTTP ${r.status} ${body}`.trim())
+                await sleep(1200)
+                continue
+            }
+            if (!r.ok) throw Object.assign(new Error('tikwmapi: HTTP ' + r.status), { fatal: true })
+            const j = await r.json()
+            if (j?.code !== undefined && j.code !== 0) throw Object.assign(new Error(j?.msg || 'tikwmapi: Failed'), { fatal: true })
+            return j
+        } catch (e) {
+            if (e.fatal) throw e
+            lastErr = e
+            await sleep(1200)
+        }
     }
-    if (r.status === 429) {
-        tikDisabledUntil = Date.now() + 60 * 1000
-        throw new Error('tikwmapi: HTTP 429')
-    }
-    if (!r.ok) throw new Error('tikwmapi: HTTP ' + r.status)
-    const j = await r.json()
-    if (j?.code !== undefined && j.code !== 0) throw new Error(j?.msg || 'tikwmapi: Failed')
-    return j
+    throw lastErr
 }
 
 async function getVideoNoWatermark(tiktokUrl) {
@@ -225,7 +312,7 @@ async function processItem(video, conn) {
         { video: buffer, mimetype: 'video/mp4' },
         { upload: conn.waUploadToServer }
     )
-    const title = (video.desc || 'TikTok Edit').replace(/\s+/g, ' ').trim()
+    const title = (video.desc || 'TikTok Video').replace(/\s+/g, ' ').trim()
     return {
         buffer,
         info: video,
@@ -273,16 +360,16 @@ let handler = async (m, { conn, args, usedPrefix, command }) => {
 
     if (!args[0]) {
         await react('❌')
-        return send(`🔍 *بحث اديتات تيك توك*\n\n${usedPrefix}${command} <اسم الشخصية>\n\n💡 مثال:\n${usedPrefix}${command} زورو\n${usedPrefix}${command} gojo\n\n⛩️ SUKUNA BOT ⛩️`)
+        return send(`🔍 *بحث فيديوهات تيك توك*\n\n${usedPrefix}${command} <اسم الفيديو أو جزء منه>\n${usedPrefix}${command} @اسم_الحساب\n${usedPrefix}${command} <لينك تيك توك>\n\n💡 مثال:\n${usedPrefix}${command} funk da montanha\n${usedPrefix}${command} @charlidamelio\n\n⛩️ SUKUNA BOT ⛩️`)
     }
 
-    const characterName = args.join(' ')
+    const query = args.join(' ')
     await react('🔍')
-    await send(`🔍 *جاري البحث عن اديتات:* ${characterName}`)
+    await send(`🔍 *جاري البحث عن:* ${query}`)
 
     try {
-        const videos = await searchTikTok(characterName)
-        if (!videos.length) throw new Error(`ما لقيت اديتات لـ ${characterName}`)
+        const videos = await searchTikTok(query)
+        if (!videos.length) throw new Error(`ما لقيت نتائج لـ ${query}`)
 
         await send(`⬇️ *لقيت ${videos.length} نتيجة مناسبة، جاري تجهيز ${Math.min(CARD_COUNT, videos.length)} فيديو...*`)
 
@@ -296,7 +383,7 @@ let handler = async (m, { conn, args, usedPrefix, command }) => {
                     message: {
                         messageContextInfo: { deviceListMetadata: {}, deviceListMetadataVersion: 2 },
                         interactiveMessage: proto.Message.InteractiveMessage.fromObject({
-                            body: proto.Message.InteractiveMessage.Body.create({ text: `🎬 *اديتات: ${characterName}*\n${cards.length} فيديو` }),
+                            body: proto.Message.InteractiveMessage.Body.create({ text: `🎬 *نتائج: ${query}*\n${cards.length} فيديو` }),
                             footer: proto.Message.InteractiveMessage.Footer.create({ text: 'SukunaBot' }),
                             header: proto.Message.InteractiveMessage.Header.create({ hasMediaAttachment: false }),
                             carouselMessage: proto.Message.InteractiveMessage.CarouselMessage.fromObject({ cards })
@@ -326,9 +413,8 @@ let handler = async (m, { conn, args, usedPrefix, command }) => {
     }
 }
 
-handler.help = ['بحثتيك <اسم>']
+handler.help = ['بحثتيك <اسم فيديو | @حساب | لينك>']
 handler.tags = ['downloader']
-// ملحوظة: "ايديت" مش هنا عشان ما يتعارضش مع أمر ايديت التاني
 handler.command = /^(بحثتيك|بحثتيكك|بحث_تيك|تيك|تيكتوك)$/i
 
 export default handler
