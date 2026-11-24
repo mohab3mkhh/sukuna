@@ -24,18 +24,18 @@ const CNV_HEADERS = {
 }
 
 const log = (...a) => console.log('[ستيكر_صوت]', ...a)
-const logErr = (...a) => console.error('[ستيكر_صوت:ERR]', ...a)
+const errLog = (msg) => console.error('[ستيكر_صوت:ERR]', String(msg || '').slice(0, 240))
 
 function getQuotedSticker(m) {
   const q = m?.quoted
   if (!q) return null
   const mime = String(q.mimetype || q.msg?.mimetype || '').toLowerCase()
-  const isSticker =
+  return (
     q.mtype === 'stickerMessage' ||
     Boolean(q.msg?.stickerMessage) ||
     Boolean(q.message?.stickerMessage) ||
     mime.includes('webp')
-  return isSticker ? q : null
+  ) ? q : null
 }
 
 function isSocketReady(conn) {
@@ -47,32 +47,25 @@ function isSocketReady(conn) {
   return true
 }
 
-async function waitForSocket(conn, maxWaitMs = 8000) {
+async function waitForSocket(conn, maxWaitMs = 6000) {
   const start = Date.now()
   while (!isSocketReady(conn)) {
-    if (Date.now() - start > maxWaitMs) {
-      throw new Error('اتصال واتساب مغلق حالياً، أعد المحاولة بعد ثوانٍ')
-    }
-    await delay(400)
+    if (Date.now() - start > maxWaitMs) throw new Error('الاتصال مغلق حالياً')
+    await delay(300)
   }
 }
 
-async function withSocketRetry(conn, fn, retries = 2) {
-  let lastErr
-  for (let i = 0; i <= retries; i++) {
+async function runWithSocket(conn, fn) {
+  for (let i = 0; i < 2; i++) {
     try {
       await waitForSocket(conn)
       return await fn()
     } catch (e) {
-      lastErr = e
       const msg = String(e?.message || e || '')
-      const isConnErr = /connection closed|timed out|socket|stream errored/i.test(msg)
-      if (!isConnErr || i === retries) throw e
-      logErr(`إعادة محاولة عملية الاتصال (${i + 1}/${retries}):`, msg)
-      await delay(1500)
+      if (i === 1 || !/connection closed|timed out|socket|مغلق/i.test(msg)) throw e
+      await delay(1200)
     }
   }
-  throw lastErr
 }
 
 async function searchFirstYouTubeVideo(query) {
@@ -80,16 +73,11 @@ async function searchFirstYouTubeVideo(query) {
     const mod = await import('yt-search')
     const yts = mod.default || mod
     const res = await yts(query)
-    let vids = (res?.videos || []).filter(v => v.seconds > 0 && v.seconds < 1800)
-    if (!vids.length) vids = res?.videos || []
-    if (vids.length) {
-      return {
-        id: vids[0].videoId,
-        title: vids[0].title || query
-      }
-    }
+    const vids = (res?.videos || []).filter(v => v.seconds > 0 && v.seconds < 1800)
+    const pick = vids[0] || res?.videos?.[0]
+    if (pick?.videoId) return { id: pick.videoId, title: pick.title || query }
   } catch (e) {
-    logErr('yt-search:', e?.message || e)
+    errLog('search:', e?.message || e)
   }
 
   const r = await axios.get(
@@ -100,85 +88,25 @@ async function searchFirstYouTubeVideo(query) {
     }
   )
   const match = String(r.data).match(/var ytInitialData = ({.+?});<\/script>/)
-  if (!match) throw new Error('تعذر قراءة بيانات البحث من يوتيوب')
-
+  if (!match) throw new Error('تعذر قراءة نتائج البحث')
   const data = JSON.parse(match[1])
   const sections = data.contents?.twoColumnSearchResultsRenderer?.primaryContents?.sectionListRenderer?.contents || []
   for (const s of sections) {
     for (const item of s.itemSectionRenderer?.contents || []) {
       const v = item.videoRenderer
-      if (v?.videoId) {
-        return {
-          id: v.videoId,
-          title: v.title?.runs?.[0]?.text || query
-        }
-      }
+      if (v?.videoId) return { id: v.videoId, title: v.title?.runs?.[0]?.text || query }
     }
   }
-
   return null
-}
-
-function runYtDlp(args) {
-  return new Promise((resolve, reject) => {
-    execFile(YTDLP, args, { timeout: 180000, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
-      if (err) {
-        return reject(
-          new Error((stderr || err.message).toString().trim().split('\n').slice(-2).join(' ').slice(0, 300))
-        )
-      }
-      resolve(stdout)
-    })
-  })
-}
-
-async function ytdlpAudio(videoId) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stk-audio-'))
-  const out = path.join(dir, `${videoId}.%(ext)s`)
-  const url = `https://www.youtube.com/watch?v=${videoId}`
-
-  const base = [
-    '-x', '--audio-format', 'mp3', '--audio-quality', '5',
-    '--no-playlist', '--no-warnings',
-    '--max-filesize', `${MAX_MB}M`,
-    '--ffmpeg-location', FFMPEG,
-    '-o', out
-  ]
-  if (fs.existsSync(COOKIES)) base.push('--cookies', COOKIES)
-
-  const attempts = [
-    [...base, url],
-    [...base, '--extractor-args', 'youtube:player_client=android,web', url]
-  ]
-
-  try {
-    let lastErr
-    for (let idx = 0; idx < attempts.length; idx++) {
-      try {
-        await runYtDlp(attempts[idx])
-        const file = fs.readdirSync(dir).find(f => f.endsWith('.mp3'))
-        if (!file) throw new Error('لم يتم إنتاج ملف mp3')
-        const buffer = fs.readFileSync(path.join(dir, file))
-        if (buffer.length < 20 * 1024) throw new Error('ملف الصوت صغير جداً')
-        return buffer
-      } catch (e) {
-        lastErr = e
-        logErr(`yt-dlp attempt ${idx + 1}:`, e?.message || e)
-      }
-    }
-    throw lastErr || new Error('فشل التحميل عبر yt-dlp')
-  } finally {
-    try { fs.rmSync(dir, { recursive: true, force: true }) } catch {}
-  }
 }
 
 async function cnvAudio(videoId) {
   const k = await axios.get(`https://cnv.cx/v2/sanity/key?id=${videoId}`, {
     headers: CNV_HEADERS,
-    timeout: 20000
+    timeout: 15000
   })
-  if (!k.data?.key) throw new Error('cnv: تعذر جلب المفتاح')
-  await delay(1500)
+  if (!k.data?.key) throw new Error('cnv: لا يوجد مفتاح')
+  await delay(1000)
 
   const params = new URLSearchParams({
     link: `https://youtu.be/${videoId}`,
@@ -196,72 +124,79 @@ async function cnvAudio(videoId) {
       accept: '*/*',
       key: k.data.key
     },
-    timeout: 120000,
+    timeout: 90000,
     validateStatus: () => true
   })
   if (!(r.status === 200 && r.data?.url)) {
-    throw new Error(r.data?.errorMsg || `cnv: حالة ${r.status}`)
+    throw new Error(r.data?.errorMsg || `cnv: ${r.status}`)
   }
 
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < 2; i++) {
     try {
       const d = await axios.get(r.data.url, {
         headers: { 'User-Agent': UA, Referer: 'https://cnv.cx/', Origin: 'https://cnv.cx' },
         responseType: 'arraybuffer',
-        timeout: 180000,
+        timeout: 120000,
         maxContentLength: MAX_MB * 1024 * 1024,
         validateStatus: () => true
       })
       if (d.status === 200 && d.data?.length > 20 * 1024) return Buffer.from(d.data)
-    } catch (e) {
-      logErr(`cnv dl attempt ${i + 1}:`, e?.message || e)
-    }
-    await delay(2000)
+    } catch {}
+    await delay(1500)
   }
   throw new Error('cnv: ملف التحميل فارغ')
 }
 
-async function downloadAudio(videoId) {
-  let lastErr = ''
+function runYtDlp(args) {
+  return new Promise((resolve, reject) => {
+    execFile(YTDLP, args, { timeout: 90000, maxBuffer: 4 * 1024 * 1024 }, (err, _out, stderr) => {
+      if (err) {
+        const line = String(stderr || err.message || '').trim().split('\n').pop() || 'yt-dlp error'
+        return reject(new Error(line.slice(0, 180)))
+      }
+      resolve()
+    })
+  })
+}
+
+async function ytdlpAudio(videoId) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stk-a-'))
+  const out = path.join(dir, `${videoId}.%(ext)s`)
+  const url = `https://www.youtube.com/watch?v=${videoId}`
+
+  const args = [
+    '-x', '--audio-format', 'mp3', '--audio-quality', '5',
+    '--no-playlist', '--no-warnings',
+    '--max-filesize', `${MAX_MB}M`,
+    '--ffmpeg-location', FFMPEG,
+    '-o', out
+  ]
+  if (fs.existsSync(COOKIES)) args.push('--cookies', COOKIES)
+  args.push(url)
 
   try {
-    const b = await ytdlpAudio(videoId)
-    log('✅ yt-dlp')
-    return b
-  } catch (e) {
-    lastErr = e?.message || 'فشل yt-dlp'
-    logErr('yt-dlp failed:', lastErr)
+    await runYtDlp(args)
+    const file = fs.readdirSync(dir).find(f => f.endsWith('.mp3'))
+    if (!file) throw new Error('لم ينتج ملف mp3')
+    const buf = fs.readFileSync(path.join(dir, file))
+    if (buf.length < 20 * 1024) throw new Error('الملف صغير جداً')
+    return buf
+  } finally {
+    try { fs.rmSync(dir, { recursive: true, force: true }) } catch {}
   }
-
-  try {
-    const b = await cnvAudio(videoId)
-    log('✅ cnv.cx')
-    return b
-  } catch (e) {
-    lastErr = `${lastErr} | ${e?.message || 'فشل cnv.cx'}`
-    logErr('cnv.cx failed:', e?.message || e)
-  }
-
-  throw new Error(lastErr || 'تعذر تحميل الصوت')
 }
 
 function toOpusOggBuffer(inputBuffer) {
   return new Promise((resolve, reject) => {
     const tmpDir = os.tmpdir()
-    const id = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+    const id = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`
     const inPath = path.join(tmpDir, `${id}_in`)
     const outPath = path.join(tmpDir, `${id}_out.ogg`)
-
     fs.writeFileSync(inPath, inputBuffer)
 
     const ff = spawn(FFMPEG, [
-      '-y',
-      '-i', inPath,
-      '-vn',
-      '-c:a', 'libopus',
-      '-b:a', '64k',
-      '-ar', '48000',
-      '-ac', '1',
+      '-y', '-i', inPath, '-vn',
+      '-c:a', 'libopus', '-b:a', '64k', '-ar', '48000', '-ac', '1',
       outPath
     ])
 
@@ -275,7 +210,7 @@ function toOpusOggBuffer(inputBuffer) {
       try { fs.unlinkSync(inPath) } catch {}
       if (code !== 0 || !fs.existsSync(outPath)) {
         try { fs.unlinkSync(outPath) } catch {}
-        return reject(new Error('فشل تحويل الصوت إلى OGG/Opus عبر ffmpeg'))
+        return reject(new Error('فشل تحويل الصوت إلى OGG/Opus'))
       }
       const outBuf = fs.readFileSync(outPath)
       try { fs.unlinkSync(outPath) } catch {}
@@ -286,10 +221,17 @@ function toOpusOggBuffer(inputBuffer) {
 
 async function fetchSongAudioBuffer(query) {
   const video = await searchFirstYouTubeVideo(query)
-  if (!video) {
-    throw new Error('لم يتم العثور على أغنية مطابقة للاسم المطلوب')
+  if (!video) throw new Error('لم يتم العثور على أغنية')
+
+  try {
+    return await cnvAudio(video.id)
+  } catch (e1) {
+    try {
+      return await ytdlpAudio(video.id)
+    } catch (e2) {
+      throw new Error(`${e1?.message || 'فشل التحميل'} | ${e2?.message || 'فشل yt-dlp'}`)
+    }
   }
-  return downloadAudio(video.id)
 }
 
 const handler = async (m, { conn, text, usedPrefix, command }) => {
@@ -303,19 +245,19 @@ const handler = async (m, { conn, text, usedPrefix, command }) => {
   }
 
   try {
-    const stickerBuf = await withSocketRetry(conn, () => quotedSticker.download())
+    const stickerBuf = await runWithSocket(conn, () => quotedSticker.download())
     if (!stickerBuf || !Buffer.isBuffer(stickerBuf) || stickerBuf.length < 500) {
-      return m.reply('❌ تعذر تحميل الستيكر المردود عليه.')
+      return m.reply('❌ تعذر تحميل الستيكر')
     }
 
-    const rawAudioBuf = await fetchSongAudioBuffer(songName)
-    const opusBuf = await toOpusOggBuffer(rawAudioBuf)
+    const rawAudio = await fetchSongAudioBuffer(songName)
+    const opusBuf = await toOpusOggBuffer(rawAudio)
 
-    const stickerMedia = await withSocketRetry(conn, () =>
+    const stickerMedia = await runWithSocket(conn, () =>
       prepareWAMessageMedia({ sticker: stickerBuf }, { upload: conn.waUploadToServer })
     )
 
-    const audioMedia = await withSocketRetry(conn, () =>
+    const audioMedia = await runWithSocket(conn, () =>
       prepareWAMessageMedia(
         { audio: opusBuf, mimetype: 'audio/ogg; codecs=opus', ptt: false },
         { upload: conn.waUploadToServer }
@@ -331,13 +273,13 @@ const handler = async (m, { conn, text, usedPrefix, command }) => {
       }
     })
 
-    await withSocketRetry(conn, () => conn.relayMessage(m.chat, payload, { quoted: m }))
-    log('✅ تم إرسال الستيكر المدمج معه الصوت بنجاح')
+    await runWithSocket(conn, () => conn.relayMessage(m.chat, payload, { quoted: m }))
+    log('✅ تم الإرسال')
   } catch (err) {
-    logErr('handler error:', err?.stack || err?.message || err)
+    errLog(err?.message || err)
     try {
       if (isSocketReady(conn)) {
-        await m.reply(`❌ *خطأ:* ${err?.message || err}`)
+        await m.reply(`❌ *خطأ:* ${String(err?.message || err).slice(0, 180)}`)
       }
     } catch {}
   }
