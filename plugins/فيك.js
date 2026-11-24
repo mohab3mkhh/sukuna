@@ -1,5 +1,11 @@
-// plugins/fakemsg.js
+// plugins/فيك.js
 import { delay, prepareWAMessageMedia } from '@whiskeysockets/baileys';
+
+const getMsgId = (sent) => {
+    if (!sent) return null;
+    if (typeof sent === 'string') return sent;
+    return sent?.key?.id || sent?.id || null;
+};
 
 const handler = async (m, { conn, text }) => {
     if (!m.quoted) return m.reply('📌 رد على رسالة');
@@ -17,68 +23,75 @@ const handler = async (m, { conn, text }) => {
                 { upload: conn.waUploadToServer }
             );
 
-            const tempId = await conn.relayMessage(m.chat, {
+            const sentTemp = await conn.relayMessage(m.chat, {
                 extendedTextMessage: {
                     text: '',
                     contextInfo: { isGroupStatus: true }
                 }
             }, {});
 
-            await conn.relayMessage(m.chat, {
-                protocolMessage: {
-                    key: { jid: m.chat, fromMe: true, id: tempId },
-                    type: 14,
-                    editedMessage: {
-                        imageMessage: {
-                            ...prepared.imageMessage,
-                            caption,
-                            contextInfo: { isGroupStatus: false }
+            const tempId = getMsgId(sentTemp);
+
+            if (tempId) {
+                await conn.relayMessage(m.chat, {
+                    protocolMessage: {
+                        key: { jid: m.chat, fromMe: true, id: tempId },
+                        type: 14,
+                        editedMessage: {
+                            imageMessage: {
+                                ...prepared.imageMessage,
+                                caption,
+                                contextInfo: { isGroupStatus: false }
+                            }
                         }
                     }
-                }
-            }, { messageId: stanzaId });
+                }, { messageId: stanzaId });
 
-            await delay(100);
+                await delay(150);
 
-            await Promise.allSettled([
-                conn.sendMessage(m.chat, { delete: { remoteJid: m.chat, id: tempId, fromMe: true } })
-            ]);
+                await Promise.allSettled([
+                    conn.sendMessage(m.chat, { delete: { remoteJid: m.chat, id: tempId, fromMe: true } })
+                ]);
+            }
 
-            await m.react('✅');
             return;
         }
 
         // ✅ نص فقط
-        if (!text) return m.reply('📌 اكتب النص البديل أو ابعت صورة مع .fakemsg');
+        if (!text) return m.reply('📌 اكتب النص البديل أو ابعت صورة مع الأمر');
 
-        const tempId = await conn.relayMessage(m.chat, {
+        const sentTemp = await conn.relayMessage(m.chat, {
             extendedTextMessage: {
                 text: '',
                 contextInfo: { isGroupStatus: true }
             }
         }, {});
 
-        const tempId2 = await conn.relayMessage(m.chat, {
-            protocolMessage: {
-                key: { jid: m.chat, fromMe: true, id: tempId },
-                type: 14,
-                editedMessage: {
-                    extendedTextMessage: {
-                        text,
-                        contextInfo: { isGroupStatus: false }
+        const tempId = getMsgId(sentTemp);
+
+        if (tempId) {
+            const sentEdit = await conn.relayMessage(m.chat, {
+                protocolMessage: {
+                    key: { jid: m.chat, fromMe: true, id: tempId },
+                    type: 14,
+                    editedMessage: {
+                        extendedTextMessage: {
+                            text,
+                            contextInfo: { isGroupStatus: false }
+                        }
                     }
                 }
-            }
-        }, { messageId: stanzaId });
+            }, { messageId: stanzaId });
 
-        await delay(100);
+            const tempId2 = getMsgId(sentEdit);
 
-        await Promise.allSettled([
-            conn.sendMessage(m.chat, { delete: { remoteJid: m.chat, id: tempId, fromMe: true } }),
-            conn.sendMessage(m.chat, { delete: { remoteJid: m.chat, id: tempId2, fromMe: true } })
-        ]);
+            await delay(150);
 
-        await m.react('✅');
+            await Promise.allSettled([
+                conn.sendMessage(m.chat, { delete: { remoteJid: m.chat, id: tempId, fromMe: true } }),
+                ...(tempId2 ? [conn.sendMessage(m.chat, { delete: { remoteJid: m.chat, id: tempId2, fromMe: true } })] : [])
+            ]);
+        }
     } catch (e) {
         console.error('[fakemsg]', e);
         m.reply('❌ ' + (e?.message || e));
