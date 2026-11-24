@@ -119,9 +119,9 @@ async function ytdlpAudio(videoId) {
       try {
         await runYtDlp(args)
         const file = fs.readdirSync(dir).find(f => f.endsWith('.mp3'))
-        if (!file) throw new Error('no mp3 produced')
+        if (!file) throw new Error('لم يتم إنتاج ملف mp3')
         const buffer = fs.readFileSync(path.join(dir, file))
-        if (buffer.length < 20 * 1024) throw new Error('الملف صغير جداً')
+        if (buffer.length < 20 * 1024) throw new Error('ملف الصوت صغير جداً')
         return buffer
       } catch (e) {
         lastErr = e
@@ -139,7 +139,7 @@ async function cnvAudio(videoId) {
     headers: CNV_HEADERS,
     timeout: 20000
   })
-  if (!k.data?.key) throw new Error('cnv: no key')
+  if (!k.data?.key) throw new Error('cnv: تعذر جلب المفتاح')
   await new Promise(r => setTimeout(r, 1500))
 
   const params = new URLSearchParams({
@@ -162,7 +162,7 @@ async function cnvAudio(videoId) {
     validateStatus: () => true
   })
   if (!(r.status === 200 && r.data?.url)) {
-    throw new Error(r.data?.errorMsg || `cnv: status ${r.status}`)
+    throw new Error(r.data?.errorMsg || `cnv: حالة ${r.status}`)
   }
 
   for (let i = 0; i < 3; i++) {
@@ -180,21 +180,31 @@ async function cnvAudio(videoId) {
     }
     await new Promise(r => setTimeout(r, 2000))
   }
-  throw new Error('cnv: الملف فاضي')
+  throw new Error('cnv: ملف التحميل فارغ')
 }
 
 async function downloadAudio(videoId) {
+  let lastErr = ''
+
+  try {
+    const b = await ytdlpAudio(videoId)
+    log('✅ yt-dlp')
+    return b
+  } catch (e) {
+    lastErr = e?.message || 'فشل yt-dlp'
+    log('yt-dlp failed:', lastErr)
+  }
+
   try {
     const b = await cnvAudio(videoId)
     log('✅ cnv.cx')
     return b
   } catch (e) {
-    log('cnv.cx:', e.message)
+    lastErr = `${lastErr} | ${e?.message || 'فشل cnv.cx'}`
+    log('cnv.cx failed:', e?.message)
   }
 
-  const b = await ytdlpAudio(videoId)
-  log('✅ yt-dlp')
-  return b
+  throw new Error(lastErr)
 }
 
 function toOpusOggBuffer(inputBuffer) {
