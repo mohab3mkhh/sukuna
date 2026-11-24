@@ -39,8 +39,6 @@ function getQuotedSticker(m) {
 }
 
 async function searchFirstYouTubeVideo(query) {
-  log('1) البحث عن الأغنية:', query)
-
   try {
     const mod = await import('yt-search')
     const yts = mod.default || mod
@@ -48,14 +46,13 @@ async function searchFirstYouTubeVideo(query) {
     let vids = (res?.videos || []).filter(v => v.seconds > 0 && v.seconds < 1800)
     if (!vids.length) vids = res?.videos || []
     if (vids.length) {
-      log('تم اختيار فيديو عبر yt-search:', vids[0].videoId, '-', vids[0].title)
       return {
         id: vids[0].videoId,
         title: vids[0].title || query
       }
     }
   } catch (e) {
-    logErr('فشل yt-search:', e?.message || e)
+    logErr('yt-search:', e?.message || e)
   }
 
   const r = await axios.get(
@@ -74,7 +71,6 @@ async function searchFirstYouTubeVideo(query) {
     for (const item of s.itemSectionRenderer?.contents || []) {
       const v = item.videoRenderer
       if (v?.videoId) {
-        log('تم اختيار فيديو عبر scrape:', v.videoId, '-', v.title?.runs?.[0]?.text || query)
         return {
           id: v.videoId,
           title: v.title?.runs?.[0]?.text || query
@@ -130,7 +126,7 @@ async function ytdlpAudio(videoId) {
         return buffer
       } catch (e) {
         lastErr = e
-        logErr(`فشلت محاولة yt-dlp رقم ${idx + 1}:`, e?.message || e)
+        logErr(`yt-dlp attempt ${idx + 1}:`, e?.message || e)
       }
     }
     throw lastErr || new Error('فشل التحميل عبر yt-dlp')
@@ -140,7 +136,6 @@ async function ytdlpAudio(videoId) {
 }
 
 async function cnvAudio(videoId) {
-  log('محاولة التحميل عبر cnv.cx للفيديو:', videoId)
   const k = await axios.get(`https://cnv.cx/v2/sanity/key?id=${videoId}`, {
     headers: CNV_HEADERS,
     timeout: 20000
@@ -182,7 +177,7 @@ async function cnvAudio(videoId) {
       })
       if (d.status === 200 && d.data?.length > 20 * 1024) return Buffer.from(d.data)
     } catch (e) {
-      logErr(`خطأ أثناء تحميل ملف cnv.cx (محاولة ${i + 1}):`, e?.message || e)
+      logErr(`cnv dl attempt ${i + 1}:`, e?.message || e)
     }
     await new Promise(r => setTimeout(r, 2000))
   }
@@ -194,27 +189,26 @@ async function downloadAudio(videoId) {
 
   try {
     const b = await ytdlpAudio(videoId)
-    log('✅ نجح التحميل عبر yt-dlp')
+    log('✅ yt-dlp')
     return b
   } catch (e) {
     lastErr = e?.message || 'فشل yt-dlp'
-    logErr('❌ فشل yt-dlp:', lastErr)
+    logErr('yt-dlp failed:', lastErr)
   }
 
   try {
     const b = await cnvAudio(videoId)
-    log('✅ نجح التحميل عبر cnv.cx')
+    log('✅ cnv.cx')
     return b
   } catch (e) {
     lastErr = `${lastErr} | ${e?.message || 'فشل cnv.cx'}`
-    logErr('❌ فشل cnv.cx:', e?.message || e)
+    logErr('cnv.cx failed:', e?.message || e)
   }
 
-  throw new Error(lastErr || 'تعذر تحميل الصوت من المصدرين')
+  throw new Error(lastErr || 'تعذر تحميل الصوت')
 }
 
 function toOpusOggBuffer(inputBuffer) {
-  log('تحويل الصوت إلى OGG/Opus عبر ffmpeg، حجم المدخل:', inputBuffer.length)
   return new Promise((resolve, reject) => {
     const tmpDir = os.tmpdir()
     const id = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
@@ -302,7 +296,7 @@ const handler = async (m, { conn, text, usedPrefix, command }) => {
     await conn.relayMessage(m.chat, payload, { quoted: m })
     log('✅ تم إرسال الستيكر المدمج معه الصوت بنجاح')
   } catch (err) {
-    logErr('الخطأ النهائي في handler:', err?.stack || err?.message || err)
+    logErr('handler error:', err?.stack || err?.message || err)
     await m.reply(`❌ *خطأ:* ${err?.message || err}`)
   }
 }
