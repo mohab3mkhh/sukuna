@@ -54,8 +54,6 @@ const handler = async (m, ctx) => {
 ━━━━━━━━━━━━━━━━━━━━━━━
 `.trim();
 
-    const isOwner = ctx.isOwner || ctx.isROwner || ownerNumbers.includes(m.sender.split('@')[0]);
-
     const sections = [
       {
         title: '👿 مَمَالِكُ سُوكُونَا',
@@ -67,7 +65,6 @@ const handler = async (m, ctx) => {
           { header: '🧰 الأدوات',          title: '「 تَرْسَانَةُ القُوَّة 」',       id: '.ق3'  },
           { header: '🔧 الأدوات المتقدمة', title: '「 أَسْلِحَةٌ مُتَقَدِّمَة 」',     id: '.ق16' },
           { header: '⬇️ التحميل',          title: '「 نَهْبُ الملفات 」',             id: '.ق4'  },
-          { header: '📥 التحميل ٢',        title: '「 غَنَائِمُ إِضَافِيَّة 」',       id: '.ق18' },
           { header: '💰 الاقتصاد',         title: '「 خَزِينَةُ اللَّعَنَات 」',      id: '.ق5'  },
           { header: '🏷️ الألقاب',         title: '「 أَلْقَابُ المَمْلَكَة 」',       id: '.ق10' }
         ]
@@ -77,7 +74,6 @@ const handler = async (m, ctx) => {
         rows: [
           { header: '🤖 الذكاء الاصطناعي', title: '「 عَقْلُ الشَّيطَان 」',         id: '.ق6'  },
           { header: '🖼️ الصور',           title: '「 عَيْنُ المَلِك 」',             id: '.ق11' },
-          { header: '✨ صانع اللوجو',      title: '「 وَشْمُ اللَّعْنَة 」',          id: '.ق25' },
           { header: '🔤 الزخارف',          title: '「 نُقُوشُ الجَحِيم 」',           id: '.ق9'  },
           { header: '🧷 الملصقات والصوتيات', title: '「 صَدَى اللَّعْنَة 」',          id: '.ق17' },
           { header: '😈 التسلية',          title: '「 مَلاهِي الجَحِيم 」',           id: '.ق7'  },
@@ -97,16 +93,6 @@ const handler = async (m, ctx) => {
       }
     ];
 
-    // أقسام خاصة بالمطور فقط
-    if (isOwner) {
-      sections.push({
-        title: '👑 غُرْفَةُ المَلِك',
-        rows: [
-          { header: '🛠️ أدوات المطور ٢',  title: '「 أَدَوَاتٌ مَحْظُورَة 」',       id: '.ق23' },
-          { header: '🔞 قسم +18',         title: '「 المَمْنُوعَات 」',              id: '.ق24' }
-        ]
-      });
-    }
 
     await sendButtons(conn, m.chat, {
       text: gojoText,
