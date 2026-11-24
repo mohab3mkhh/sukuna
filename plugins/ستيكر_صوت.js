@@ -2,6 +2,7 @@
  * plugins/ستيكر_صوت.js
  * الرد على ستيكر + اسم الأغنية لإرسال ستيكر مدمج معه صوت عبر Baileys (ESM)
  * الشكل: audioStickerMessage.message.stickerMessage.audioMessage
+ * المصدر: يوتيوب أولاً، ولو مفيش نتيجة (أو فشل التحميل) يجيب من تيك توك
  */
 
 import axios from 'axios'
@@ -17,6 +18,9 @@ const MAX_MB = 60
 const YTDLP = fs.existsSync('/root/.nix-profile/bin/yt-dlp') ? '/root/.nix-profile/bin/yt-dlp' : 'yt-dlp'
 const FFMPEG = fs.existsSync('/root/.nix-profile/bin/ffmpeg') ? '/root/.nix-profile/bin/ffmpeg' : 'ffmpeg'
 const COOKIES = '/app/cookies.txt'
+
+const TIK_KEY = process.env.TIKWMAPI_KEY || '34ce144ad4984df4fbbc79480a131395'
+const TIK_API = 'https://api.tikwmapi.com'
 
 const CNV_HEADERS = {
   'User-Agent': UA,
@@ -220,7 +224,31 @@ async function ytdlpAudio(videoId) {
   }
 }
 
-// يحوّل لـ OGG/Opus ويقص أول 10 ثواني (زي اللي شغال عند صاحبك)
+// جلب الساوند من تيك توك (بحث بالكلمات → أول نتيجة فيها صوت)
+async function tiktokAudio(query) {
+  const r = await axios.get(`${TIK_API}/feed/search`, {
+    params: { keywords: query, count: 10, cursor: 0 },
+    headers: { 'x-tikwmapi-key': TIK_KEY, 'User-Agent': UA },
+    timeout: 25000
+  })
+  if (r.data?.code !== undefined && r.data.code !== 0) {
+    throw new Error(r.data?.msg || 'tikwmapi error')
+  }
+  const v = (r.data?.data?.videos || []).find(x => x?.music_info?.play || x?.music)
+  if (!v) throw new Error('لا توجد نتائج في تيك توك')
+
+  const url = v.music_info?.play || v.music
+  const d = await axios.get(url, {
+    headers: { 'User-Agent': UA, Referer: 'https://www.tiktok.com/' },
+    responseType: 'arraybuffer',
+    timeout: 60000,
+    maxContentLength: MAX_MB * 1024 * 1024
+  })
+  if (d.data?.length > 5 * 1024) return Buffer.from(d.data)
+  throw new Error('ملف تيك توك فارغ')
+}
+
+// يحوّل لـ OGG/Opus ويقص أول 10 ثواني
 function toOpusOggBuffer(inputBuffer, maxSeconds = 10) {
   return new Promise((resolve, reject) => {
     const tmpDir = os.tmpdir()
@@ -255,8 +283,17 @@ function toOpusOggBuffer(inputBuffer, maxSeconds = 10) {
 }
 
 async function fetchSongAudioBuffer(query) {
-  const video = await searchFirstYouTubeVideo(query)
-  if (!video) throw new Error('لم يتم العثور على أغنية')
+  const video = await searchFirstYouTubeVideo(query).catch(() => null)
+
+  // يوتيوب مالقاش نتيجة → تيك توك
+  if (!video) {
+    log('يوتيوب: لا نتائج، جاري البحث في تيك توك')
+    try {
+      return await tiktokAudio(query)
+    } catch (e) {
+      throw new Error(`لم يتم العثور على أغنية (يوتيوب + تيك توك): ${e?.message || ''}`)
+    }
+  }
 
   try {
     return await cnvAudio(video.id)
@@ -264,7 +301,13 @@ async function fetchSongAudioBuffer(query) {
     try {
       return await ytdlpAudio(video.id)
     } catch (e2) {
-      throw new Error(`${e1?.message || 'فشل التحميل'} | ${e2?.message || 'فشل yt-dlp'}`)
+      // يوتيوب لاقى الأغنية بس التحميل فشل → جرب تيك توك قبل ما ترمي الخطأ
+      try {
+        log('فشل تحميل يوتيوب، جاري المحاولة من تيك توك')
+        return await tiktokAudio(query)
+      } catch (e3) {
+        throw new Error(`${e1?.message || 'فشل التحميل'} | ${e2?.message || 'فشل yt-dlp'} | ${e3?.message || 'فشل تيك توك'}`)
+      }
     }
   }
 }
