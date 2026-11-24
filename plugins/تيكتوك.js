@@ -1,6 +1,6 @@
 // plugins/edit-search.js
 // ⛩️ SUKUNA BOT - بحث إيديتات تيك توك (كاروسيل) 🎬
-// v3: التحميل بدون علامة مائية بقى من tikwmapi (بالمفتاح) بدل tikwm.com
+// v4: البحث والتحميل الاتنين من tikwmapi (بالمفتاح) — شلنا revid
 
 import * as _baileys from '@whiskeysockets/baileys'
 
@@ -76,55 +76,26 @@ async function translateToEn(text) {
     return out
 }
 
-// ━━━ طلب واحد من revid ━━━
-const mapVideo = v => ({
-    id: v.id,
-    desc: v.desc || 'TikTok Video',
-    url: v.url,
-    videoUrl: v.urlUploaded,
-    duration: v.durationInSeconds || 0,
-    author: v.userNickname || 'Unknown',
-    likes: v.diggCount || 0,
-    comments: v.commentCount || 0,
-    plays: v.playCount || 0
-})
-
-async function revidSearch(keywords, filters) {
-    const res = await fetch('https://www.revid.ai/api/tiktok-search', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'User-Agent': UA,
-            'Referer': 'https://www.revid.ai/tiktok-video-finder',
-            'Accept': 'application/json'
-        },
-        body: JSON.stringify({ keywords, filtersFast: filters, extraParams: { sort: '' } }),
-        signal: AbortSignal.timeout(30000)
-    })
-    if (!res.ok) throw new Error('HTTP ' + res.status)
-    const data = await res.json()
-    return (data.videos || []).filter(Boolean).map(mapVideo)
+// ━━━ البحث عبر tikwmapi (/feed/search) ━━━
+const mapVideo = v => {
+    const user = v.author?.unique_id || ''
+    const id = v.video_id || v.id
+    return {
+        id,
+        desc: v.title || v.desc || 'TikTok Video',
+        url: user && id ? `https://www.tiktok.com/@${user}/video/${id}` : (v.share_url || v.url || ''),
+        videoUrl: v.hdplay || v.play || null,   // رابط مباشر بدون علامة مائية (لو الـ API رجّعه)
+        duration: v.duration || 0,
+        author: v.author?.nickname || user || 'Unknown',
+        likes: v.digg_count || 0,
+        comments: v.comment_count || 0,
+        plays: v.play_count || 0
+    }
 }
 
-// بيجرّب فلاتر من الأوسع للأضيق. الفلتر القديم (lang = 'en') كان بيشيل أي فيديو وصفه عربي!
-async function revidSearchSmart(keywords) {
-    const now = Math.floor(Date.now() / 1000)
-    const twoYearsAgo = now - 2 * 365 * 24 * 60 * 60
-    const oneYearAgo = now - 365 * 24 * 60 * 60
-    const levels = [
-        ['nbChar > 5', `createTime >= ${twoYearsAgo} AND createTime <= ${now}`],
-        [],
-        ['nbChar > 10', "lang = 'en'", `createTime >= ${oneYearAgo} AND createTime <= ${now}`]
-    ]
-    let lastErr = null
-    for (const f of levels) {
-        try {
-            const r = await revidSearch(keywords, f)
-            if (r.length) return r
-        } catch (e) { lastErr = e }
-    }
-    if (lastErr) throw lastErr
-    return []
+async function searchVariant(keywords) {
+    const j = await tikApiGet('/feed/search', { keywords, count: 20, cursor: 0 })
+    return (j?.data?.videos || []).filter(Boolean).map(mapVideo).filter(v => v.url || v.videoUrl)
 }
 
 // ━━━ الترتيب بالصلة + التفاعل ━━━
@@ -158,7 +129,7 @@ async function searchTikTok(name) {
     const en = await translateToEn(name)
     const variants = [...new Set([`${name} edit`, en && `${en} edit`, en, name].filter(Boolean))].slice(0, 4)
 
-    const settled = await Promise.allSettled(variants.map(revidSearchSmart))
+    const settled = await Promise.allSettled(variants.map(searchVariant))
     const all = settled.flatMap(s => (s.status === 'fulfilled' ? s.value : []))
     if (!all.length) {
         const failed = settled.find(s => s.status === 'rejected')
@@ -183,8 +154,8 @@ async function searchTikTok(name) {
     return results
 }
 
-// ━━━ tikwmapi (بدون علامة مائية، بالمفتاح) ━━━
-// لو المفتاح مرفوض (401/403) بنوقفه 10 دقايق، ولو 429 بنوقفه دقيقة، والكارت بيرجع للرابط المباشر
+// ━━━ tikwmapi (بالمفتاح) ━━━
+// لو المفتاح مرفوض (401/403) بنوقفه 10 دقايق، ولو 429 بنوقفه دقيقة
 let lastTikCall = 0
 let tikDisabledUntil = 0
 async function tikGate() {
@@ -194,10 +165,10 @@ async function tikGate() {
     if (wait > 0) await sleep(wait)
 }
 
-async function getVideoNoWatermark(tiktokUrl) {
+async function tikApiGet(pathname, params) {
     if (Date.now() < tikDisabledUntil) throw new Error('tikwmapi موقوف مؤقتاً')
     await tikGate()
-    const r = await fetch(`${TIK_API}/?url=${encodeURIComponent(tiktokUrl)}`, {
+    const r = await fetch(`${TIK_API}${pathname}?${new URLSearchParams(params)}`, {
         headers: { 'x-tikwmapi-key': TIK_KEY, 'User-Agent': UA },
         signal: AbortSignal.timeout(30000)
     })
@@ -212,8 +183,12 @@ async function getVideoNoWatermark(tiktokUrl) {
     if (!r.ok) throw new Error('tikwmapi: HTTP ' + r.status)
     const j = await r.json()
     if (j?.code !== undefined && j.code !== 0) throw new Error(j?.msg || 'tikwmapi: Failed')
-    const d = j?.data
-    const url = d?.hdplay || d?.play
+    return j
+}
+
+async function getVideoNoWatermark(tiktokUrl) {
+    const j = await tikApiGet('/', { url: tiktokUrl })
+    const url = j?.data?.hdplay || j?.data?.play
     if (!url) throw new Error('No video URL')
     return url
 }
@@ -230,16 +205,16 @@ async function downloadVideo(url) {
     return buf
 }
 
-// الأفضل: بدون علامة مائية (tikwmapi)، وإلا الرابط المباشر
+// الأول الرابط المباشر اللي رجع مع نتيجة البحث، ولو فشل نطلب رابط جديد من tikwmapi
 async function getVideoBuffer(video) {
-    if (Date.now() >= tikDisabledUntil) {
+    if (video.videoUrl) {
         try {
-            return await downloadVideo(await getVideoNoWatermark(video.url))
+            return await downloadVideo(video.videoUrl)
         } catch (e) {
-            console.log('[edit-search] tikwmapi فشل:', e.message)
+            console.log('[edit-search] الرابط المباشر فشل:', e.message)
         }
     }
-    if (video.videoUrl) return await downloadVideo(video.videoUrl)
+    if (video.url) return await downloadVideo(await getVideoNoWatermark(video.url))
     throw new Error('مفيش مصدر')
 }
 
