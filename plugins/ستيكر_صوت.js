@@ -59,7 +59,8 @@ async function searchFirstYouTubeVideo(query) {
       if (v?.videoId) {
         return {
           id: v.videoId,
-          title: v.title?.runs?.[0]?.text || query
+          title: v.title?.runs?.[0]?.text || query,
+          url: `https://youtu.be/${v.videoId}`
         }
       }
     }
@@ -73,11 +74,11 @@ async function getDownloadKey(videoId) {
     headers: HEADERS,
     timeout: 20000
   })
-  if (!r.data?.key) throw new Error('فشل جلب مفتاح التحويل')
+  if (!r.data?.key) throw new Error('فشل جلب مفتاح التحويل من cnv.cx')
   return r.data.key
 }
 
-async function convertSongToMp3Url(videoId, audioBitrate = '128') {
+async function convertViaCnv(videoId, audioBitrate = '128') {
   const key = await getDownloadKey(videoId)
   await new Promise(r => setTimeout(r, 1500))
 
@@ -103,7 +104,61 @@ async function convertSongToMp3Url(videoId, audioBitrate = '128') {
 
   if (r.status === 200 && r.data?.url) return r.data.url
   if (r.data?.errorMsg) throw new Error(r.data.errorMsg)
-  throw new Error('فشل تحويل الأغنية: ' + r.status)
+  throw new Error('فشل تحويل cnv.cx: HTTP ' + r.status)
+}
+
+function extractAudioUrlDeep(obj, depth = 0) {
+  if (!obj || depth > 5) return ''
+  if (typeof obj === 'string') {
+    const s = obj.trim()
+    if (/^https?:\/\//i.test(s) && !s.includes(' ')) return s
+    return ''
+  }
+  if (Array.isArray(obj)) {
+    for (const item of obj) {
+      const found = extractAudioUrlDeep(item, depth + 1)
+      if (found) return found
+    }
+    return ''
+  }
+  if (typeof obj === 'object') {
+    const keys = ['url', 'download', 'download_url', 'audio', 'audio_url', 'mp3', 'link', 'result', 'data']
+    for (const k of keys) {
+      if (k in obj) {
+        const found = extractAudioUrlDeep(obj[k], depth + 1)
+        if (found) return found
+      }
+    }
+  }
+  return ''
+}
+
+async function resolveFallbackAudioUrls(video, query) {
+  const candidates = []
+  const encodedUrl = encodeURIComponent(video.url)
+  const encodedQuery = encodeURIComponent(query)
+
+  const apiEndpoints = [
+    `https://prexzyapis.com/download/ytmp3?url=${encodedUrl}`,
+    `https://prexzyapis.com/download/ytaudio?url=${encodedUrl}`,
+    `https://prexzyapis.com/ai/song?q=${encodedQuery}`
+  ]
+
+  for (const ep of apiEndpoints) {
+    try {
+      const r = await axios.get(ep, {
+        timeout: 35000,
+        headers: { 'User-Agent': UA, Accept: 'application/json, */*' },
+        validateStatus: () => true
+      })
+      if (r.status < 400 && r.data) {
+        const found = extractAudioUrlDeep(r.data)
+        if (found) candidates.push(found)
+      }
+    } catch {}
+  }
+
+  return candidates
 }
 
 async function downloadAudioBuffer(url, retries = 3) {
@@ -128,7 +183,7 @@ async function downloadAudioBuffer(url, retries = 3) {
     } catch {}
     if (i < retries - 1) await new Promise(r => setTimeout(r, 2000))
   }
-  throw new Error('فشل تحميل ملف الصوت بعد عدة محاولات')
+  throw new Error('فشل تحميل ملف الصوت من الرابط')
 }
 
 function toOpusOggBuffer(inputBuffer) {
@@ -175,8 +230,29 @@ async function fetchSongAudioBuffer(query) {
   if (!video) {
     throw new Error('لم يتم العثور على أغنية مطابقة للاسم المطلوب')
   }
-  const mp3Url = await convertSongToMp3Url(video.id, '128')
-  return downloadAudioBuffer(mp3Url)
+
+  let lastErr = ''
+
+  // 1) المحاولة الأساسية عبر cnv.cx
+  try {
+    const mp3Url = await convertViaCnv(video.id, '128')
+    return await downloadAudioBuffer(mp3Url)
+  } catch (e) {
+    lastErr = e?.message || 'فشل cnv.cx'
+  }
+
+  // 2) المحاولات الاحتياطية
+  const fallbackUrls = await resolveFallbackAudioUrls(video, query)
+  for (const u of fallbackUrls) {
+    try {
+      const buf = await downloadAudioBuffer(u)
+      if (buf) return buf
+    } catch (e) {
+      lastErr = e?.message || lastErr
+    }
+  }
+
+  throw new Error(lastErr || 'تعذر تحميل الصوت من جميع المصادر المتاحة')
 }
 
 const handler = async (m, { conn, text, usedPrefix, command }) => {
