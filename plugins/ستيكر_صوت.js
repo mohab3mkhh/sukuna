@@ -1,6 +1,7 @@
 /**
  * plugins/ستيكر_صوت.js
  * الرد على ستيكر + اسم الأغنية لإرسال ستيكر مدمج معه صوت عبر Baileys (ESM)
+ * الشكل: audioStickerMessage.message.stickerMessage.audioMessage
  */
 
 import axios from 'axios'
@@ -26,6 +27,39 @@ const CNV_HEADERS = {
 const log = (...a) => console.log('[ستيكر_صوت]', ...a)
 const errLog = (msg) => console.error('[ستيكر_صوت:ERR]', String(msg || '').slice(0, 240))
 
+/* ---------- protobuf helpers (لو نسخة Baileys مش بتدعم audioStickerMessage) ---------- */
+const varint = (n) => {
+  const b = []
+  while (n > 127) { b.push((n & 127) | 128); n >>>= 7 }
+  b.push(n)
+  return Buffer.from(b)
+}
+const field = (num, buf) => Buffer.concat([varint((num << 3) | 2), varint(buf.length), buf])
+
+if (!proto.Message.__audioPatched) {
+  const _enc = proto.Message.encode
+  proto.Message.encode = function (msg, w) {
+    const writer = _enc.call(this, msg, w)
+    if (msg && msg.__rawAudioSticker) writer.uint32((134 << 3) | 2).bytes(msg.__rawAudioSticker)
+    return writer
+  }
+  proto.Message.__audioPatched = true
+}
+
+function buildAudioStickerPayload(stickerMsg, audioMsg) {
+  const native = proto.Message.fromObject({ audioStickerMessage: {} }).audioStickerMessage
+  if (native) {
+    return { audioStickerMessage: { message: { stickerMessage: { ...stickerMsg, audioMessage: audioMsg } } } }
+  }
+  const stickerBytes = proto.Message.StickerMessage.encode(stickerMsg).finish()
+  const audioBytes = proto.Message.AudioMessage.encode(audioMsg).finish()
+  const stickerWithAudio = Buffer.concat([stickerBytes, field(26, audioBytes)])
+  const inner = field(26, stickerWithAudio) // Message{ stickerMessage }
+  const future = field(1, inner)            // FutureProof{ message }
+  return { __rawAudioSticker: future }
+}
+
+/* ---------- helpers ---------- */
 function getQuotedSticker(m) {
   const q = m?.quoted
   if (!q) return null
@@ -186,7 +220,8 @@ async function ytdlpAudio(videoId) {
   }
 }
 
-function toOpusOggBuffer(inputBuffer) {
+// يحوّل لـ OGG/Opus ويقص أول 10 ثواني (زي اللي شغال عند صاحبك)
+function toOpusOggBuffer(inputBuffer, maxSeconds = 10) {
   return new Promise((resolve, reject) => {
     const tmpDir = os.tmpdir()
     const id = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`
@@ -195,7 +230,7 @@ function toOpusOggBuffer(inputBuffer) {
     fs.writeFileSync(inPath, inputBuffer)
 
     const ff = spawn(FFMPEG, [
-      '-y', '-i', inPath, '-vn',
+      '-y', '-i', inPath, '-vn', '-t', String(maxSeconds),
       '-c:a', 'libopus', '-b:a', '64k', '-ar', '48000', '-ac', '1',
       outPath
     ])
@@ -234,6 +269,7 @@ async function fetchSongAudioBuffer(query) {
   }
 }
 
+/* ---------- handler ---------- */
 const handler = async (m, { conn, text, usedPrefix, command }) => {
   const quotedSticker = getQuotedSticker(m)
   const songName = (text || '').trim()
@@ -251,7 +287,7 @@ const handler = async (m, { conn, text, usedPrefix, command }) => {
     }
 
     const rawAudio = await fetchSongAudioBuffer(songName)
-    const opusBuf = await toOpusOggBuffer(rawAudio)
+    const opusBuf = await toOpusOggBuffer(rawAudio, 10)
 
     const stickerMedia = await runWithSocket(conn, () =>
       prepareWAMessageMedia({ sticker: stickerBuf }, { upload: conn.waUploadToServer })
@@ -264,14 +300,9 @@ const handler = async (m, { conn, text, usedPrefix, command }) => {
       )
     )
 
-    const payload = proto.Message.fromObject({
-      134: {
-        1: {
-          26: stickerMedia.stickerMessage,
-          26: audioMedia.audioMessage
-        }
-      }
-    })
+    const sm = { ...stickerMedia.stickerMessage }
+    const am = { ...audioMedia.audioMessage, seconds: audioMedia.audioMessage.seconds || 10 }
+    const payload = buildAudioStickerPayload(sm, am)
 
     await runWithSocket(conn, () => conn.relayMessage(m.chat, payload, { quoted: m }))
     log('✅ تم الإرسال')
