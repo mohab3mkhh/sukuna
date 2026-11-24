@@ -23,7 +23,7 @@ function parse(b, d = 0) {
       const s = sub.toString('utf8')
       if (/^[\x20-\x7e]{1,40}$/.test(s)) out.push(`${f}:"${s}"`)
       else {
-        const inner = l > 1 && d < 4 ? parse(sub, d + 1) : null
+        const inner = l > 1 && d < 5 ? parse(sub, d + 1) : null
         out.push(inner ? `${f}:{${inner.join(' ')}}` : `${f}:<${l}b>`)
       }
     }
@@ -40,10 +40,12 @@ if (!globalThis.__stkHook) {
   const orig = proto.Message.decode
   proto.Message.decode = function (buf, ...args) {
     try {
-      const t = parse(Buffer.from(buf))
+      const b = Buffer.from(buf)
+      const t = parse(b)
       if (t && !t.every(x => /^(1|2|6|12|35):/.test(x))) {
         globalThis.__rawLog.push(t.join(' '))
         if (globalThis.__rawLog.length > 6) globalThis.__rawLog.shift()
+        if (t.some(x => x.startsWith('134:'))) globalThis.__rawHex = b.toString('hex')
       }
     } catch {}
     return orig.call(this, buf, ...args)
@@ -56,7 +58,10 @@ const handler = async (m, { conn }) => {
     ? log.map((x, i) => `#${i + 1}\n${x}`).join('\n\n')
     : 'مفيش رسائل اتسجلت لسه. ابعت الستيكر الأول.'
   await conn.sendMessage(m.chat, { text }, { quoted: m })
+  if (globalThis.__rawHex)
+    await conn.sendMessage(m.chat, { text: globalThis.__rawHex })
 }
+
 handler.command = /^(فحص_ستيكر|stickerdump)$/i
 handler.owner = true
 export default handler
