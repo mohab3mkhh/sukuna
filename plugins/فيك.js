@@ -15,8 +15,8 @@ const handler = async (m, { conn, text }) => {
     try {
         // ✅ لو انت باعت صورة مع الأمر - عدل رسالة اللي رديت عليه بصورتك انت
         if (m.mtype === 'imageMessage' || m.mediaType === 'image') {
-            let imageBuffer = await m.download();
-            let caption = text || m.msg?.caption || '';
+            const imageBuffer = await m.download();
+            const caption = text || m.msg?.caption || '';
 
             const prepared = await prepareWAMessageMedia(
                 { image: imageBuffer },
@@ -35,7 +35,7 @@ const handler = async (m, { conn, text }) => {
             if (tempId) {
                 await conn.relayMessage(m.chat, {
                     protocolMessage: {
-                        key: { jid: m.chat, fromMe: true, id: tempId },
+                        key: { remoteJid: m.chat, fromMe: true, id: tempId },
                         type: 14,
                         editedMessage: {
                             imageMessage: {
@@ -47,7 +47,7 @@ const handler = async (m, { conn, text }) => {
                     }
                 }, { messageId: stanzaId });
 
-                await delay(150);
+                await delay(400);
 
                 await Promise.allSettled([
                     conn.sendMessage(m.chat, { delete: { remoteJid: m.chat, id: tempId, fromMe: true } })
@@ -70,9 +70,9 @@ const handler = async (m, { conn, text }) => {
         const tempId = getMsgId(sentTemp);
 
         if (tempId) {
-            const sentEdit = await conn.relayMessage(m.chat, {
+            await conn.relayMessage(m.chat, {
                 protocolMessage: {
-                    key: { jid: m.chat, fromMe: true, id: tempId },
+                    key: { remoteJid: m.chat, fromMe: true, id: tempId },
                     type: 14,
                     editedMessage: {
                         extendedTextMessage: {
@@ -83,13 +83,10 @@ const handler = async (m, { conn, text }) => {
                 }
             }, { messageId: stanzaId });
 
-            const tempId2 = getMsgId(sentEdit);
-
-            await delay(150);
+            await delay(400);
 
             await Promise.allSettled([
-                conn.sendMessage(m.chat, { delete: { remoteJid: m.chat, id: tempId, fromMe: true } }),
-                ...(tempId2 ? [conn.sendMessage(m.chat, { delete: { remoteJid: m.chat, id: tempId2, fromMe: true } })] : [])
+                conn.sendMessage(m.chat, { delete: { remoteJid: m.chat, id: tempId, fromMe: true } })
             ]);
         }
     } catch (e) {
