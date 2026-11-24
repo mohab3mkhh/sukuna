@@ -1,4 +1,3 @@
-import fs from 'fs'
 import { proto } from '@whiskeysockets/baileys'
 
 if (!globalThis.__rawDumpInstalled) {
@@ -6,8 +5,9 @@ if (!globalThis.__rawDumpInstalled) {
   const orig = proto.Message.decode
   proto.Message.decode = function (buf, ...args) {
     try {
-      if (buf && Buffer.from(buf).includes(Buffer.from('image/webp')))
-        fs.appendFileSync('raw_stickers.hex', Buffer.from(buf).toString('hex') + '\n')
+      const b = Buffer.from(buf)
+      if (b.includes(Buffer.from('image/webp')))
+        console.log('RAWSTICKER:' + b.toString('hex'))
     } catch {}
     return orig.call(this, buf, ...args)
   }
