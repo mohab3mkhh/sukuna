@@ -4,6 +4,7 @@
 // المصدر: ESPN public scoreboard API (من غير مفتاح)
 
 const API = 'https://site.api.espn.com/apis/site/v2/sports/soccer/esp.1/scoreboard'
+const API_ALT = 'https://site.web.api.espn.com/apis/site/v2/sports/soccer/esp.1/scoreboard'
 const TZ = 'Africa/Cairo'
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36'
 const CACHE_MS = 30 * 1000     // ماتبعتش لـ ESPN أكتر من مرة كل 30 ثانية
@@ -83,23 +84,31 @@ async function fetchEvents() {
     const now = Date.now()
     const from = ymd(new Date(now - 24 * 3600 * 1000))
     const to = ymd(new Date(now + LOOKAHEAD_DAYS * 24 * 3600 * 1000))
-    const url = `${API}?dates=${from}-${to}&limit=200`
+    // بنجرب صيغ طلب مختلفة: لو واحدة فشلت (حظر/400/مضيف تاني) بنكمل على اللي بعدها
+    const urls = [
+        `${API}?dates=${from}-${to}&limit=200`,
+        `${API}?dates=${from}-${to}`,
+        `${API_ALT}?dates=${from}-${to}`,
+        API // أضعف حل: ماتشات النهاردة بس
+    ]
 
     let lastErr
-    for (let i = 0; i < 2; i++) {
+    for (const url of urls) {
         try {
             const r = await fetch(url, {
                 headers: { 'User-Agent': UA, Accept: 'application/json' },
-                signal: AbortSignal.timeout(20000)
+                signal: AbortSignal.timeout(15000)
             })
             if (!r.ok) throw new Error('HTTP ' + r.status)
             const j = await r.json()
             const events = (j.events || []).map(parseEvent).filter(Boolean).sort((a, b) => a.date - b.date)
+            if (!events.length && url !== API) throw new Error('رد فاضي')
             cache = { time: Date.now(), events }
             return events
         } catch (e) {
             lastErr = e
-            await sleep(1000)
+            console.error('[laliga] فشل', url, '→', e?.cause?.code || e?.message || e)
+            await sleep(500)
         }
     }
     if (cache.events.length) return cache.events // آخر نسخة محفوظة أحسن من لا شيء
@@ -196,7 +205,7 @@ const handler = async (m, { conn }) => {
         await m.reply(buildMessage(events))
     } catch (err) {
         console.error('[laliga]', err?.message || err)
-        await m.reply('❌ تعذر جلب ماتشات الليجا دلوقتي، جرّب بعد شوية.\n\n⛩️ SUKUNA BOT ⛩️')
+        await m.reply(`❌ تعذر جلب ماتشات الليجا دلوقتي، جرّب بعد شوية.\n_(${String(err?.cause?.code || err?.message || err).slice(0, 80)})_\n\n⛩️ SUKUNA BOT ⛩️`)
     }
 }
 
