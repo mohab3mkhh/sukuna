@@ -66,9 +66,78 @@ async function searchPinImages(query) {
   return [];
 }
 
-// ━━━ جلب الفيديوهات (مُصلّح مع بدائل) ━━━
+// ━━━ جلب الفيديوهات: Pinterest مباشرة (scope=videos) + بدائل ━━━
+const MP4_KEYS = ['V_720P', 'V_EXP7', 'V_EXP6', 'V_EXP5', 'V_EXP4', 'V_EXP3', 'V_480P', 'V_360P'];
+
+function pickMp4(list) {
+  if (!list || typeof list !== 'object') return '';
+  for (const k of MP4_KEYS) {
+    const u = cleanUrl(list[k]?.url);
+    if (u && !/\.m3u8/i.test(u)) return u;
+  }
+  for (const v of Object.values(list)) {
+    const u = cleanUrl(v?.url);
+    if (u && /\.mp4/i.test(u)) return u;
+  }
+  return '';
+}
+
+function fmtDuration(ms) {
+  const n = Number(ms);
+  if (!n) return 'غير معروفة';
+  const s = Math.round(n > 1000 ? n / 1000 : n);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
+async function pinterestDirectVideos(query) {
+  const data = { options: { query, scope: 'videos', page_size: 25, no_fetch_context_on_resource: false }, context: {} };
+  const res = await axios.get('https://www.pinterest.com/resource/BaseSearchResource/get/', {
+    params: { source_url: `/search/videos/?q=${query}`, data: JSON.stringify(data), _: Date.now() },
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+      'Accept': 'application/json, text/javascript, */*, q=0.01',
+      'Accept-Language': 'en-US,en;q=0.9',
+      'X-Requested-With': 'XMLHttpRequest',
+      'X-Pinterest-AppState': 'active',
+      'X-Pinterest-PWS-Handler': 'www/search/[scope].js'
+    },
+    timeout: 20000
+  });
+  const results = res?.data?.resource_response?.data?.results || [];
+  const out = [];
+  for (const pin of results) {
+    const storyVideo = pin?.story_pin_data?.pages?.[0]?.blocks?.find(b => b?.video)?.video;
+    const list = pin?.videos?.video_list || storyVideo?.video_list;
+    const video_url = pickMp4(list);
+    if (!video_url) continue;
+    out.push({
+      title: pin?.grid_title || pin?.title || pin?.description?.slice(0, 60) || `فيديو رقم ${out.length + 1}`,
+      duration: fmtDuration(pin?.videos?.duration || pin?.story_pin_data?.total_video_duration || storyVideo?.duration),
+      video_url,
+      thumb: cleanUrl(pin?.images?.orig?.url || pin?.images?.['736x']?.url)
+    });
+    if (out.length >= 8) break;
+  }
+  return out;
+}
+
 async function searchPinVideos(query) {
   const sources = [
+    () => pinterestDirectVideos(query),
+    // بديل: lib/scraper لو بيرجع فيديوهات
+    async () => {
+      const scraper = await import('../lib/scraper.js');
+      const r = await scraper.pinterest.search(query, 20);
+      return (r?.result?.pins || [])
+        .map((pin, i) => ({
+          title: pin?.title || `فيديو رقم ${i + 1}`,
+          duration: fmtDuration(pin?.videos?.duration),
+          video_url: pickMp4(pin?.videos?.video_list) || cleanUrl(pin?.media?.videos?.url),
+          thumb: cleanUrl(pin?.media?.images?.orig?.url)
+        }))
+        .filter(v => v.video_url)
+        .slice(0, 8);
+    },
     async () => {
       const res = await axios.get(
         `https://the-end-api.vercel.app/home/sections/Search/api/Pin/vid?q=${encodeURIComponent(query)}`,
@@ -84,22 +153,6 @@ async function searchPinVideos(query) {
           thumb: cleanUrl(vid?.thumbnail || vid?.image || vid?.cover)
         }))
         .filter(v => v.video_url)
-        .slice(0, 8);
-    },
-    async () => {
-      const res = await axios.get(
-        `https://api.siputzx.my.id/api/s/pinterest?query=${encodeURIComponent(query + ' video')}`,
-        { timeout: 15000 }
-      );
-      const raw = Array.isArray(res?.data?.data) ? res.data.data : [];
-      return raw
-        .map((item, i) => ({
-          title: item?.title || `فيديو رقم ${i + 1}`,
-          duration: item?.duration || 'غير معروفة',
-          video_url: cleanUrl(item?.video_url || item?.videos?.url || ''),
-          thumb: cleanUrl(item?.images_url || item?.image || '')
-        }))
-        .filter(v => v.video_url && /\.(mp4|mov|webm)|video/i.test(v.video_url))
         .slice(0, 8);
     }
   ];
@@ -157,7 +210,7 @@ async function sendVideoList(conn, m, query, videos) {
     };
   });
 
-  const previewImg = videos[0]?.thumb || `https://www.pinterest.com/search/pins/?q=${encodeURIComponent(query)}`;
+  const previewImg = videos.find(v => v.thumb)?.thumb;
 
   await sendButtons(conn, m.chat, {
     title: '🎬 Pinterest - فيديوهات',
@@ -225,6 +278,7 @@ let before = async function (m, { conn }) {
       await conn.sendMessage(m.chat, {
         video: { url: data.url },
         mimetype: 'video/mp4',
+        gifPlayback: false,
         caption: `🎬 *${String(data.title).slice(0, 80)}*\n\n> ⛩️ SUKUNA BOT`
       }, { quoted: m });
       await m.react('✅');
