@@ -7,6 +7,7 @@ import { Sticker, StickerTypes } from 'wa-sticker-formatter'
 import ffmpeg from 'fluent-ffmpeg'
 import fs from 'fs'
 import path from 'path'
+import { spawn } from 'child_process'
 import { fileURLToPath } from 'url'
 import { prepareWAMessageMedia, proto } from '@whiskeysockets/baileys'
 import { sendList } from '../lib/buttons.js'
@@ -16,6 +17,8 @@ const tmpDir = path.join(__dirname, '../tmp')
 if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true })
 
 const FOOTER = '⛩️ SUKUNA BOT ⛩️'
+// نفس مسار ffmpeg اللي بيستخدمه أمر ستيكر_صوت الشغال عندك
+const FFMPEG = fs.existsSync('/root/.nix-profile/bin/ffmpeg') ? '/root/.nix-profile/bin/ffmpeg' : 'ffmpeg'
 const PENDING_MS = 5 * 60_000
 const CHOICE_CMD = 'ملصق_خيار'
 if (!global.stkPending) global.stkPending = new Map()   // chat:sender → { media, seconds, m, expires }
@@ -95,18 +98,27 @@ async function imageToWebp(media) {
   } finally { rm(inputPath, outputPath) }
 }
 
-// يطلّع صوت الفيديو (أول 10 ثواني) OGG/Opus — null لو الفيديو مفيهوش صوت
-async function extractOpus(media) {
-  const id = Date.now() + '_' + Math.random().toString(36).slice(2, 6)
-  const inputPath = path.join(tmpDir, `aud_in_${id}.mp4`)
-  const outputPath = path.join(tmpDir, `aud_out_${id}.ogg`)
-  fs.writeFileSync(inputPath, media)
-  try {
-    await runFf(ffmpeg(inputPath).noVideo().duration(10).audioCodec('libopus').audioBitrate('64k').audioFrequency(48000).audioChannels(1).format('ogg'), 20000, outputPath)
-    const buf = fs.existsSync(outputPath) ? fs.readFileSync(outputPath) : null
-    return buf && buf.length > 500 ? buf : null
-  } catch { return null }
-  finally { rm(inputPath, outputPath) }
+// يطلّع صوت الفيديو (أول 10 ثواني) OGG/Opus — بنفس أوامر ffmpeg بتاعة ستيكر_صوت الشغال.
+// بيرجّع null لو الفيديو مفيهوش صوت. وبيطبع أي خطأ من ffmpeg في اللوج عشان نعرف السبب.
+function extractOpus(media) {
+  return new Promise(resolve => {
+    const id = Date.now() + '_' + Math.random().toString(36).slice(2, 6)
+    const inputPath = path.join(tmpDir, `aud_in_${id}.mp4`)
+    const outputPath = path.join(tmpDir, `aud_out_${id}.ogg`)
+    fs.writeFileSync(inputPath, media)
+    let err = ''
+    const ff = spawn(FFMPEG, ['-y', '-i', inputPath, '-vn', '-t', '10', '-c:a', 'libopus', '-b:a', '64k', '-ar', '48000', '-ac', '1', outputPath])
+    const timer = setTimeout(() => { try { ff.kill('SIGKILL') } catch {} }, 25000)
+    ff.stderr.on('data', d => { err = (err + d).slice(-600) })
+    const done = val => { clearTimeout(timer); rm(inputPath, outputPath); resolve(val) }
+    ff.on('error', e => { console.error('[ملصق:صوت] ffmpeg مش شغال:', e.message); done(null) })
+    ff.on('close', code => {
+      const ok = code === 0 && fs.existsSync(outputPath)
+      const buf = ok ? fs.readFileSync(outputPath) : null
+      if (!buf || buf.length < 500) console.error('[ملصق:صوت] استخراج الصوت فشل (code ' + code + '):', err.trim().split('\n').slice(-3).join(' | '))
+      done(buf && buf.length >= 500 ? buf : null)
+    })
+  })
 }
 
 async function shrinkIfBig(buf, isVideo) {
