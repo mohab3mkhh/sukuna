@@ -1,6 +1,6 @@
 // plugins/draw.js
 /**
- * .رسم <وصف>
+ * .ارسم <وصف>
  * بيرسم الصورة عن طريق بوت تليجرام @GPT4Telegrambot بحسابك انت (نفس ربط أمر numbers).
  *
  * الخطوات:
@@ -74,7 +74,7 @@ async function getClient(i = 0) {
     return client
 }
 
-const log = (...a) => console.log('[رسم]', ...a)
+const log = (...a) => console.log('[ارسم]', ...a)
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 const tgErr = (code, extra) => Object.assign(new Error(code), { extra })
 
@@ -257,7 +257,7 @@ const reply = (conn, m, text) => conn.sendMessage(m.chat, { text }, { quoted: m 
 async function onChoice(m, conn, usedPrefix, text) {
     const [token, action = ''] = text.split(/\s+/)
     const job = global.drawJobs.get(token)
-    if (!job) return reply(conn, m, `⚠️ الطلب ده انتهت صلاحيته، ابعت ${usedPrefix}رسم <الوصف> من جديد`)
+    if (!job) return reply(conn, m, `⚠️ الطلب ده انتهت صلاحيته، ابعت ${usedPrefix}ارسم <الوصف> من جديد`)
     if (job.sender !== m.sender) return reply(conn, m, '⚠️ الأزرار دي لصاحب الطلب بس')
 
     // اختيار النموذج
@@ -273,7 +273,7 @@ async function onChoice(m, conn, usedPrefix, text) {
             buttonText: `اختار ${model.optionName}`,
             sections: [{
                 title: model.optionName,
-                rows: model.options.map(o => ({ header: '', title: o, description: '', id: `${usedPrefix}رسم_خيار ${token} o_${o}` })),
+                rows: model.options.map(o => ({ header: '', title: o, description: '', id: `${usedPrefix}ارسم_خيار ${token} o_${o}` })),
             }],
             quoted: m,
         })
@@ -299,7 +299,7 @@ async function onChoice(m, conn, usedPrefix, text) {
                 `╰━━━━━━━━━━━━━━⬣\n\n> ${FOOTER}`
             await conn.sendMessage(job.chat, { image: buffer, caption }, { quoted: job.m })
         } catch (e) {
-            console.error('[رسم] فشل:', e?.message || e, e?.extra || '')
+            console.error('[ارسم] فشل:', e?.message || e, e?.extra || '')
             await reply(conn, m, `❌ *فشل الرسم*\n\n⚠️ ${explain(e)}`)
         } finally {
             global.drawJobs.delete(token)
@@ -313,7 +313,7 @@ let handler = async (m, { conn, text, usedPrefix = '.', command }) => {
     const now = Date.now()
     for (const [k, v] of global.drawJobs) if (now - v.createdAt > JOB_TTL) global.drawJobs.delete(k)
 
-    if (/^رسم_خيار$/i.test(cmd)) return onChoice(m, conn, usedPrefix, String(text || '').trim())
+    if (/^ارسم_خيار$/i.test(cmd)) return onChoice(m, conn, usedPrefix, String(text || '').trim())
 
     const prompt = String(text || '').trim()
     if (!prompt) {
@@ -334,18 +334,18 @@ let handler = async (m, { conn, text, usedPrefix = '.', command }) => {
             buttonText: 'اختار النموذج',
             sections: [{
                 title: 'النماذج',
-                rows: Object.entries(MODELS).map(([key, mod]) => ({ header: '', title: mod.label, description: '', id: `${usedPrefix}رسم_خيار ${token} m_${key}` })),
+                rows: Object.entries(MODELS).map(([key, mod]) => ({ header: '', title: mod.label, description: '', id: `${usedPrefix}ارسم_خيار ${token} m_${key}` })),
             }],
             quoted: m,
         })
     } catch (e) {
         global.drawJobs.delete(token)
-        console.error('[رسم] الأزرار فشلت:', e?.message || e)
+        console.error('[ارسم] الأزرار فشلت:', e?.message || e)
         await reply(conn, m, `❌ مقدرتش أبعت الأزرار: ${e?.message || e}`)
     }
 }
 
-handler.help = ['رسم <وصف>']
+handler.help = ['ارسم <وصف>']
 handler.tags = ['ai']
-handler.command = /^(رسم|رسم_خيار)$/i
+handler.command = /^(ارسم|ارسم_خيار)$/i
 export default handler
