@@ -212,8 +212,9 @@ serialize()
 
 const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR)
 const { version }          = await fetchLatestWaWebVersion().catch(() => ({ version: [2, 3000, 0] }))
-const msgRetryCounterCache = new NodeCache({ stdTTL: 0, checkperiod: 0 })
-const userDevicesCache     = new NodeCache({ stdTTL: 0, checkperiod: 0 })
+// ✅ كان stdTTL: 0 = مفيش حاجة بتتمسح أبداً (تسريب ذاكرة بيكبر مع الساعات). دلوقتي بتتمسح بعد 10 دقايق.
+const msgRetryCounterCache = new NodeCache({ stdTTL: 600, checkperiod: 120 })
+const userDevicesCache     = new NodeCache({ stdTTL: 600, checkperiod: 120 })
 
 const connectionOptions = {
   version,
@@ -317,6 +318,8 @@ function scheduleReconnect(ms = 5000) {
     }
   }, ms)
 }
+// ✅ متاحة لـ plugins/حارس_الاتصال.js (بيكشف الاتصال الميت ويعيد الاتصال)
+global.scheduleReconnect = scheduleReconnect
 
 global.reloadHandler = async function reloadHandler(restatConn = false) {
   if (!restatConn) {
