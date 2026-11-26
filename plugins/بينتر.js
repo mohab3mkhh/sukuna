@@ -19,6 +19,30 @@ function quick(text, id) {
   return { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: text, id }) };
 }
 
+const shuffle = (arr) => {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+};
+const MAX_RESULTS = 8;
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
+
+// ينزّل الفيديو ويتأكد إنه mp4 حقيقي (ده سبب "this video isn't available")
+async function downloadMp4(url) {
+  const res = await axios.get(url, {
+    responseType: 'arraybuffer',
+    timeout: 60000,
+    maxContentLength: 64 * 1024 * 1024,
+    headers: { 'User-Agent': UA, Referer: 'https://www.pinterest.com/' }
+  });
+  const buf = Buffer.from(res.data);
+  if (buf.length < 10000 || buf.toString('latin1', 4, 8) !== 'ftyp') throw new Error('not a valid mp4');
+  return buf;
+}
+
 const genId = () => Math.random().toString(36).slice(2, 10);
 
 function cleanUrl(u) {
@@ -39,9 +63,9 @@ async function searchPinImages(query) {
 
   if (pinterest?.search) {
     sources.push(async () => {
-      const response = await pinterest.search(query, 6);
+      const response = await pinterest.search(query, 30);
       return (response?.result?.pins || [])
-        .slice(0, 6)
+        .slice(0, 40)
         .map(pin => cleanUrl(pin?.media?.images?.orig?.url))
         .filter(Boolean);
     });
@@ -51,24 +75,24 @@ async function searchPinImages(query) {
     async () => {
       const res = await axios.get(`https://api.siputzx.my.id/api/s/pinterest?query=${encodeURIComponent(query)}`, { timeout: 15000 });
       const arr = Array.isArray(res?.data?.data) ? res.data.data : [];
-      return arr.slice(0, 6).map(r => cleanUrl(r?.images_url)).filter(Boolean);
+      return arr.slice(0, 40).map(r => cleanUrl(r?.images_url)).filter(Boolean);
     },
     async () => {
       const res = await axios.get(`https://api.dorratz.com/v2/pinterest?q=${encodeURIComponent(query)}`, { timeout: 15000 });
       const arr = Array.isArray(res?.data) ? res.data : [];
-      return arr.slice(0, 6).map(r => cleanUrl(r?.image)).filter(Boolean);
+      return arr.slice(0, 40).map(r => cleanUrl(r?.image)).filter(Boolean);
     },
     async () => {
       const res = await axios.get(`https://pinterest-api-one.vercel.app/?q=${encodeURIComponent(query)}`, { timeout: 15000 });
       const arr = Array.isArray(res?.data?.images) ? res.data.images : [];
-      return arr.slice(0, 6).map(cleanUrl).filter(Boolean);
+      return arr.slice(0, 40).map(cleanUrl).filter(Boolean);
     }
   );
 
   for (const fn of sources) {
     try {
       const imgs = await fn();
-      if (imgs.length) return imgs;
+      if (imgs.length) return shuffle(imgs).slice(0, MAX_RESULTS);
     } catch (e) {
       console.error(`[بينتر:صور] ${e?.message || e}`);
     }
@@ -117,7 +141,7 @@ function fmtDuration(ms) {
 }
 
 async function pinterestDirectVideos(query) {
-  const data = { options: { query, scope: 'videos', page_size: 25, no_fetch_context_on_resource: false }, context: {} };
+  const data = { options: { query, scope: 'videos', page_size: 50, no_fetch_context_on_resource: false }, context: {} };
   const res = await axios.get('https://www.pinterest.com/resource/BaseSearchResource/get/', {
     params: { source_url: `/search/videos/?q=${query}`, data: JSON.stringify(data), _: Date.now() },
     headers: {
@@ -143,7 +167,7 @@ async function pinterestDirectVideos(query) {
       video_url,
       thumb: cleanUrl(pin?.images?.orig?.url || pin?.images?.['736x']?.url)
     });
-    if (out.length >= 8) break;
+    if (out.length >= 40) break;
   }
   return out;
 }
@@ -163,7 +187,7 @@ async function searchPinVideos(query) {
           thumb: cleanUrl(pin?.media?.images?.orig?.url)
         }))
         .filter(v => v.video_url)
-        .slice(0, 8);
+        .slice(0, 40);
     },
     async () => {
       const res = await axios.get(
@@ -180,11 +204,12 @@ async function searchPinVideos(query) {
           thumb: cleanUrl(vid?.thumbnail || vid?.image || vid?.cover)
         }))
         .filter(v => v.video_url)
-        .slice(0, 8);
+        .slice(0, 40);
     }
   ];
 
-  return firstNonEmpty(sources.map((fn, i) => [`مصدر${i + 1}`, fn]), 15000);
+  const vids = await firstNonEmpty(sources.map((fn, i) => [`مصدر${i + 1}`, fn]), 15000);
+  return shuffle(vids).slice(0, MAX_RESULTS);
 }
 
 // ━━━ عرض قائمة الصور ━━━
@@ -294,10 +319,18 @@ let before = async function (m, { conn }) {
 
     if (data.type === 'send_video') {
       await m.react('🎬');
+      let videoBuf;
+      try {
+        videoBuf = await downloadMp4(data.url);
+      } catch (e) {
+        console.error('[بينتر:تحميل]', e?.message || e);
+        await m.react('❌');
+        await m.reply('❌ الفيديو ده مش متاح، اختار فيديو تاني من القائمة.');
+        return true;
+      }
       await conn.sendMessage(m.chat, {
-        video: { url: data.url },
+        video: videoBuf,
         mimetype: 'video/mp4',
-        gifPlayback: false,
         caption: `🎬 *${String(data.title).slice(0, 80)}*\n\n> ⛩️ SUKUNA BOT`
       }, { quoted: m });
       await m.react('✅');
