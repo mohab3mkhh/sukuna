@@ -1,7 +1,7 @@
 /**
  * plugins/يوتيوب.js
  * يوتيوب بحث وتحميل
- * v2: إصلاح الفيديو قبل الإرسال (المدة 0 / التقديم / الحفظ) عن طريق lib/videofix.js
+ * v2: إصلاح الفيديو قبل الإرسال (المدة 0 / التقديم / الحفظ) — الإصلاح جوه الملف نفسه (مفيش ملفات تانية)
  */
 
 import axios from 'axios'
@@ -9,14 +9,46 @@ import fetch from 'node-fetch'
 import fs from 'fs'
 import path from 'path'
 import os from 'os'
+import { execFile } from 'child_process'
+import { promisify } from 'util'
 import { generateWAMessageContent } from '@whiskeysockets/baileys'
 
 // ✅ استخدام ملف الأزرار
 import { sendButtons, btn, getButtonId } from '../lib/buttons.js'
-// ✅ إصلاح ملف الفيديو (remux بدون إعادة ترميز)
-import { fixVideo } from '../lib/videofix.js'
 
 const TMP = os.tmpdir()
+const execFileP = promisify(execFile)
+
+/* ---------- إصلاح الفيديو (المدة 0 / التقديم / الحفظ) ----------
+   ملفات cnv.cx بتيجي MP4 "مقطّعة" والهيدر فيها مدة صفر. بنعمل remux بـ ffmpeg
+   من غير إعادة ترميز (سريع وبنفس الجودة). لو ffmpeg مش موجود الفيديو بيتبعت زي ما هو. */
+let _ffmpegBin
+async function getFfmpegBin() {
+    if (_ffmpegBin !== undefined) return _ffmpegBin
+    const cands = [fs.existsSync('/root/.nix-profile/bin/ffmpeg') ? '/root/.nix-profile/bin/ffmpeg' : null]
+    try { const mod = await import('@ffmpeg-installer/ffmpeg'); cands.push(mod.path || mod.default?.path) } catch {}
+    cands.push('ffmpeg')
+    for (const c of [...new Set(cands.filter(Boolean))]) {
+        try { await execFileP(c, ['-version'], { timeout: 15000 }); return (_ffmpegBin = c) } catch {}
+    }
+    console.log('[fixVideo] ffmpeg مش موجود — الفيديو هيتبعت زي ما هو')
+    return (_ffmpegBin = null)
+}
+
+async function fixVideoFile(inPath) {
+    const bin = await getFfmpegBin()
+    if (!bin) return { path: inPath, fixed: false }
+    const out = inPath.replace(/\.mp4$/i, '') + '_fx.mp4'
+    try {
+        await execFileP(bin, ['-y', '-v', 'error', '-i', inPath, '-map', '0:v:0', '-map', '0:a:0?', '-c', 'copy', '-movflags', '+faststart', '-f', 'mp4', out], { timeout: 120000 })
+        if (fs.statSync(out).size < 1000) throw new Error('الناتج فاضي')
+        return { path: out, fixed: true }
+    } catch (e) {
+        try { fs.unlinkSync(out) } catch {}
+        console.log('[fixVideo] فشل:', String(e.message).slice(0, 150))
+        return { path: inPath, fixed: false }
+    }
+}
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36'
 
 const HEADERS = {
@@ -360,7 +392,7 @@ async function handleQualitySelect(m, conn, data) {
             const outFile = path.join(TMP, `cnv_${Date.now()}.mp4`)
             fs.writeFileSync(outFile, buffer)
             // ✅ إصلاح الفيديو: المدة 0 / التقديم / الحفظ (remux بدون إعادة ترميز)
-            const fx = await fixVideo(outFile)
+            const fx = await fixVideoFile(outFile)
             try {
                 await conn.sendMessage(m.chat, {
                     video: { url: fx.path },
