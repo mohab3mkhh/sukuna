@@ -256,7 +256,7 @@ let handler = async (m, { conn, text, command }) => {
                             text: `📘 *Facebook: ${text}*`
                         }),
                         footer: proto.Message.InteractiveMessage.Footer.create({
-                            text: '✧ 2B'
+                            text: 'sukuna'
                         }),
                         header: proto.Message.InteractiveMessage.Header.create({
                             hasMediaAttachment: false
