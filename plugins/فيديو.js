@@ -1,12 +1,16 @@
 // plugins/ytvideo.js
 // ⛩️ تحميل فيديو يوتيوب (بالاسم أو الرابط)
 // المصادر بالترتيب: cnv.cx → yt-dlp (بدل bk9.fun اللي وقع)
+// v2: إصلاح الفيديو قبل الإرسال (المدة 0 / التقديم / الحفظ) — الإصلاح جوه الملف نفسه
 
 import axios from 'axios'
 import { execFile } from 'child_process'
+import { promisify } from 'util'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
+
+const execFileP = promisify(execFile)
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
 const MAX_MB = 60            // حد واتساب العملي للفيديو
@@ -28,6 +32,37 @@ const errLog = (...a) => console.error('[ytvideo:ERR]', ...a.map(x => String(x?.
 const isMp4 = buf => buf && buf.length > 12 && buf.subarray(4, 8).toString('latin1') === 'ftyp'
 
 const YT_ID_RE = /(?:youtu\.be\/|youtube\.com\/(?:watch\?(?:.*&)?v=|shorts\/|embed\/|live\/|v\/))([\w-]{11})/i
+
+/* ---------- إصلاح الفيديو (المدة 0 / التقديم / الحفظ) ----------
+   ملفات cnv.cx بتيجي MP4 "مقطّعة" والهيدر فيها مدة صفر، فواتساب بيعرض 0:00 ومبيسمحش بالتقديم أو الحفظ.
+   بنعمل remux بـ ffmpeg من غير إعادة ترميز (سريع وبنفس الجودة). لو ffmpeg مش موجود الفيديو بيتبعت زي ما هو. */
+let _ffmpegBin
+async function getFfmpegBin() {
+    if (_ffmpegBin !== undefined) return _ffmpegBin
+    const cands = [FFMPEG]
+    try { const mod = await import('@ffmpeg-installer/ffmpeg'); cands.push(mod.path || mod.default?.path) } catch {}
+    cands.push('ffmpeg')
+    for (const c of [...new Set(cands.filter(Boolean))]) {
+        try { await execFileP(c, ['-version'], { timeout: 15000 }); return (_ffmpegBin = c) } catch {}
+    }
+    log('ffmpeg مش موجود — الفيديو هيتبعت زي ما هو')
+    return (_ffmpegBin = null)
+}
+
+async function fixVideoFile(inPath) {
+    const bin = await getFfmpegBin()
+    if (!bin) return { path: inPath, fixed: false }
+    const out = inPath.replace(/\.mp4$/i, '') + '_fx.mp4'
+    try {
+        await execFileP(bin, ['-y', '-v', 'error', '-i', inPath, '-map', '0:v:0', '-map', '0:a:0?', '-c', 'copy', '-movflags', '+faststart', '-f', 'mp4', out], { timeout: 120000 })
+        if (fs.statSync(out).size < 1000) throw new Error('الناتج فاضي')
+        return { path: out, fixed: true }
+    } catch (e) {
+        try { fs.unlinkSync(out) } catch {}
+        errLog('fixVideo:', e)
+        return { path: inPath, fixed: false }
+    }
+}
 
 /* ---------- بحث يوتيوب ---------- */
 async function searchYouTube(query) {
@@ -205,16 +240,25 @@ const handler = async (m, { conn, text, usedPrefix, command }) => {
         log('تحميل:', video.id, video.title)
         const buf = await downloadVideo(video.id)
 
-        await conn.sendMessage(
-            m.chat,
-            {
-                video: buf,
-                mimetype: 'video/mp4',
-                fileName: `${video.title}.mp4`.replace(/[\\/:*?"<>|]/g, ''),
-                caption: `🎬 *${video.title}*\n📥 تم تحميل الفيديو بنجاح.\n\n⛩️ SUKUNA BOT ⛩️`
-            },
-            { quoted: m }
-        )
+        // ✅ نكتبه على الديسك ونصلّحه (المدة/التقديم/الحفظ) وبعدين نبعته كملف
+        const tmp = path.join(os.tmpdir(), `ytvid_${Date.now()}_${Math.random().toString(36).slice(2, 6)}.mp4`)
+        fs.writeFileSync(tmp, buf)
+        const fx = await fixVideoFile(tmp)
+        try {
+            await conn.sendMessage(
+                m.chat,
+                {
+                    video: { url: fx.path },
+                    mimetype: 'video/mp4',
+                    fileName: `${video.title}.mp4`.replace(/[\\/:*?"<>|]/g, ''),
+                    caption: `🎬 *${video.title}*\n📥 تم تحميل الفيديو بنجاح.\n\n⛩️ SUKUNA BOT ⛩️`
+                },
+                { quoted: m }
+            )
+        } finally {
+            try { fs.unlinkSync(tmp) } catch {}
+            if (fx.fixed) { try { fs.unlinkSync(fx.path) } catch {} }
+        }
         await react('✅')
     } catch (err) {
         errLog(err)
