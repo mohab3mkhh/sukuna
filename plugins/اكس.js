@@ -1,14 +1,17 @@
-"use strict";
+// plugins/اكس.js — لعبة إكس أو التفاعلية (واجهة HTML)
+import fs from "fs";
+import path from "path";
+import { createRequire } from "module";
 
-const fs = require("fs");
-const path = require("path");
+// المكتبة المحمّلة ملف CommonJS (.cjs) فبنحمّلها بـ require عن طريق createRequire
+const require = createRequire(import.meta.url);
 
 // ═══════════════════════════════════════════════
-//             ✦ ITACHI BOT — X-O ✦
+//             ✦ SUKUNA BOT — X-O ✦
 // ═══════════════════════════════════════════════
 
-const BOT_NAME = "𝑰𝑻𝑨𝑪𝑯𝑰✯⃝⃕𝑩𝑶𝑻";
-const DEVELOPER = "✦ 𝑴𝑶𝑯𝑨𝑴𝑬𝑫 𝑻𝑨𝑹𝑬𝑲 ✦";
+const BOT_NAME = "⛩️ SUKUNA BOT ⛩️";
+const DEVELOPER = "MOHAB";
 
 const MB_PATH = path.join(process.cwd(), "System", "mbulider.cjs");
 const MB_URL = "https://cdn.nekohime.site/file/5aygcry5.javascript";
@@ -44,7 +47,7 @@ async function getAIRich() {
         fs.writeFileSync(MB_PATH, data, "utf8");
     }
 
-    delete require.cache[require.resolve(MB_PATH)];
+    try { delete require.cache[require.resolve(MB_PATH)]; } catch {}
 
     const mod = require(MB_PATH);
     const AIRich = mod.AIRich || mod.default || mod;
@@ -69,7 +72,7 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 
-<title>ITACHI BOT X-O</title>
+<title>SUKUNA BOT X-O</title>
 
 <style>
 *{
@@ -238,7 +241,7 @@ text-align:center
 
 <div class="bg">
 
-<div class="title">✦ ITACHI BOT X-O ⭕</div>
+<div class="title">✦ SUKUNA BOT X-O ⭕</div>
 
 <div class="subtitle">
 لعبة إكس أو • ضد الكمبيوتر أو مع صديق
@@ -283,11 +286,11 @@ text-align:center
 </button>
 
 <div class="footer">
-⚡ POWERED BY ITACHI BOT
+⚡ POWERED BY SUKUNA BOT
 </div>
 
 <div class="dev">
-👑 DEVELOPER: MOHAMED TAREK
+👑 DEVELOPER: MOHAB
 </div>
 
 </div>
@@ -628,7 +631,7 @@ padding:20px;
 text-align:center
 ">
 
-<h2>✦ ITACHI BOT X-O ⭕</h2>
+<h2>✦ SUKUNA BOT X-O ⭕</h2>
 
 <p style="margin:12px 0;line-height:1.9">
 
@@ -657,11 +660,11 @@ text-align:center
 </p>
 
 <p style="color:#aaa;font-size:12px;margin-top:20px">
-⚡ POWERED BY ITACHI BOT
+⚡ POWERED BY SUKUNA BOT
 </p>
 
 <p style="color:#aaa;font-size:12px">
-👑 DEVELOPER: MOHAMED TAREK
+👑 DEVELOPER: MOHAB
 </p>
 
 </body>
@@ -671,22 +674,7 @@ text-align:center
 //                     COMMAND
 // ═══════════════════════════════════════════════
 
-module.exports = {
-
-    command: "xo",
-
-    aliases: [
-        "اكس او",
-        "tictactoe",
-        "ttt",
-        "اكس-او"
-    ],
-
-    category: "games",
-
-    description: "لعبة إكس أو ضد الكمبيوتر أو لاعبين",
-
-    async execute(sock, m) {
+async function execute(sock, m) {
 
         const jid = getChat(m);
 
@@ -713,7 +701,7 @@ module.exports = {
 
             const payload = {
 
-                response_id: "itachi-bot-xo-2026",
+                response_id: "sukuna-bot-xo-2026",
 
                 sections: [
 
@@ -723,11 +711,11 @@ module.exports = {
                             primitive: {
 
                                 text:
-                                    "✦ ITACHI BOT X-O ⭕\n\n" +
+                                    "✦ SUKUNA BOT X-O ⭕\n\n" +
                                     "🎮 لعبة إكس أو تفاعلية\n" +
                                     "🤖 ضد الكمبيوتر أو 👥 لاعبين\n\n" +
-                                    "⚡ POWERED BY ITACHI BOT\n" +
-                                    "👑 DEVELOPER: MOHAMED TAREK",
+                                    "⚡ POWERED BY SUKUNA BOT\n" +
+                                    "👑 DEVELOPER: MOHAB",
 
                                 __typename:
                                     "GenAIMarkdownTextUXPrimitive"
@@ -746,7 +734,7 @@ module.exports = {
 
                     {
 
-                        title: "ITACHI X-O",
+                        title: "SUKUNA X-O",
 
                         content: [
 
@@ -912,7 +900,7 @@ module.exports = {
         } catch (err) {
 
             console.error(
-                "[ITACHI XO ERROR]",
+                "[SUKUNA XO ERROR]",
                 err
             );
 
@@ -921,18 +909,24 @@ module.exports = {
                 m,
 
                 [
-                    "╭━━━〔 ✦ ITACHI BOT X-O ✦ 〕━━━⬣",
+                    "╭━━━〔 ✦ SUKUNA BOT X-O ✦ 〕━━━⬣",
                     "┃",
                     "┃ ❌ تعذر تشغيل اللعبة.",
                     `┃ ⚠️ السبب: ${String(err?.message || err).slice(0, 180)}`,
                     "┃",
-                    "┃ ⚡ POWERED BY ITACHI",
+                    "┃ ⚡ POWERED BY SUKUNA BOT",
                     "╰━━━━━━━━━━━━━━━━⬣"
                 ].join("\n")
             );
 
         }
 
-    }
+}
 
-};
+const handler = async (m, { conn }) => execute(conn, m);
+
+handler.command = /^(xo|اكس|اكس_او|اكس-او|tictactoe|ttt)$/i;
+handler.help = ["xo"];
+handler.tags = ["game"];
+
+export default handler;
