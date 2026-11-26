@@ -1,0 +1,527 @@
+// plugins/صورة.js — بحث صور من 4 منصات
+// .صورة كريستيانو  ← قائمة المنصات ← تختار ← كاروسيل صور من المنصة دي
+// المنصات: Pinterest ✅ مستقرة | TikTok ✅ | Instagram ⚠️ محتاجة IG_COOKIES | Facebook ⚠️ تجريبية
+
+import axios from 'axios'
+import https from 'https'
+import zlib from 'zlib'
+import fs from 'fs'
+import path from 'path'
+import * as _baileys from '@whiskeysockets/baileys'
+import { sendButtons, btn } from '../lib/buttons.js'
+
+const B = _baileys.generateWAMessageFromContent ? _baileys : (_baileys.default || _baileys)
+const { proto, generateWAMessageFromContent, generateWAMessageContent } = B
+
+const PREFIX      = 'imgs:'
+const PER_BATCH   = 6          // عدد الصور في كل دفعة (كاروسيل)
+const POOL_SIZE   = 40         // عدد الروابط اللي بنجمعها من المنصة
+const CONCURRENCY = 3
+const TTL         = 30 * 60 * 1000
+const FOOTER      = '⛩️ SUKUNA BOT ⛩️'
+
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
+const IG_UA = 'Instagram 275.0.0.27.98 Android (33/13; 420dpi; 1080x2400; samsung; SM-G991B; o1s; exynos2100; en_US; 458229237)'
+const IG_APP_ID = '936619743392459'
+const TIK_KEY = (process.env.TIKWMAPI_KEY || '').trim()
+
+// ───────────── أدوات ─────────────
+const sleep = (ms) => new Promise(r => setTimeout(r, ms))
+
+const shuffle = (arr) => {
+    const a = [...arr]
+    for (let i = a.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [a[i], a[j]] = [a[j], a[i]]
+    }
+    return a
+}
+
+const uniq = (arr) => [...new Set(arr.filter(Boolean))]
+
+const cleanUrl = (u) => (typeof u === 'string' && /^https?:\/\//i.test(u.trim()) ? u.trim() : '')
+
+// يشغّل المصادر مع بعض بمهلة لكل مصدر، ويجمع نتايجها
+async function collect(sources, ms, tag, errs) {
+    const settled = await Promise.all(sources.map(([name, fn]) =>
+        Promise.race([
+            Promise.resolve().then(fn),
+            new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms))
+        ]).catch(e => {
+            const msg = `${name}: ${String(e?.message || e).slice(0, 80)}`
+            console.error(`[صورة:${tag}] ❌ ${msg}`)
+            errs.push(msg)
+            return []
+        })
+    ))
+    return settled.flat()
+}
+
+const TR_CACHE = new Map()
+async function translateToEn(text) {
+    if (!/[\u0600-\u06FF]/.test(text)) return null
+    if (TR_CACHE.has(text)) return TR_CACHE.get(text)
+    let out = null
+    try {
+        const mod = await import('@vitalets/google-translate-api')
+        const tr = mod.translate || mod.default
+        const r = await Promise.race([tr(text, { to: 'en' }), sleep(8000).then(() => { throw new Error('timeout') })])
+        out = String(r?.text || '').trim() || null
+    } catch (e) {
+        console.error('[صورة:ترجمة]', e?.message || e)
+    }
+    TR_CACHE.set(text, out)
+    return out
+}
+
+// ───────────── Pinterest ─────────────
+async function pinterestDirect(query) {
+    const data = { options: { query, scope: 'pins', page_size: 50, no_fetch_context_on_resource: false }, context: {} }
+    const res = await axios.get('https://www.pinterest.com/resource/BaseSearchResource/get/', {
+        params: { source_url: `/search/pins/?q=${encodeURIComponent(query)}`, data: JSON.stringify(data), _: Date.now() },
+        headers: {
+            'User-Agent': UA,
+            Accept: 'application/json, text/javascript, */*, q=0.01',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'X-Requested-With': 'XMLHttpRequest',
+            'X-Pinterest-AppState': 'active',
+            'X-Pinterest-PWS-Handler': 'www/search/[scope].js'
+        },
+        timeout: 20000
+    })
+    const results = res?.data?.resource_response?.data?.results || []
+    return results.map(p => cleanUrl(p?.images?.orig?.url || p?.images?.['736x']?.url)).filter(Boolean)
+}
+
+async function pinterestImages(entry, errs) {
+    const sources = []
+    for (const q of entry.queries) {
+        sources.push(
+            [`direct(${q.slice(0, 10)})`, () => pinterestDirect(q)],
+            [`siputzx(${q.slice(0, 10)})`, async () => {
+                const r = await axios.get(`https://api.siputzx.my.id/api/s/pinterest?query=${encodeURIComponent(q)}`, { timeout: 15000 })
+                return (Array.isArray(r?.data?.data) ? r.data.data : []).map(x => cleanUrl(x?.images_url))
+            }],
+            [`dorratz(${q.slice(0, 10)})`, async () => {
+                const r = await axios.get(`https://api.dorratz.com/v2/pinterest?q=${encodeURIComponent(q)}`, { timeout: 15000 })
+                return (Array.isArray(r?.data) ? r.data : []).map(x => cleanUrl(x?.image))
+            }]
+        )
+    }
+    return shuffle(uniq(await collect(sources, 15000, 'pin', errs))).slice(0, POOL_SIZE)
+}
+
+// ───────────── TikTok ─────────────
+async function tikSearch(keywords) {
+    const params = new URLSearchParams({ keywords, count: 30, cursor: 0 })
+    if (TIK_KEY) {
+        try {
+            const r = await fetch(`https://api.tikwmapi.com/feed/search?${params}`, {
+                headers: { 'x-tikwmapi-key': TIK_KEY, 'User-Agent': UA },
+                signal: AbortSignal.timeout(20000)
+            })
+            if (r.ok) {
+                const j = await r.json()
+                if (j?.code === undefined || j.code === 0) return j?.data?.videos || []
+            }
+        } catch {}
+    }
+    const r = await fetch(`https://www.tikwm.com/api/feed/search?${params}`, {
+        headers: { 'User-Agent': UA },
+        signal: AbortSignal.timeout(25000)
+    })
+    if (!r.ok) throw new Error('HTTP ' + r.status)
+    const j = await r.json()
+    if (j?.code !== undefined && j.code !== 0) throw new Error(j?.msg || 'failed')
+    return j?.data?.videos || []
+}
+
+async function tiktokImages(entry, errs) {
+    const sources = entry.queries.map(q => [`tiktok(${q.slice(0, 10)})`, async () => {
+        const videos = await tikSearch(q)
+        const photos = []   // منشورات صور (سلايدشو)
+        const covers = []   // أغلفة الفيديوهات
+        for (const v of videos) {
+            if (Array.isArray(v?.images)) photos.push(...v.images.map(cleanUrl))
+            covers.push(cleanUrl(v?.origin_cover || v?.cover || v?.ai_dynamic_cover))
+        }
+        return [...photos, ...covers]
+    }])
+    const all = uniq(await collect(sources, 25000, 'tik', errs))
+    return all.slice(0, POOL_SIZE)
+}
+
+// ───────────── Instagram (بالكوكيز) ─────────────
+function igCookie() {
+    const raw = (process.env.IG_COOKIES || '').trim()
+    if (raw.includes('sessionid=')) return raw
+    const local = path.join(process.cwd(), 'ig_cookies.txt')
+    const src = raw && raw.includes('\t') ? raw : (fs.existsSync(local) ? fs.readFileSync(local, 'utf8') : '')
+    if (!src) return ''
+    const pairs = []
+    for (const line of src.split('\n')) {
+        const l = line.replace(/^#HttpOnly_/, '').trim()
+        if (!l || l.startsWith('#')) continue
+        const p = l.split('\t')
+        if (p.length >= 7 && /instagram\.com$/i.test(p[0].replace(/^\./, ''))) pairs.push(`${p[5]}=${p[6]}`)
+    }
+    return pairs.join('; ')
+}
+
+async function igGet(url, cookie) {
+    try {
+        return await axios.get(url, {
+            headers: {
+                'User-Agent': IG_UA,
+                'X-IG-App-ID': IG_APP_ID,
+                'X-CSRFToken': /csrftoken=([^;]+)/.exec(cookie)?.[1] || '',
+                'X-Requested-With': 'XMLHttpRequest',
+                Cookie: cookie,
+                Accept: '*/*'
+            },
+            timeout: 20000
+        })
+    } catch (e) {
+        const s = e.response?.status
+        if (s === 401 || s === 403 || s === 400) throw new Error(`HTTP ${s} — الكوكيز منتهية أو الحساب متقيّد`)
+        throw e
+    }
+}
+
+async function instagramImages(entry) {
+    const cookie = igCookie()
+    if (!cookie) throw new Error('محتاج IG_COOKIES في إعدادات السيرفر')
+
+    // نفضّل الاسم اللاتيني (الإنجليزي بعد الترجمة)
+    const latin = entry.queries.find(q => /^[\x00-\x7F]+$/.test(q)) || entry.queries[0]
+    let username = /^@[\w.]{2,30}$/.test(latin) ? latin.slice(1) : null
+
+    if (!username) {
+        const s = await igGet(`https://www.instagram.com/web/search/topsearch/?context=blended&query=${encodeURIComponent(latin)}&include_reel=false`, cookie)
+        const users = s.data?.users || []
+        const pick = users.find(u => u?.user?.is_verified) || users[0]
+        username = pick?.user?.username
+        if (!username) throw new Error('ما لقيتش حساب مناسب')
+    }
+
+    const p = await igGet(`https://i.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`, cookie)
+    const user = p.data?.data?.user
+    if (!user) throw new Error('رد فاضي من إنستجرام')
+    if (user.is_private && !user.followed_by_viewer) throw new Error(`حساب ${username} خاص`)
+
+    const urls = [cleanUrl(user.profile_pic_url_hd)]
+    for (const edge of user.edge_owner_to_timeline_media?.edges || []) {
+        const n = edge?.node
+        if (!n) continue
+        const children = n.edge_sidecar_to_children?.edges
+        if (children?.length) children.forEach(c => urls.push(cleanUrl(c?.node?.display_url)))
+        else urls.push(cleanUrl(n.display_url))
+    }
+    const out = uniq(urls)
+    if (!out.length) throw new Error('الحساب مفيهوش صور ظاهرة')
+    entry.igUser = username
+    return out.slice(0, POOL_SIZE)
+}
+
+// ───────────── Facebook (تجريبي) ─────────────
+const CHROME_CIPHERS = [
+    'TLS_AES_128_GCM_SHA256', 'TLS_AES_256_GCM_SHA384', 'TLS_CHACHA20_POLY1305_SHA256',
+    'ECDHE-ECDSA-AES128-GCM-SHA256', 'ECDHE-RSA-AES128-GCM-SHA256', 'ECDHE-ECDSA-AES256-GCM-SHA384',
+    'ECDHE-RSA-AES256-GCM-SHA384', 'ECDHE-ECDSA-CHACHA20-POLY1305', 'ECDHE-RSA-CHACHA20-POLY1305',
+    'ECDHE-RSA-AES128-SHA', 'ECDHE-RSA-AES256-SHA', 'AES128-GCM-SHA256', 'AES256-GCM-SHA384', 'AES128-SHA', 'AES256-SHA'
+].join(':')
+
+function fbRequest(url, maxRedirects = 5) {
+    return new Promise((resolve, reject) => {
+        const u = new URL(url)
+        const req = https.request({
+            hostname: u.hostname,
+            path: u.pathname + u.search,
+            method: 'GET',
+            headers: {
+                'User-Agent': UA,
+                Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Accept-Encoding': 'gzip, deflate',
+                'Sec-Fetch-Dest': 'document',
+                'Sec-Fetch-Mode': 'navigate',
+                'Sec-Fetch-Site': 'none',
+                'Upgrade-Insecure-Requests': '1'
+            },
+            timeout: 30000,
+            ciphers: CHROME_CIPHERS,
+            minVersion: 'TLSv1.2',
+            maxVersion: 'TLSv1.3'
+        }, async res => {
+            if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location && maxRedirects > 0) {
+                res.resume()
+                const next = res.headers.location.startsWith('http') ? res.headers.location : new URL(res.headers.location, url).href
+                try { return resolve(await fbRequest(next, maxRedirects - 1)) } catch (e) { return reject(e) }
+            }
+            const chunks = []
+            res.on('data', c => chunks.push(c))
+            res.on('end', () => {
+                let buf = Buffer.concat(chunks)
+                try {
+                    const enc = res.headers['content-encoding'] || ''
+                    if (enc.includes('gzip')) buf = zlib.gunzipSync(buf)
+                    else if (enc.includes('deflate')) buf = zlib.inflateSync(buf)
+                    else if (enc.includes('br')) buf = zlib.brotliDecompressSync(buf)
+                } catch {}
+                resolve({ status: res.statusCode, text: buf.toString('utf-8') })
+            })
+        })
+        req.on('error', reject)
+        req.on('timeout', () => { req.destroy(); reject(new Error('Timeout')) })
+        req.end()
+    })
+}
+
+const fbDecode = (s) => s.replace(/\\\//g, '/').replace(/\\u0025/g, '%').replace(/\\u0026/g, '&')
+
+async function facebookImages(entry) {
+    const q = entry.queries[0]
+    const r = await fbRequest(`https://www.facebook.com/watch/search/?q=${encodeURIComponent(q)}`)
+    if (r.status !== 200 || r.text.length < 1000) throw new Error('فيسبوك رفض البحث')
+
+    const urls = []
+    for (const m of r.text.matchAll(/"(?:uri|src|thumbnail_uri)":"(https:\\\/\\\/[^"]+)"/g)) {
+        const u = fbDecode(m[1])
+        if (/(scontent|fbcdn)/.test(u) && /\.(jpe?g|png|webp)/i.test(u) && !/emoji|rsrc|static/i.test(u)) urls.push(u)
+    }
+    // نفس الصورة بمقاسات مختلفة: نكتفي بواحدة لكل مسار
+    const seen = new Set()
+    const out = urls.filter(u => {
+        const k = u.split('?')[0]
+        if (seen.has(k)) return false
+        seen.add(k)
+        return true
+    })
+    if (!out.length) throw new Error('فيسبوك مش بيدّي صور بحث للزوار من غير تسجيل دخول')
+    return out.slice(0, POOL_SIZE)
+}
+
+// ───────────── المنصات ─────────────
+const PLATFORMS = {
+    pin: { name: 'Pinterest', emoji: '📌', desc: 'صور عالية الجودة (الأفضل)', referer: 'https://www.pinterest.com/', run: pinterestImages },
+    tik: { name: 'TikTok', emoji: '🎵', desc: 'صور وأغلفة فيديوهات تيك توك', referer: 'https://www.tiktok.com/', run: tiktokImages },
+    ig:  { name: 'Instagram', emoji: '📸', desc: 'صور من حساب الشخصية (محتاج كوكيز)', referer: 'https://www.instagram.com/', run: instagramImages },
+    fb:  { name: 'Facebook', emoji: '📘', desc: 'تجريبي، ممكن مايرجعش نتايج', referer: 'https://www.facebook.com/', run: facebookImages }
+}
+
+// ───────────── تحميل الصور وبناء الكاروسيل ─────────────
+function sniffImage(buf) {
+    if (buf[0] === 0xFF && buf[1] === 0xD8) return true
+    if (buf[0] === 0x89 && buf.subarray(1, 4).toString() === 'PNG') return true
+    if (buf.subarray(0, 4).toString() === 'RIFF' && buf.subarray(8, 12).toString() === 'WEBP') return true
+    if (buf.subarray(0, 4).toString() === 'GIF8') return true
+    return false
+}
+
+async function downloadImage(url, referer) {
+    const res = await axios.get(url, {
+        responseType: 'arraybuffer',
+        timeout: 30000,
+        maxContentLength: 15 * 1024 * 1024,
+        headers: { 'User-Agent': UA, Referer: referer, Accept: 'image/*,*/*' }
+    })
+    const buf = Buffer.from(res.data)
+    if (buf.length < 3000) throw new Error('صورة صغيرة جدًا')
+    if (!sniffImage(buf)) throw new Error('مش صورة سليمة')
+    return buf
+}
+
+// pool.pos مشترك بين العمّال عشان كل صورة تتاخد مرة واحدة
+async function buildCards(pool, platform, conn) {
+    const items = []
+    const workers = Array.from({ length: CONCURRENCY }, async () => {
+        while (items.length < PER_BATCH) {
+            const i = pool.pos++
+            if (i >= pool.urls.length) break
+            try {
+                const buffer = await downloadImage(pool.urls[i], platform.referer)
+                const media = await generateWAMessageContent({ image: buffer }, { upload: conn.waUploadToServer })
+                if (items.length < PER_BATCH) items.push({ buffer, url: pool.urls[i], imageMessage: media.imageMessage })
+            } catch (e) {
+                console.error(`[صورة:${platform.name}] صورة فشلت: ${String(e?.message || e).slice(0, 80)}`)
+            }
+        }
+    })
+    await Promise.all(workers)
+    return items
+}
+
+// ───────────── كاش ─────────────
+const CACHE = new Map()
+
+function putCache(query, queries) {
+    const now = Date.now()
+    for (const [k, v] of CACHE) if (now - v.at > TTL) CACHE.delete(k)
+    if (CACHE.size >= 100) CACHE.delete(CACHE.keys().next().value)
+    const token = Math.random().toString(36).slice(2, 7)
+    CACHE.set(token, { query, queries, pools: {}, busy: new Set(), at: now })
+    return token
+}
+
+// ───────────── القائمة ─────────────
+async function sendMenu(conn, m, entry, token) {
+    const rows = Object.entries(PLATFORMS).map(([key, p]) => ({
+        title: `${p.emoji} ${p.name}`,
+        description: p.desc,
+        id: `${PREFIX}${token}:${key}`
+    }))
+
+    await sendButtons(conn, m.chat, {
+        title: '🖼️ بحث الصور',
+        text: `🔍 *البحث عن:* ${entry.query}\n\nاختر المنصة اللي عايز الصور منها 👇`,
+        footer: FOOTER,
+        buttons: [btn.list('📲 اختر المنصة', [{ title: 'المنصات', rows }])]
+    }, m)
+}
+
+// ───────────── جلب وإرسال دفعة ─────────────
+async function sendBatch(conn, m, entry, token, key) {
+    const platform = PLATFORMS[key]
+    const lockKey = key
+    if (entry.busy.has(lockKey)) {
+        await conn.sendMessage(m.chat, { react: { text: '⏳', key: m.key } }).catch(() => {})
+        return
+    }
+    entry.busy.add(lockKey)
+
+    try {
+        await m.react('⏳')
+
+        // أول مرة: نجمع الروابط من المنصة
+        if (!entry.pools[key]) {
+            const errs = []
+            const urls = await platform.run(entry, errs)
+            if (!urls?.length) {
+                const detail = errs.length ? `\n\n🔧 ${errs.slice(0, 4).join('\n🔧 ')}` : ''
+                throw new Error(`ما لقيتش صور على ${platform.name}${detail}`)
+            }
+            entry.pools[key] = { urls, pos: 0 }
+        }
+
+        const pool = entry.pools[key]
+        if (pool.pos >= pool.urls.length) {
+            await m.react('❌')
+            await sendButtons(conn, m.chat, {
+                text: `✅ خلصت كل نتايج *${platform.name}* لـ ${entry.query}`,
+                footer: FOOTER,
+                buttons: [btn.reply('🔀 منصة تانية', `${PREFIX}${token}:menu`)]
+            }, m)
+            return
+        }
+
+        const items = await buildCards(pool, platform, conn)
+        if (!items.length) throw new Error('كل الصور فشل تحميلها، جرّب منصة تانية')
+
+        const label = key === 'ig' && entry.igUser ? `@${entry.igUser}` : entry.query
+        const cards = items.map((it, i) => ({
+            body: proto.Message.InteractiveMessage.Body.fromObject({ text: `${platform.emoji} ${platform.name} | ${i + 1}/${items.length}` }),
+            footer: proto.Message.InteractiveMessage.Footer.fromObject({ text: FOOTER }),
+            header: proto.Message.InteractiveMessage.Header.fromObject({
+                title: String(label).slice(0, 40),
+                hasMediaAttachment: true,
+                imageMessage: it.imageMessage
+            }),
+            nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.fromObject({ buttons: [] })
+        }))
+
+        try {
+            const msg = generateWAMessageFromContent(m.chat, {
+                viewOnceMessage: {
+                    message: {
+                        messageContextInfo: { deviceListMetadata: {}, deviceListMetadataVersion: 2 },
+                        interactiveMessage: proto.Message.InteractiveMessage.fromObject({
+                            body: proto.Message.InteractiveMessage.Body.create({ text: `🖼️ *${platform.name}: ${label}*\n${cards.length} صورة` }),
+                            footer: proto.Message.InteractiveMessage.Footer.create({ text: FOOTER }),
+                            header: proto.Message.InteractiveMessage.Header.create({ hasMediaAttachment: false }),
+                            carouselMessage: proto.Message.InteractiveMessage.CarouselMessage.fromObject({ cards })
+                        })
+                    }
+                }
+            }, { quoted: m })
+            await conn.relayMessage(m.chat, msg.message, { messageId: msg.key.id })
+        } catch (e) {
+            console.error('[صورة] الكاروسيل فشل:', e?.message || e)
+            for (const it of items.slice(0, 4)) {
+                await conn.sendMessage(m.chat, { image: it.buffer, caption: `${platform.emoji} ${platform.name}` }, { quoted: m })
+            }
+        }
+
+        // أزرار المتابعة
+        const more = pool.pos < pool.urls.length
+        await sendButtons(conn, m.chat, {
+            text: more ? 'عايز تكمل؟' : `✅ دي كانت آخر نتايج *${platform.name}*`,
+            footer: FOOTER,
+            buttons: [
+                ...(more ? [btn.reply('🎲 صور تانية', `${PREFIX}${token}:${key}`)] : []),
+                btn.reply('🔀 منصة تانية', `${PREFIX}${token}:menu`)
+            ]
+        }, m)
+
+        await m.react('✅')
+    } catch (e) {
+        console.error(`[صورة:${platform.name}]`, e?.message || e)
+        await m.react('❌')
+        await m.reply(`❌ ${String(e?.message || e).slice(0, 500)}`)
+    } finally {
+        entry.busy.delete(lockKey)
+    }
+}
+
+// ───────────── الأمر ─────────────
+const handler = async (m, { conn, text, usedPrefix, command }) => {
+    const query = String(text || '').trim()
+    if (!query) {
+        return m.reply(`🖼️ *بحث الصور*\n\nاكتب اسم الشخص أو الموضوع:\n• ${usedPrefix}${command} كريستيانو\n• ${usedPrefix}${command} cristiano ronaldo\n\nبعدها هتختار المنصة من القائمة.`)
+    }
+    if (query.length > 80) return m.reply('❌ الاسم طويل، اختصره')
+
+    const en = await translateToEn(query)
+    const queries = uniq([query, en])
+    const token = putCache(query, queries)
+
+    try {
+        await sendMenu(conn, m, CACHE.get(token), token)
+    } catch (e) {
+        console.error('[صورة] menu failed:', e?.message || e)
+        const list = Object.values(PLATFORMS).map(p => `${p.emoji} ${p.name}`).join('\n')
+        await m.reply(`❌ ما قدرتش أعرض القائمة.\n${list}`)
+    }
+}
+
+// ───────────── اختيار المنصة / الأزرار ─────────────
+handler.before = async function (m, { conn } = {}) {
+    conn = conn || this
+    if (!m || typeof m.text !== 'string' || !m.chat || m.fromMe) return false
+
+    const t = m.text.trim()
+    if (!t.startsWith(PREFIX)) return false
+
+    const [, token, action] = t.split(':')
+    const entry = CACHE.get(token)
+    if (!entry || Date.now() - entry.at > TTL) {
+        await conn.sendMessage(m.chat, { text: '⌛ انتهت صلاحية البحث، اكتب .صورة واسم الشخص من جديد' }, { quoted: m })
+        return true
+    }
+
+    if (action === 'menu') {
+        await sendMenu(conn, m, entry, token)
+        return true
+    }
+
+    if (PLATFORMS[action]) {
+        await sendBatch(conn, m, entry, token, action)
+        return true
+    }
+    return true
+}
+
+handler.help = ['صورة <اسم>']
+handler.tags = ['tools']
+handler.command = /^(صورة|img)$/i
+
+export default handler
