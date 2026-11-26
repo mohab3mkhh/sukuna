@@ -1,7 +1,8 @@
 // plugins/ايديت.js
 // ⛩️ SUKUNA BOT - بحث ايديتات من (تيك توك / يوتيوب / فيسبوك / انستغرام)
-//   .ايديت سوكونا            → بيسألك تختار المنصة (رد برقم 1-4)
+//   .ايديت سوكونا            → بيسألك تختار المنصة بزراير (أو رد برقم 1-4)
 //   .ايديت تيك سوكونا        → مباشرة من تيك توك (تيك / يوتيوب / فيس / انستا)
+// البحث دايماً بكلمة "ايديت" و "edit" في الأول: "ايديت سوكونا" + "edit سوكونا"
 // النتيجة: كاروسيل فيديوهات (ولو فشل بيبعت أول 3 فيديوهات عادي)
 
 import axios from 'axios'
@@ -34,6 +35,8 @@ const COOKIES = '/app/cookies.txt'
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 const isMp4 = buf => buf && buf.length > 12 && buf.subarray(4, 8).toString('latin1') === 'ftyp'
 const log = (...a) => console.log('[ايديت]', ...a)
+// كلمة ايديت/edit دايماً في الأول (ولو المستخدم كتبها بنفسه منكررهاش)
+const queriesFor = name => /^(edit|ايديت|إيديت)(\s|$)/i.test(name) ? [name] : [`ايديت ${name}`, `edit ${name}`]
 const fmt = n => !n ? '0' : n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'K' : String(n)
 
 /* ===================== المنصات (للاختيار) ===================== */
@@ -83,7 +86,7 @@ async function fetchVideoBuf(url, headers = {}) {
 }
 
 async function searchTikTok(q) {
-    const variants = [`${q} edit`, `${q} ايديت`]
+    const variants = queriesFor(q)
     const all = []
     for (const keywords of variants) {
         try {
@@ -125,9 +128,17 @@ const CNV_HEADERS = { 'User-Agent': UA, Origin: 'https://iframe.y2meta-uk.com', 
 async function searchYouTube(q) {
     const mod = await import('yt-search')
     const yts = mod.default || mod
-    const res = await yts(`${q} edit`)
-    const vids = (res?.videos || []).filter(v => v.seconds > 0 && v.seconds <= 180).slice(0, 12)
-    return vids.map(v => ({
+    const seen = new Set()
+    const vids = []
+    for (const qq of queriesFor(q)) {
+        try {
+            const res = await yts(qq)
+            for (const v of res?.videos || []) {
+                if (v.seconds > 0 && v.seconds <= 180 && !seen.has(v.videoId)) { seen.add(v.videoId); vids.push(v) }
+            }
+        } catch (e) { log('youtube search:', e.message) }
+    }
+    return vids.slice(0, 14).map(v => ({
         title: v.title,
         author: v.author?.name || 'YouTube',
         stats: `👁️ ${fmt(v.views)}`,
@@ -265,15 +276,30 @@ function fbDownload(url) {
     })
 }
 
-async function searchFacebook(q) {
-    const r = await fbRequest(`https://www.facebook.com/watch/search/?q=${encodeURIComponent(`${q} edit`)}`)
+async function fbSearchOnce(query) {
+    const r = await fbRequest(`https://www.facebook.com/watch/search/?q=${encodeURIComponent(query)}`)
     if (r.status !== 200 || r.text.length < 1000) throw new Error('فيسبوك رفض البحث')
     const html = r.text
     const ids = [...new Set([...html.matchAll(/"video_id":"(\d+)"/g)].map(x => x[1]))]
     const titles = [...new Set([...html.matchAll(/"message":\{"text":"([^"]{5,150})"/g)]
         .map(x => x[1].replace(/\\n/g, ' ').replace(/\\"/g, '"').trim()))]
-    return ids.slice(0, 12).map((id, i) => ({
-        title: titles[i] || titles[0] || `Facebook Edit ${i + 1}`,
+    return ids.map((id, i) => ({ id, title: titles[i] || titles[0] || '' }))
+}
+
+async function searchFacebook(q) {
+    const seen = new Set()
+    const found = []
+    let lastErr
+    for (const qq of queriesFor(q)) {
+        try {
+            for (const v of await fbSearchOnce(qq)) {
+                if (!seen.has(v.id)) { seen.add(v.id); found.push(v) }
+            }
+        } catch (e) { lastErr = e; log('facebook search:', e.message) }
+    }
+    if (!found.length && lastErr) throw lastErr
+    return found.slice(0, 14).map(({ id, title }, i) => ({
+        title: title || `Facebook Edit ${i + 1}`,
         author: 'Facebook',
         stats: '',
         duration: 0,
@@ -283,23 +309,34 @@ async function searchFacebook(q) {
 
 /* ===================== انستغرام ===================== */
 async function searchInstagram(q) {
-    const query = `${q} edit`
     const js = await axios.get(`https://cse.google.com/cse.js?cx=${CSE_CX}`, { headers: { 'User-Agent': UA }, timeout: 20000 }).then(r => r.data)
     const token = js.match(/"cse_token":\s*"([^"]+)"/)?.[1]
     const cselibv = (js.match(/"cselibVersion":\s*"([^"]+)"/) || [])[1]
     if (!token) throw new Error('فشل جلب توكن البحث')
 
-    const url = `https://cse.google.com/cse/element/v1?rsz=filtered_cse&num=10&hl=en&source=gcsc&cselibv=${cselibv}&cx=${CSE_CX}&q=${encodeURIComponent(query)}&safe=off&cse_tok=${encodeURIComponent(token)}&filter=0&callback=cb&rurl=https%3A%2F%2Freelsfinder.satishyadav.com%2F`
-    const r = await axios.get(url, {
-        headers: { 'User-Agent': UA, Referer: 'https://reelsfinder.satishyadav.com/', Origin: 'https://reelsfinder.satishyadav.com' },
-        timeout: 25000, transformResponse: [d => d]
-    })
-    const t = String(r.data).replace(/^\/\*O_o\*\/\s*cb\(/, '').replace(/\);\s*$/, '')
-    const j = JSON.parse(t)
-    const items = (j.results || []).map(x => ({
-        title: (x.title || '').replace(/<[^>]+>/g, '').replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&#39;/g, "'").trim(),
-        url: x.url
-    })).filter(x => x.url && x.url.includes('instagram.com'))
+    const searchOnce = async (query) => {
+        const url = `https://cse.google.com/cse/element/v1?rsz=filtered_cse&num=10&hl=en&source=gcsc&cselibv=${cselibv}&cx=${CSE_CX}&q=${encodeURIComponent(query)}&safe=off&cse_tok=${encodeURIComponent(token)}&filter=0&callback=cb&rurl=https%3A%2F%2Freelsfinder.satishyadav.com%2F`
+        const r = await axios.get(url, {
+            headers: { 'User-Agent': UA, Referer: 'https://reelsfinder.satishyadav.com/', Origin: 'https://reelsfinder.satishyadav.com' },
+            timeout: 25000, transformResponse: [d => d]
+        })
+        const t = String(r.data).replace(/^\/\*O_o\*\/\s*cb\(/, '').replace(/\);\s*$/, '')
+        const j = JSON.parse(t)
+        return (j.results || []).map(x => ({
+            title: (x.title || '').replace(/<[^>]+>/g, '').replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&#39;/g, "'").trim(),
+            url: x.url
+        })).filter(x => x.url && x.url.includes('instagram.com'))
+    }
+
+    const seenU = new Set()
+    const items = []
+    for (const qq of queriesFor(q)) {
+        try {
+            for (const it of await searchOnce(qq)) {
+                if (!seenU.has(it.url)) { seenU.add(it.url); items.push(it) }
+            }
+        } catch (e) { log('instagram search:', e.message) }
+    }
 
     return items.map(it => ({
         title: it.title || 'Instagram Edit',
@@ -432,9 +469,47 @@ const handler = async (m, { conn, text, usedPrefix, command }) => {
 
     PENDING.set(keyOf(m), { name: input, exp: Date.now() + MENU_TTL })
     const menu = Object.values(PLATFORMS).map(p => `*${p.n}* - ${p.label}`).join('\n')
-    return conn.sendMessage(m.chat, {
-        text: `🎬 *ايديت ${input}*\n\nتحب تجيب الايديت منين؟ رد برقم:\n\n${menu}\n\n⏳ القائمة بتنتهي بعد دقيقتين`
-    }, { quoted: m })
+    const fallbackText = `🎬 *ايديت ${input}*\n\nتحب تجيب الايديت منين؟ رد برقم:\n\n${menu}\n\n⏳ القائمة بتنتهي بعد دقيقتين`
+
+    // زراير: كل زرار id = أمر مباشر (.ايديت <منصة> <الاسم>)
+    const buttons = Object.entries(PLATFORMS).map(([, p]) => ({
+        name: 'quick_reply',
+        buttonParamsJson: JSON.stringify({
+            display_text: p.label,
+            id: `${usedPrefix}${command} ${p.words[1]} ${input}`
+        })
+    }))
+
+    try {
+        const msg = generateWAMessageFromContent(m.chat, {
+            viewOnceMessage: {
+                message: {
+                    messageContextInfo: { deviceListMetadata: {}, deviceListMetadataVersion: 2 },
+                    interactiveMessage: proto.Message.InteractiveMessage.fromObject({
+                        body: proto.Message.InteractiveMessage.Body.create({ text: `🎬 *ايديت ${input}*\n\nتحب تجيب الايديت منين؟` }),
+                        footer: proto.Message.InteractiveMessage.Footer.create({ text: '⛩️ SUKUNA BOT ⛩️' }),
+                        header: proto.Message.InteractiveMessage.Header.create({ hasMediaAttachment: false }),
+                        nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.fromObject({ buttons })
+                    })
+                }
+            }
+        }, { quoted: m })
+
+        const isPrivate = String(m.chat).endsWith('@s.whatsapp.net')
+        await conn.relayMessage(m.chat, msg.message, {
+            messageId: msg.key.id,
+            ...(isPrivate ? {
+                additionalNodes: [{
+                    tag: 'biz', attrs: {},
+                    content: [{ tag: 'interactive', attrs: { type: 'native_flow', v: '1' },
+                        content: [{ tag: 'native_flow', attrs: { v: '9', name: 'mixed' } }] }]
+                }]
+            } : {})
+        })
+    } catch (e) {
+        console.error('[ايديت:buttons]', e?.message)
+        return conn.sendMessage(m.chat, { text: fallbackText }, { quoted: m })
+    }
 }
 
 // بيلقط رد المستخدم (1-4 أو اسم المنصة) بعد القائمة
