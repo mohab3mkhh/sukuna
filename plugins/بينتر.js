@@ -66,6 +66,23 @@ async function searchPinImages(query) {
   return [];
 }
 
+// يشغّل المصادر بالتوازي، يرجع أول نتيجة غير فاضية، وكل مصدر له مهلة صارمة
+function firstNonEmpty(fns, ms) {
+  return new Promise(resolve => {
+    let pending = fns.length;
+    if (!pending) return resolve([]);
+    for (const [name, fn] of fns) {
+      Promise.race([
+        Promise.resolve().then(fn),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms))
+      ])
+        .then(r => { if (Array.isArray(r) && r.length) resolve(r); })
+        .catch(e => console.error(`[بينتر:فيديو:${name}] ${e?.message || e}`))
+        .finally(() => { if (--pending === 0) resolve([]); });
+    }
+  });
+}
+
 // ━━━ جلب الفيديوهات: Pinterest مباشرة (scope=videos) + بدائل ━━━
 const MP4_KEYS = ['V_720P', 'V_EXP7', 'V_EXP6', 'V_EXP5', 'V_EXP4', 'V_EXP3', 'V_480P', 'V_360P'];
 
@@ -157,15 +174,7 @@ async function searchPinVideos(query) {
     }
   ];
 
-  for (const fn of sources) {
-    try {
-      const vids = await fn();
-      if (vids.length) return vids;
-    } catch (e) {
-      console.error(`[بينتر:فيديو] ${e?.message || e}`);
-    }
-  }
-  return [];
+  return firstNonEmpty(sources.map((fn, i) => [`مصدر${i + 1}`, fn]), 15000);
 }
 
 // ━━━ عرض قائمة الصور ━━━
@@ -217,7 +226,7 @@ async function sendVideoList(conn, m, query, videos) {
     subtitle: query,
     text: `🔍 *نتائج الفيديوهات لـ:* ${query}\n📊 *العدد:* ${videos.length}`,
     footer: '⛩️ SUKUNA BOT',
-    image: previewImg,
+    ...(previewImg ? { image: previewImg } : {}),
     buttons: [
       btn.list('🎬 اختر فيديو', [{ title: 'الفيديوهات', rows }]),
       btn.url('🔗 فتح في Pinterest', `https://www.pinterest.com/search/pins/?q=${encodeURIComponent(query)}`)
