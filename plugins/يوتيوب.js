@@ -1,6 +1,7 @@
 /**
  * plugins/يوتيوب.js
  * يوتيوب بحث وتحميل
+ * v2: إصلاح الفيديو قبل الإرسال (المدة 0 / التقديم / الحفظ) عن طريق lib/videofix.js
  */
 
 import axios from 'axios'
@@ -12,6 +13,8 @@ import { generateWAMessageContent } from '@whiskeysockets/baileys'
 
 // ✅ استخدام ملف الأزرار
 import { sendButtons, btn, getButtonId } from '../lib/buttons.js'
+// ✅ إصلاح ملف الفيديو (remux بدون إعادة ترميز)
+import { fixVideo } from '../lib/videofix.js'
 
 const TMP = os.tmpdir()
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36'
@@ -356,16 +359,21 @@ async function handleQualitySelect(m, conn, data) {
         if (isVideo) {
             const outFile = path.join(TMP, `cnv_${Date.now()}.mp4`)
             fs.writeFileSync(outFile, buffer)
+            // ✅ إصلاح الفيديو: المدة 0 / التقديم / الحفظ (remux بدون إعادة ترميز)
+            const fx = await fixVideo(outFile)
             try {
                 await conn.sendMessage(m.chat, {
-                    video: { url: outFile },
+                    video: { url: fx.path },
                     mimetype: 'video/mp4',
                     fileName: result.filename || `${data.title}.mp4`,
                     caption: `🎬 *${data.title.slice(0, 80)}*\n\n${emoji} *الجودة:* ${label}\n📦 *الحجم:* ${sizeStr}`
                 }, { quoted: m })
                 await conn.sendMessage(m.chat, { react: { text: '✅', key: m.key } })
             } finally {
-                setTimeout(() => { try { fs.unlinkSync(outFile) } catch {} }, 180000)
+                setTimeout(() => {
+                    try { fs.unlinkSync(outFile) } catch {}
+                    if (fx.fixed) { try { fs.unlinkSync(fx.path) } catch {} }
+                }, 180000)
             }
         } else {
             const outFile = path.join(TMP, `cnv_${Date.now()}.mp3`)
