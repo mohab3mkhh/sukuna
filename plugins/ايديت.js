@@ -13,6 +13,7 @@ import path from 'path'
 import https from 'https'
 import zlib from 'zlib'
 import * as _baileys from '@whiskeysockets/baileys'
+import { sendButtons, btn } from '../lib/buttons.js'
 
 const B = _baileys.generateWAMessageFromContent ? _baileys : (_baileys.default || _baileys)
 const { proto, generateWAMessageFromContent, generateWAMessageContent } = B
@@ -331,6 +332,16 @@ async function searchInstagram(q) {
 const SEARCHERS = { tiktok: searchTikTok, youtube: searchYouTube, facebook: searchFacebook, instagram: searchInstagram }
 
 /* ===================== بناء الكاروسيل ===================== */
+// نفس الـ biz node اللي في lib/buttons.js (ضروري عشان الأزرار تظهر)
+function bizNodes(jid) {
+    const biz = {
+        tag: 'biz', attrs: {},
+        content: [{ tag: 'interactive', attrs: { type: 'native_flow', v: '1' },
+            content: [{ tag: 'native_flow', attrs: { v: '9', name: 'mixed' } }] }]
+    }
+    return String(jid).endsWith('@g.us') ? [biz] : [biz, { tag: 'bot', attrs: { biz_bot: '1' } }]
+}
+
 async function makeCard(item, conn) {
     const buffer = await item.getBuffer()
     if (!buffer || buffer.length > MAX_CARD_MB * 1024 * 1024) throw new Error('الفيديو كبير')
@@ -341,14 +352,8 @@ async function makeCard(item, conn) {
     // 🔘 زراير الكرت
     const buttons = []
     if (item.link) {
-        buttons.push({
-            name: 'cta_url',
-            buttonParamsJson: JSON.stringify({ display_text: '🔗 فتح الفيديو', url: item.link, merchant_url: item.link })
-        })
-        buttons.push({
-            name: 'cta_copy',
-            buttonParamsJson: JSON.stringify({ display_text: '📋 نسخ الرابط', copy_code: item.link })
-        })
+        buttons.push(btn.url('🔗 فتح الفيديو', item.link))
+        buttons.push(btn.copy('📋 نسخ الرابط', item.link))
     }
 
     return {
@@ -413,7 +418,7 @@ async function runSearch(m, conn, platform, name) {
                     }
                 }
             }, { quoted: m })
-            await conn.relayMessage(chat, msg.message, { messageId: msg.key.id })
+            await conn.relayMessage(chat, msg.message, { messageId: msg.key.id, additionalNodes: bizNodes(chat) })
         } catch (err) {
             log('الكاروسيل فشل:', err?.message)
             for (const b of built.slice(0, 3)) {
@@ -455,25 +460,11 @@ const handler = async (m, { conn, text, usedPrefix, command }) => {
 
     // 🔘 زراير اختيار المنصة (الضغط بيرجع الرقم 1-4 وبيلقطه handler.before)
     try {
-        const msg = generateWAMessageFromContent(m.chat, {
-            viewOnceMessage: {
-                message: {
-                    messageContextInfo: { deviceListMetadata: {}, deviceListMetadataVersion: 2 },
-                    interactiveMessage: proto.Message.InteractiveMessage.fromObject({
-                        body: { text: bodyText },
-                        footer: { text: '⛩️ SUKUNA BOT ⛩️' },
-                        header: { hasMediaAttachment: false },
-                        nativeFlowMessage: {
-                            buttons: Object.values(PLATFORMS).map(p => ({
-                                name: 'quick_reply',
-                                buttonParamsJson: JSON.stringify({ display_text: p.label, id: String(p.n) })
-                            }))
-                        }
-                    })
-                }
-            }
-        }, { quoted: m })
-        return await conn.relayMessage(m.chat, msg.message, { messageId: msg.key.id })
+        return await sendButtons(conn, m.chat, {
+            text: bodyText,
+            footer: '⛩️ SUKUNA BOT ⛩️',
+            buttons: Object.values(PLATFORMS).map(p => btn.reply(p.label, String(p.n)))
+        }, m)
     } catch (e) {
         log('زراير القائمة فشلت:', e?.message)
         return conn.sendMessage(m.chat, { text: bodyText }, { quoted: m })
