@@ -9,6 +9,16 @@ import { sendButtons, btn, getButtonId } from '../lib/buttons.js';
 const PREFIX = 'pinv2_';
 if (!global.pinCache) global.pinCache = new Map();
 
+// يدوّر على دالة زرار الرد السريع بأي اسم في lib/buttons.js، ولو مفيش يبني الزرار بنفسه
+function quick(text, id) {
+  const name = ['quickReply', 'quick_reply', 'reply', 'quick', 'button', 'cta_reply']
+    .find(k => typeof btn?.[k] === 'function')
+    || Object.keys(btn || {}).find(k => /quick|reply/i.test(k) && typeof btn[k] === 'function');
+  if (name) return btn[name](text, id);
+  console.error('[بينتر] btn keys:', Object.keys(btn || {}));
+  return { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: text, id }) };
+}
+
 const genId = () => Math.random().toString(36).slice(2, 10);
 
 function cleanUrl(u) {
@@ -323,8 +333,8 @@ let handler = async (m, { conn, usedPrefix, command, text }) => {
     text: `🔍 *البحث عن:* ${query}\n\nاختر النوع الذي تريد جلبه:`,
     footer: '⛩️ SUKUNA BOT',
     buttons: [
-      btn.quickReply('📸 صورة', `${PREFIX}${imgId}`),
-      btn.quickReply('🎬 فيديو', `${PREFIX}${vidId}`)
+      quick('📸 صورة', `${PREFIX}${imgId}`),
+      quick('🎬 فيديو', `${PREFIX}${vidId}`)
     ]
   }, m);
 
