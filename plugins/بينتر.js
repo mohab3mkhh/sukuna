@@ -59,13 +59,14 @@ function cleanUrl(u) {
 }
 
 // يشغّل كل المصادر مع بعض (لكل مصدر مهلة صارمة) ويجمع نتايجها كلها
-async function collect(fns, ms, tag) {
+async function collect(fns, ms, tag, errs = []) {
   const settled = await Promise.all(fns.map(([name, fn]) =>
     Promise.race([
       Promise.resolve().then(fn),
       new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms))
     ]).catch(e => {
       console.error(`[بينتر:${tag}:${name}] ${e?.message || e}`);
+      errs.push(`${name}: ${String(e?.message || e).slice(0, 60)}`);
       return [];
     })
   ));
@@ -155,51 +156,124 @@ function fmtDuration(ms) {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const TR_CACHE = new Map();
+
+// ترجمة الاسم العربي للإنجليزي (بيستخدم نفس مكتبة أمر التيك توك) — لو فشلت بنكمل بالأصلي
+async function translateToEn(text) {
+  if (!/[\u0600-\u06FF]/.test(text)) return null;
+  if (TR_CACHE.has(text)) return TR_CACHE.get(text);
+  let out = null;
+  try {
+    const mod = await import('@vitalets/google-translate-api');
+    const tr = mod.translate || mod.default;
+    const r = await Promise.race([tr(text, { to: 'en' }), sleep(8000).then(() => { throw new Error('timeout'); })]);
+    out = String(r?.text || '').trim() || null;
+  } catch (e) {
+    console.error('[بينتر:ترجمة]', e?.message || e);
+  }
+  TR_CACHE.set(text, out);
+  return out;
+}
+
+// بديل أخير: فيديوهات تيك توك (نفس مفتاح وطريقة أمر البحث عندك)
+const TIK_KEY = process.env.TIKWMAPI_KEY || '34ce144ad4984df4fbbc79480a131395';
+async function tiktokSearch(keywords) {
+  let j;
+  try {
+    const r = await fetch(`https://api.tikwmapi.com/feed/search?${new URLSearchParams({ keywords, count: 20, cursor: 0 })}`, {
+      headers: { 'x-tikwmapi-key': TIK_KEY, 'User-Agent': UA },
+      signal: AbortSignal.timeout(20000)
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    j = await r.json();
+    if (j?.code !== undefined && j.code !== 0) throw new Error(j?.msg || 'failed');
+  } catch {
+    const r = await fetch(`https://www.tikwm.com/api/feed/search?${new URLSearchParams({ keywords, count: 20, cursor: 0 })}`, {
+      headers: { 'User-Agent': UA },
+      signal: AbortSignal.timeout(20000)
+    });
+    j = await r.json();
+  }
+  return (j?.data?.videos || [])
+    .map(v => ({
+      title: v.title || v.desc || 'TikTok Video',
+      duration: v.duration ? `${v.duration}s` : '',
+      video_url: cleanUrl(v.hdplay || v.play),
+      from: 'tiktok'
+    }))
+    .filter(v => v.video_url);
+}
+
+let lastVideoErrors = [];
+
 async function searchPinVideos(query) {
-  const sources = [
-    ['direct', async () => {
-      const out = [];
-      for (const pin of await pinterestDirect(query, 'videos')) {
-        const storyVideo = pin?.story_pin_data?.pages?.[0]?.blocks?.find(b => b?.video)?.video;
-        const video_url = pickMp4(pin?.videos?.video_list || storyVideo?.video_list);
-        if (!video_url) continue;
-        out.push({
-          title: pin?.grid_title || pin?.title || pin?.description?.slice(0, 60) || 'Pinterest Video',
-          duration: fmtDuration(pin?.videos?.duration || pin?.story_pin_data?.total_video_duration || storyVideo?.duration),
-          video_url
-        });
-      }
-      return out;
-    }],
-    ['scraper', async () => {
-      const scraper = await import('../lib/scraper.js');
-      const r = await scraper.pinterest.search(query, 40);
-      return (r?.result?.pins || [])
-        .map(pin => ({
-          title: pin?.title || 'Pinterest Video',
-          duration: fmtDuration(pin?.videos?.duration),
-          video_url: pickMp4(pin?.videos?.video_list) || cleanUrl(pin?.media?.videos?.url)
-        }))
-        .filter(v => v.video_url);
-    }],
-    ['the-end', async () => {
-      const res = await axios.get(
-        `https://the-end-api.vercel.app/home/sections/Search/api/Pin/vid?q=${encodeURIComponent(query)}`,
-        { timeout: 15000 }
-      );
-      const raw = res?.data?.data || res?.data?.result || [];
-      if (!Array.isArray(raw)) return [];
-      return raw
-        .map(vid => ({
-          title: vid?.title || 'Pinterest Video',
-          duration: typeof vid?.duration === 'string' ? vid.duration : fmtDuration(vid?.duration),
-          video_url: cleanUrl(vid?.video_url || vid?.url || vid?.download_url)
-        }))
-        .filter(v => v.video_url);
-    }]
+  const en = await translateToEn(query);
+  const queries = [...new Set([query, en].filter(Boolean))];
+  const pinSources = [];
+  const tikSources = [];
+
+  for (const q of queries) {
+    pinSources.push(
+      [`direct(${q.slice(0, 12)})`, async () => {
+        const out = [];
+        for (const pin of await pinterestDirect(q, 'videos')) {
+          const storyVideo = pin?.story_pin_data?.pages?.[0]?.blocks?.find(b => b?.video)?.video;
+          const video_url = pickMp4(pin?.videos?.video_list || storyVideo?.video_list);
+          if (!video_url) continue;
+          out.push({
+            title: pin?.grid_title || pin?.title || pin?.description?.slice(0, 60) || 'Pinterest Video',
+            duration: fmtDuration(pin?.videos?.duration || pin?.story_pin_data?.total_video_duration || storyVideo?.duration),
+            video_url,
+            from: 'pinterest'
+          });
+        }
+        return out;
+      }],
+      [`scraper(${q.slice(0, 12)})`, async () => {
+        const scraper = await import('../lib/scraper.js');
+        const r = await scraper.pinterest.search(q, 40);
+        return (r?.result?.pins || [])
+          .map(pin => ({
+            title: pin?.title || 'Pinterest Video',
+            duration: fmtDuration(pin?.videos?.duration),
+            video_url: pickMp4(pin?.videos?.video_list) || cleanUrl(pin?.media?.videos?.url),
+            from: 'pinterest'
+          }))
+          .filter(v => v.video_url);
+      }]
+    );
+    tikSources.push([`tiktok(${q.slice(0, 12)})`, () => tiktokSearch(q)]);
+  }
+  pinSources.push(['the-end', async () => {
+    const res = await axios.get(
+      `https://the-end-api.vercel.app/home/sections/Search/api/Pin/vid?q=${encodeURIComponent(en || query)}`,
+      { timeout: 15000 }
+    );
+    const raw = res?.data?.data || res?.data?.result || [];
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .map(vid => ({
+        title: vid?.title || 'Pinterest Video',
+        duration: typeof vid?.duration === 'string' ? vid.duration : fmtDuration(vid?.duration),
+        video_url: cleanUrl(vid?.video_url || vid?.url || vid?.download_url),
+        from: 'pinterest'
+      }))
+      .filter(v => v.video_url);
+  }]);
+
+  const errs = [];
+  const [pins, toks] = await Promise.all([
+    collect(pinSources, 15000, 'فيديو', errs),
+    collect(tikSources, 20000, 'تيك', errs)
+  ]);
+  lastVideoErrors = errs;
+  // بينترست الأول، وتيك توك يكمّل الباقي
+  const ordered = [
+    ...shuffle(uniqBy(pins, v => v.video_url)),
+    ...shuffle(uniqBy(toks, v => v.video_url))
   ];
-  const all = uniqBy(await collect(sources, 15000, 'فيديو'), v => v.video_url);
-  return shuffle(all).slice(0, VIDEO_POOL);
+  return ordered.slice(0, VIDEO_POOL);
 }
 
 // ━━━ قائمة الصور ━━━
@@ -240,7 +314,7 @@ async function processVideo(video, conn) {
     info: video,
     card: {
       body: proto.Message.InteractiveMessage.Body.fromObject({
-        text: `📌 Pinterest${video.duration ? ` | ⏱️ ${video.duration}` : ''}`
+        text: `${video.from === 'tiktok' ? '🎵 TikTok' : '📌 Pinterest'}${video.duration ? ` | ⏱️ ${video.duration}` : ''}`
       }),
       footer: proto.Message.InteractiveMessage.Footer.fromObject({ text: '⛩️ SUKUNA BOT ⛩️' }),
       header: proto.Message.InteractiveMessage.Header.fromObject({
@@ -334,7 +408,7 @@ let before = async function (m, { conn }) {
       const videos = await searchPinVideos(data.query);
       if (!videos.length) {
         await m.react('❌');
-        await m.reply(`❌ لم يتم العثور على فيديوهات لـ *"${data.query}"* حالياً، جرب كلمة ثانية.`);
+        await m.reply(`❌ لم يتم العثور على فيديوهات لـ *"${data.query}"* حالياً.\n\n${lastVideoErrors.length ? '🔧 ' + lastVideoErrors.join('\n🔧 ') : ''}`.trim());
         return true;
       }
       await sendVideoCarousel(conn, m, data.query, videos);
