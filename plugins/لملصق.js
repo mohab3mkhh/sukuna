@@ -9,7 +9,7 @@ import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { prepareWAMessageMedia, proto } from '@whiskeysockets/baileys'
-import { sendButtons } from '../lib/buttons.js'
+import { sendList } from '../lib/buttons.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const tmpDir = path.join(__dirname, '../tmp')
@@ -219,14 +219,20 @@ export default {
       global.stkPending.set(key, { media, m, expires: Date.now() + PENDING_MS })
       await m.react('❓')
       try {
-        await sendButtons(conn, m.chat, {
-          text: '🎬 *تحويل الفيديو لستيكر*\n\nعايز الستيكر إزاي؟',
+        // قايمة (single_select) بدل الأزرار: هي اللي بتظهر عندك بشكل مضمون (زي أمر ساوند)
+        await sendList(conn, m.chat, {
+          text: '🎬 *تحويل الفيديو لستيكر*\n\nعايز الستيكر إزاي؟\n\n⇩ اختار من القايمة ⇩',
           footer: FOOTER,
           title: '🖼️ لملصق',
-          buttons: [
-            { id: `${usedPrefix}${CHOICE_CMD} nosound`, text: '🔇 بدون صوت' },
-            { id: `${usedPrefix}${CHOICE_CMD} sound`, text: '🔊 بصوت' }
-          ],
+          buttonText: '「 اختار نوع الستيكر 」',
+          sections: [{
+            title: 'نوع الستيكر',
+            highlight_label: 'SUKUNA BOT',
+            rows: [
+              { header: '🔇', title: 'بدون صوت', description: 'ستيكر متحرك عادي', id: `${usedPrefix}${CHOICE_CMD} nosound` },
+              { header: '🔊', title: 'بصوت', description: 'بصوت الفيديو نفسه (أول 10 ثواني)', id: `${usedPrefix}${CHOICE_CMD} sound` }
+            ]
+          }],
           quoted: m
         })
       } catch (e) {
