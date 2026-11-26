@@ -137,6 +137,20 @@ function extractOpus(media) {
   })
 }
 
+// ستيكر الصوت: بنبنيه بـ wa-sticker-formatter (512×512 + بيانات pack/author زي ستيكرات واتساب الأصلية)
+// بدل ffmpeg الخام (256×256 من غير EXIF) — احتمال إن واتساب مش بيقبل صوت على الستيكر ده.
+async function videoToWebpForSound(media) {
+  let buf
+  for (const quality of [40, 25, 12]) {
+    buf = await new Sticker(media, {
+      pack: global.stickpack || '⛩️ SUKUNA BOT', author: global.stickauth || 'SUKUNA',
+      type: StickerTypes.FULL, quality
+    }).toBuffer()
+    if (buf.length <= 900 * 1024) break
+  }
+  return buf
+}
+
 async function shrinkIfBig(buf, isVideo) {
   if (buf.length <= 900 * 1024) return buf
   try {
@@ -158,17 +172,19 @@ async function sendWithSound(conn, m, stickerBuf, opusBuf, seconds) {
 }
 
 async function finishVideo(conn, m, media, withSound) {
-  let sticker = await shrinkIfBig(await videoToWebp(media), true)
   if (withSound) {
     const opus = await extractOpus(media)
     if (!opus) {
       await m.reply(box('تنبيه', 'الفيديو مفيهوش صوت، هبعته ستيكر عادي'))
-      return sendPlain(conn, m, sticker)
+      return sendPlain(conn, m, await shrinkIfBig(await videoToWebp(media), true))
     }
+    let sticker
+    try { sticker = await videoToWebpForSound(media) }
+    catch (e) { console.error('[ملصق:صوت] wa-sticker-formatter فشل، هستخدم ffmpeg:', e.message); sticker = await shrinkIfBig(await videoToWebp(media), true) }
     console.log('[ملصق:صوت] ستيكر', sticker.length, 'بايت + صوت', opus.buf.length, 'بايت،', opus.seconds, 'ث')
     return sendWithSound(conn, m, sticker, opus.buf, opus.seconds)
   }
-  return sendPlain(conn, m, sticker)
+  return sendPlain(conn, m, await shrinkIfBig(await videoToWebp(media), true))
 }
 
 /* ───────── الأمر ───────── */
