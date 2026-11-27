@@ -19,12 +19,19 @@ function botNumbers(conn) {
   return new Set([u.id, u.jid, u.lid, u.phoneNumber].filter(Boolean).map(num));
 }
 
-function isBotAdmin(conn, md) {
+// المشاركين اللي هويتهم = هوية البوت (بغض النظر عن الأدمن)
+function botParticipants(conn, md) {
   const ids = botNumbers(conn);
-  return (md?.participants || []).some(p =>
-    p.admin && [p.id, p.jid, p.lid, p.phoneNumber].filter(Boolean).some(x => ids.has(num(x)))
+  return (md?.participants || []).filter(p =>
+    [p.id, p.jid, p.lid, p.phoneNumber].filter(Boolean).some(x => ids.has(num(x)))
   );
 }
+
+function isBotAdmin(conn, md) {
+  return botParticipants(conn, md).some(p => p.admin === 'admin' || p.admin === 'superadmin' || p.admin === true);
+}
+
+const DEBUG = true; // اقفلها (false) بعد ما نتأكد
 
 function cacheSet(jid, md) {
   if (jid && md) global.__grpMeta.set(jid, { md, t: Date.now() });
@@ -137,6 +144,10 @@ handler.before = async function (m, { conn }) {
     msg += `🆔 *المعرف:*\n\`\`\`${groupJid}\`\`\`\n`;
     msg += `📊 *الأعضاء:* ${md.participants?.length || 0}\n`;
     msg += `🤖 *البوت:* ${botAdmin ? 'أدمن ✅' : 'عضو فقط ❌'}\n`;
+    if (DEBUG) {
+      const me = botParticipants(conn, md).map(p => ({ id: p.id, lid: p.lid, pn: p.phoneNumber, admin: p.admin }));
+      msg += `\n🧪 ids: ${[...botNumbers(conn)].join(', ')}\n🧪 matched: ${JSON.stringify(me)}\n🧪 user: ${JSON.stringify({ id: conn.user?.id, jid: conn.user?.jid, lid: conn.user?.lid })}\n`;
+    }
 
     if (owner) {
       msg += `👤 *المنشئ:* @${num(owner)}\n`;
