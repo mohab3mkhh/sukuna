@@ -61,6 +61,19 @@ const runFf = (cmd, ms, outPath) => new Promise((resolve, reject) => {
 })
 const rm = (...ps) => ps.forEach(p => { try { fs.unlinkSync(p) } catch {} })
 
+// معلومات ملف الـ webp (متحرك؟ وأبعاده) — الستيكر المتحرك الحقيقي بيتبعت بـ isAnimated + الأبعاد
+function webpInfo(buf) {
+  try {
+    if (buf.subarray(0, 4).toString('latin1') !== 'RIFF') return {}
+    const info = { animated: buf.includes(Buffer.from('ANIM')) }
+    if (buf.subarray(12, 16).toString('latin1') === 'VP8X') {
+      info.width = 1 + buf.readUIntLE(24, 3)
+      info.height = 1 + buf.readUIntLE(27, 3)
+    }
+    return info
+  } catch { return {} }
+}
+
 async function videoToWebp(media) {
   const id = Date.now() + '_' + Math.random().toString(36).slice(2, 6)
   const inputPath = path.join(tmpDir, `input_${id}.mp4`)
@@ -116,7 +129,7 @@ async function imageToWebp(media) {
   } finally { rm(inputPath, outputPath) }
 }
 
-// مدة ملف (صوت أو فيديو) بالثواني — للّوجز بس
+// مدة ملف (صوت أو فيديو) بالثواني
 function probeSeconds(file) {
   return new Promise(resolve => {
     let out = ''
@@ -169,7 +182,7 @@ async function runWithSocket(conn, fn) {
   }
 }
 
-/* ───────── استخراج الصوت (نفس toOpusOggBuffer بتاع ستيكر_صوت: OGG/Opus أول 10 ثواني) ───────── */
+/* ───────── استخراج الصوت (OGG/Opus أول 10 ثواني) ───────── */
 // هل الفيديو فيه مسار صوت؟ → '' = مفيش، 'opus,..' = فيه، null = ffprobe فشل
 function audioStreamInfo(media) {
   return new Promise(resolve => {
@@ -184,6 +197,7 @@ function audioStreamInfo(media) {
   })
 }
 
+// بترجّع { buf, seconds } — seconds هي المدة الفعلية للصوت (مهمة جداً لتشغيل الستيكر)
 function toOpusOggBuffer(inputBuffer, maxSeconds = 10, id = '-') {
   return new Promise((resolve, reject) => {
     const t0 = Date.now()
@@ -215,15 +229,15 @@ function toOpusOggBuffer(inputBuffer, maxSeconds = 10, id = '-') {
       const dur = await probeSeconds(outPath)
       rm(outPath)
       L(id, `✅ الصوت اتحوّل: ${outBuf.length} بايت | الطول الفعلي ${dur.toFixed(3)}ث | ${Date.now() - t0}ms`)
-      resolve(outBuf)
+      resolve({ buf: outBuf, seconds: dur })
     })
   })
 }
 
-/* ───────── الدمج والإرسال (نفس buildAndSend بتاع ستيكر_صوت) ───────── */
+/* ───────── الدمج والإرسال ───────── */
 async function buildAndSend(conn, m, stickerBuf, rawAudio, id) {
   const t0 = Date.now()
-  const opusBuf = await toOpusOggBuffer(rawAudio, 10, id)
+  const { buf: opusBuf, seconds: realSecs } = await toOpusOggBuffer(rawAudio, 10, id)
 
   const stickerMedia = await runWithSocket(conn, () =>
     prepareWAMessageMedia({ sticker: stickerBuf }, { upload: conn.waUploadToServer })
@@ -232,14 +246,23 @@ async function buildAndSend(conn, m, stickerBuf, rawAudio, id) {
     prepareWAMessageMedia({ audio: opusBuf, mimetype: 'audio/ogg; codecs=opus', ptt: false }, { upload: conn.waUploadToServer })
   )
 
+  // ⚠️ المدة لازم تطابق الصوت الفعلي (قبل كده كانت بتتحط 10 ثواني دايماً لو Baileys ماعرفش يحسبها)
+  const realSec = realSecs > 0 ? Math.max(1, Math.ceil(realSecs)) : 0
+  const secondsSent = realSec || audioMedia.audioMessage.seconds || 10
+
+  const am = { ...audioMedia.audioMessage, seconds: secondsSent }
+
+  // الستيكر: نفس شكل الستيكر المتحرك الحقيقي (isAnimated + الأبعاد)
   const sm = { ...stickerMedia.stickerMessage }
-  const am = { ...audioMedia.audioMessage, seconds: audioMedia.audioMessage.seconds || 10 }
+  const wi = webpInfo(stickerBuf)
+  if (wi.animated) sm.isAnimated = true
+  if (wi.width && !sm.width) { sm.width = wi.width; sm.height = wi.height }
 
   L(id, 'الستيكر:', JSON.stringify({
     mimetype: sm.mimetype, isAnimated: sm.isAnimated, width: sm.width, height: sm.height, bytes: Number(sm.fileLength) || stickerBuf.length
   }))
   L(id, 'الصوت:', JSON.stringify({
-    mimetype: am.mimetype, ptt: am.ptt, secondsBaileys: audioMedia.audioMessage.seconds, secondsSent: am.seconds, bytes: Number(am.fileLength) || opusBuf.length
+    mimetype: am.mimetype, ptt: am.ptt, secondsBaileys: audioMedia.audioMessage.seconds, secondsReal: realSecs, secondsSent: am.seconds, bytes: Number(am.fileLength) || opusBuf.length
   }))
 
   const payload = buildAudioStickerPayload(sm, am)
@@ -254,14 +277,17 @@ async function sendPlain(conn, m, buf) {
   await conn.sendMessage(m.chat, { sticker: buf }, { quoted: m })
 }
 
-// فيديو → ستيكر عادي، وبعدين (لو بصوت) نستخرج صوت الفيديو وندمجهم بنفس طريقة ستيكر_صوت
+// فيديو → ستيكر عادي، وبعدين (لو بصوت) نستخرج صوت الفيديو وندمجهم
 async function finishVideo(conn, m, media, withSound) {
   const id = Math.random().toString(36).slice(2, 6)
   const t0 = Date.now()
   L(id, `بدء | بصوت=${withSound} | الفيديو ${media.length} بايت | chat=${m.chat}`)
 
-  let sticker = await shrinkIfBig(await videoToWebp(media), true)   // نفس الستيكر العادي بتاع "بدون صوت"
-  L(id, `الستيكر العادي جاهز: ${sticker.length} بايت (${(sticker.length / 1024).toFixed(0)}KB)`)
+  // لو بصوت: نبدأ من غير -fs (القص بيبوّظ ملف الـ webp المتحرك ويخلي الصوت مايشتغلش)
+  let sticker = withSound
+    ? await videoToWebpTuned(media, { q: 30, fps: 15 }).catch(() => videoToWebp(media))
+    : await shrinkIfBig(await videoToWebp(media), true)
+  L(id, `الستيكر جاهز: ${sticker.length} بايت (${(sticker.length / 1024).toFixed(0)}KB)`)
 
   // ستيكر الصوت: لو أكبر من ~500KB نضغطه (جودة + FPS أقل) لحد ما ينزل تحت الحد
   if (withSound && sticker.length > SOUND_MAX) {
@@ -379,7 +405,6 @@ export default {
       global.stkPending.set(key, { media, m, expires: Date.now() + PENDING_MS })
       await m.react('❓')
       try {
-        // قايمة (single_select) بدل الأزرار: هي اللي بتظهر عندك بشكل مضمون (زي أمر ساوند)
         await sendList(conn, m.chat, {
           text: '🎬 *تحويل الفيديو لستيكر*\n\nعايز الستيكر إزاي؟\n\n⇩ اختار من القايمة ⇩',
           footer: FOOTER,
