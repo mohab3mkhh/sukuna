@@ -342,6 +342,6 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
 
 handler.help = ['ai <سؤال>', 'تخيل <وصف صورة>']
 handler.tags = ['ai']
-handler.command = /^(ذكاء|تخيل||aiapk)$/i
+handler.command = /^(ذكاء|تخيل|aiapk)$/i
 
 export default handler
