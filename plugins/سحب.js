@@ -20,23 +20,31 @@ const handler = async (m, { conn }) => {
 
     // رقم بدون @ ولا :device ولا فرق s.whatsapp.net / lid، عشان نقارن بثبات
     const decode = (jid) => (typeof conn.decodeJid === 'function' ? conn.decodeJid(jid) : jid) || '';
-    const num = (jid) => decode(jid).replace(/^.*?(\d+)(?::\d+)?@.*$/, '$1');
+    const num = (jid) => decode(jid || '').replace(/^.*?(\d+)(?::\d+)?@.*$/, '$1');
 
-    const botNum = num(conn.user?.id || '');
-    const senderNum = num(m.sender);
+    // واتساب بقى بيدّي رقمين مختلفين لنفس الشخص: رقم الهاتف (@s.whatsapp.net) ورقم الخصوصية (@lid).
+    // بنجمع كل الأرقام المعروفة للبوت ولصاحب الأمر من كل مصدر متاح، وبنقارن بأي واحد منهم.
+    const numsOf = (...jids) => [...new Set(jids.filter(Boolean).map(num).filter(Boolean))];
 
-    const botPart = meta.participants.find(p => num(p.id) === botNum || num(p.jid || '') === botNum);
+    const botNums = numsOf(conn.user?.id, conn.user?.lid, conn.user?.jid);
+    const senderNums = numsOf(m.sender, m.key?.participant, m.key?.participantPn, m.key?.participantAlt);
+
+    const partNums = (p) => numsOf(p.id, p.jid, p.lid, p.phoneNumber);
+    const overlaps = (a, b) => a.some(x => b.includes(x));
+
+    const botPart = meta.participants.find(p => overlaps(partNums(p), botNums));
     if (!botPart || !botPart.admin) {
       await react('❌');
       return m.reply(
         `❌ لازم البوت يكون أدمن في الجروب الأول عشان ينفّذ الأمر ده.\n` +
-        `🔧 بوت: ${botNum || 'مش متعرف'} | أدمنية الجروب: ${meta.participants.filter(p => p.admin).map(p => num(p.id)).join(', ') || 'لا يوجد'}`
+        `🔧 أرقام البوت المعروفة: ${botNums.join(', ') || 'مش متعرف'}\n` +
+        `👑 أدمنية الجروب: ${meta.participants.filter(p => p.admin).map(p => partNums(p).join('/')).join(', ') || 'لا يوجد'}`
       );
     }
 
     const others = meta.participants.filter(p => {
-      const n = num(p.id);
-      return n !== botNum && n !== senderNum;
+      const ns = partNums(p);
+      return !overlaps(ns, botNums) && !overlaps(ns, senderNums);
     });
     const otherAdmins = others.filter(p => p.admin);
 
