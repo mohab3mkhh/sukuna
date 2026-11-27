@@ -26,6 +26,7 @@ const handler = async (m, { conn }) => {
     // بنجمع كل الأرقام المعروفة للبوت من كل مصدر متاح، وبنقارن بأي واحد منهم.
     const numsOf = (...jids) => [...new Set(jids.filter(Boolean).map(num).filter(Boolean))];
     const botNums = numsOf(conn.user?.id, conn.user?.lid, conn.user?.jid);
+    const senderNums = numsOf(m.sender, m.key?.participant, m.key?.participantPn, m.key?.participantAlt);
 
     const partNums = (p) => numsOf(p.id, p.jid, p.lid, p.phoneNumber);
     const overlaps = (a, b) => a.some((x) => b.includes(x));
@@ -40,8 +41,10 @@ const handler = async (m, { conn }) => {
       );
     }
 
-    // كل الأدمنية ما عدا البوت
-    const otherAdmins = meta.participants.filter((p) => p.admin && !overlaps(partNums(p), botNums));
+    // كل الأدمنية ما عدا البوت واللي كتب الأمر (بكل أرقامه/معرفاته)
+    const otherAdmins = meta.participants.filter(
+      (p) => p.admin && !overlaps(partNums(p), botNums) && !overlaps(partNums(p), senderNums)
+    );
 
     let demoted = 0,
       failed = 0;
