@@ -242,7 +242,7 @@ function toOpusOggBuffer(inputBuffer, maxSeconds = 10, id = '-') {
     const outPath = path.join(os.tmpdir(), `${key}_out.ogg`)
     fs.writeFileSync(inPath, inputBuffer)
 
-    const args = ['-y', '-i', inPath, '-vn', '-t', String(maxSeconds), '-c:a', 'libopus', '-b:a', '64k', '-ar', '48000', '-ac', '1', outPath]
+    const args = ['-y', '-i', inPath, '-vn', '-af', `apad=whole_dur=${maxSeconds}`, '-t', String(maxSeconds), '-c:a', 'libopus', '-b:a', '64k', '-ar', '48000', '-ac', '1', outPath]
     L(id, 'ffmpeg', args.join(' '))
     const ff = spawn(FFMPEG, args)
     let err = ''
@@ -282,9 +282,8 @@ async function buildAndSend(conn, m, stickerBuf, rawAudio, id) {
     prepareWAMessageMedia({ audio: opusBuf, mimetype: 'audio/ogg; codecs=opus', ptt: false }, { upload: conn.waUploadToServer })
   )
 
-  // ⚠️ المدة لازم تطابق الصوت الفعلي (قبل كده كانت بتتحط 10 ثواني دايماً لو Baileys ماعرفش يحسبها)
-  const realSec = realSecs > 0 ? Math.max(1, Math.ceil(realSecs)) : 0
-  const secondsSent = realSec || audioMedia.audioMessage.seconds || 10
+  // ستيكر الصوت الحقيقي في واتساب صوته دايماً 10 ثواني، فالصوت بيتكمّل بصمت لحد 10 ثواني (apad فوق)
+  const secondsSent = 10
 
   const am = { ...audioMedia.audioMessage, seconds: secondsSent }
 
