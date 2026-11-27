@@ -23,7 +23,7 @@ const FOOTER      = '⛩️ SUKUNA BOT ⛩️'
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
 const IG_UA = 'Instagram 275.0.0.27.98 Android (33/13; 420dpi; 1080x2400; samsung; SM-G991B; o1s; exynos2100; en_US; 458229237)'
 const IG_APP_ID = '936619743392459'
-const TIK_KEY = (process.env.TIKWMAPI_KEY || '').trim()
+const TIK_KEY = (process.env.TIKWMAPI_KEY || '34ce144ad4984df4fbbc79480a131395').trim()
 
 // ───────────── أدوات ─────────────
 const sleep = (ms) => new Promise(r => setTimeout(r, ms))
@@ -197,52 +197,73 @@ async function igGet(url, cookie, label) {
     }
 }
 
+const igProfile = async (username, cookie) => {
+    const p = await igGet(`https://i.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`, cookie, `profile(${username})`)
+    const user = p.data?.data?.user
+    if (!user) throw new Error(`profile(${username}): رد فاضي`)
+    return user
+}
+
+function igUrlsFromProfile(user) {
+    const urls = [cleanUrl(user.profile_pic_url_hd)]
+    for (const edge of user.edge_owner_to_timeline_media?.edges || []) {
+        const n = edge?.node
+        if (!n) continue
+        const children = n.edge_sidecar_to_children?.edges
+        if (children?.length) children.forEach(c => urls.push(cleanUrl(c?.node?.display_url)))
+        else urls.push(cleanUrl(n.display_url))
+    }
+    return urls
+}
+
 async function instagramImages(entry) {
     const cookie = igCookie()
     if (!cookie) throw new Error('محتاج IG_COOKIES في إعدادات السيرفر')
 
-    // نفضّل الاسم اللاتيني (الإنجليزي بعد الترجمة)
     const latin = entry.queries.find(q => /^[\x00-\x7F]+$/.test(q)) || entry.queries[0]
-    let username = /^@[\w.]{2,30}$/.test(latin) ? latin.slice(1) : null
+    let username = entry.igHandle || null     // .صورة @username ← حساب محدد
+    let user = null
     const errs = []
 
-    // 1) نلاقي الحساب (3 endpoints بالترتيب)
+    // 1) البحث عن الحساب (endpoints الموبايل — بتاعة الويب القديمة رجّعت 404)
     if (!username) {
         const q = encodeURIComponent(latin)
         const attempts = [
-            ['topsearch-v1', `https://www.instagram.com/api/v1/web/search/topsearch/?context=blended&query=${q}&include_reel=false`],
-            ['topsearch', `https://www.instagram.com/web/search/topsearch/?context=blended&query=${q}&include_reel=false`],
-            ['users-search', `https://i.instagram.com/api/v1/users/search/?q=${q}&count=10`]
+            ['fbsearch', `https://i.instagram.com/api/v1/fbsearch/topsearch_flat/?context=blended&query=${q}&search_surface=top_search_page&timezone_offset=7200&count=30`],
+            ['users-search', `https://i.instagram.com/api/v1/users/search/?q=${q}&count=10&timezone_offset=7200`]
         ]
         for (const [label, url] of attempts) {
             try {
-                const s = await igGet(url, cookie, label)
-                const users = (s.data?.users || []).map(x => x?.user || x).filter(u => u?.username)
-                if (users.length) {
-                    username = (users.find(u => u.is_verified) || users[0]).username
+                const r = await igGet(url, cookie, label)
+                const list = (r.data?.users || r.data?.list || []).map(x => x?.user || x).filter(u => u?.username)
+                if (list.length) {
+                    username = (list.find(u => u.is_verified) || list[0]).username
                     break
                 }
                 errs.push(`${label}: مفيش نتايج`)
             } catch (e) { errs.push(e.message) }
         }
-        if (!username) throw new Error('ما لقيتش حساب: ' + errs.join(' | '))
     }
 
-    // 2) صور الحساب: web_profile_info ثم feed كاحتياطي
+    // 2) لو البحث فشل: نخمّن اسم الحساب من الاسم (ونقبل الحسابات الموثّقة بس)
+    if (!username) {
+        const words = latin.toLowerCase().replace(/[^a-z0-9\s._]/g, ' ').trim().split(/\s+/).filter(Boolean)
+        const cands = uniq([words.join(''), words.join('_'), words.join('.'), words[0], words[words.length - 1]]).filter(c => c && c.length >= 3).slice(0, 4)
+        for (const c of cands) {
+            try {
+                const u = await igProfile(c, cookie)
+                if (u.is_verified) { username = c; user = u; break }
+            } catch (e) { errs.push(e.message) }
+        }
+    }
+    if (!username) throw new Error('ما لقيتش حساب. جرّب: .صورة @اسم_الحساب\n' + errs.join(' | '))
+
+    // 3) صور الحساب: web_profile_info ثم feed كاحتياطي
     const urls = []
     try {
-        const p = await igGet(`https://i.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`, cookie, 'profile')
-        const user = p.data?.data?.user
-        if (!user) throw new Error('profile: رد فاضي')
-        if (user.is_private && !user.followed_by_viewer) throw new Error(`profile: حساب ${username} خاص`)
-        urls.push(cleanUrl(user.profile_pic_url_hd))
-        for (const edge of user.edge_owner_to_timeline_media?.edges || []) {
-            const n = edge?.node
-            if (!n) continue
-            const children = n.edge_sidecar_to_children?.edges
-            if (children?.length) children.forEach(c => urls.push(cleanUrl(c?.node?.display_url)))
-            else urls.push(cleanUrl(n.display_url))
-        }
+        user = user || await igProfile(username, cookie)
+        if (user.is_private && !user.followed_by_viewer) throw new Error(`حساب ${username} خاص`)
+        urls.push(...igUrlsFromProfile(user))
     } catch (e) { errs.push(e.message) }
 
     if (uniq(urls).length < 2) {
@@ -420,12 +441,12 @@ async function buildCards(pool, platform, conn) {
 // ───────────── كاش ─────────────
 const CACHE = new Map()
 
-function putCache(query, queries) {
+function putCache(query, queries, igHandle = null) {
     const now = Date.now()
     for (const [k, v] of CACHE) if (now - v.at > TTL) CACHE.delete(k)
     if (CACHE.size >= 100) CACHE.delete(CACHE.keys().next().value)
     const token = Math.random().toString(36).slice(2, 7)
-    CACHE.set(token, { query, queries, pools: {}, busy: new Set(), at: now })
+    CACHE.set(token, { query, queries, igHandle, pools: {}, busy: new Set(), at: now })
     return token
 }
 
@@ -546,9 +567,12 @@ const handler = async (m, { conn, text, usedPrefix, command }) => {
     }
     if (query.length > 80) return m.reply('❌ الاسم طويل، اختصره')
 
-    const en = await translateToEn(query)
-    const queries = uniq([query, en])
-    const token = putCache(query, queries)
+    // .صورة @username ← حساب إنستجرام محدد (والمنصات التانية بتدوّر بالاسم من غير @)
+    const handle = query.match(/^@([\w.]{2,30})$/)?.[1] || null
+    const base = handle || query
+    const en = await translateToEn(base)
+    const queries = uniq([base, en])
+    const token = putCache(query, queries, handle)
 
     try {
         await sendMenu(conn, m, CACHE.get(token), token)
