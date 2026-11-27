@@ -363,6 +363,10 @@ global.reloadHandler = async function reloadHandler(restatConn = false) {
     if (type !== 'notify') return
     const now = Math.floor(Date.now() / 1000)
     for (let msg of messages) {
+      // 🚫 جروب متجاهَل (.بانشات): مفيش قراءة ولا رد ولا أي حاجة
+      if (global.isIgnoredGroup?.(msg.key?.remoteJid)) continue
+      // 🔕 منع الخاص: تجاهل كامل قبل أي قراءة أو تسجيل (المالك مستثنى)
+      if (global.shouldIgnorePrivate?.(msg)) continue
       const ts = msg.messageTimestamp?.low || msg.messageTimestamp || 0
       if (ts > 0 && (now - ts) > 120) continue
 
@@ -432,8 +436,15 @@ global.reloadHandler = async function reloadHandler(restatConn = false) {
 
   global.conn._handlerConnUpd = connectionUpdate.bind(global.conn)
   global.conn._handlerCreds   = saveCreds
-  global.conn._handlerParts   = upd => (_handler.participantsUpdate || participantsUpdate)(global.conn, upd).catch(() => {})
-  global.conn._handlerGroups  = upds => (_handler.groupsUpdate || groupsUpdate)(global.conn, upds).catch(() => {})
+  global.conn._handlerParts   = upd => {
+    if (global.isIgnoredGroup?.(upd?.id)) return
+    return (_handler.participantsUpdate || participantsUpdate)(global.conn, upd).catch(() => {})
+  }
+  global.conn._handlerGroups  = upds => {
+    const list = (Array.isArray(upds) ? upds : [upds]).filter(u => !global.isIgnoredGroup?.(u?.id))
+    if (!list.length) return
+    return (_handler.groupsUpdate || groupsUpdate)(global.conn, list).catch(() => {})
+  }
   global.conn._handlerCall    = calls => calls.forEach(c =>
     (_handler.callUpdate || callUpdate)(global.conn, c).catch(() => {})
   )
