@@ -140,10 +140,10 @@ function probeSeconds(file) {
   })
 }
 
-// 🗜️ يصغّر الفيديو الأول (الأبعاد + الجودة + FPS) مع الحفاظ على الصوت، عشان الستيكر يطلع خفيف
+// 🗜️ يصغّر الفيديو الأول (الأبعاد + الجودة + FPS) مع الحفاظ على الصوت، ويكرره لحد 10 ثواني بالظبط
+// (ستيكر الصوت الحقيقي: الحركة والصوت الاتنين 10 ثواني)
 async function shrinkVideo(media, id) {
   const LIMIT = 800 * 1024
-  if (media.length <= LIMIT) { L(id, `الفيديو صغير أصلاً (${(media.length / 1024).toFixed(0)}KB)، مش محتاج تصغير`); return media }
   const key = Date.now() + '_' + Math.random().toString(36).slice(2, 6)
   const inP = path.join(tmpDir, `shr_in_${key}.mp4`)
   const outP = path.join(tmpDir, `shr_out_${key}.mp4`)
@@ -157,7 +157,7 @@ async function shrinkVideo(media, id) {
   try {
     for (const a of attempts) {
       const ok = await new Promise(resolve => {
-        const args = ['-y', '-i', inP, '-t', '10',
+        const args = ['-y', '-stream_loop', '-1', '-i', inP, '-t', '10',
           '-vf', `fps=${a.fps},scale=${a.size}:${a.size}:force_original_aspect_ratio=decrease:force_divisible_by=2`,
           '-c:v', 'libx264', '-preset', 'veryfast', '-crf', String(a.crf), '-pix_fmt', 'yuv420p',
           '-c:a', 'aac', '-b:a', '64k', '-ac', '1', '-movflags', '+faststart', outP]
@@ -318,7 +318,7 @@ async function finishVideo(conn, m, media, withSound) {
   const t0 = Date.now()
   L(id, `بدء | بصوت=${withSound} | الفيديو ${media.length} بايت | chat=${m.chat}`)
 
-  // بصوت: نصغّر الفيديو الأول قبل أي حاجة (الصوت بيفضل موجود)
+  // بصوت: نصغّر الفيديو ونكرره لـ 10 ثواني قبل أي حاجة (الصوت بيتكرر معاه)
   if (withSound) media = await shrinkVideo(media, id)
 
   // لو بصوت: نبدأ من غير -fs (القص بيبوّظ ملف الـ webp المتحرك ويخلي الصوت مايشتغلش)
