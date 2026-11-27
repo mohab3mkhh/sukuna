@@ -22,6 +22,7 @@ const FOOTER = '⛩️ SUKUNA BOT ⛩️'
 const FFMPEG = fs.existsSync('/root/.nix-profile/bin/ffmpeg') ? '/root/.nix-profile/bin/ffmpeg' : 'ffmpeg'
 const FFPROBE = fs.existsSync('/root/.nix-profile/bin/ffprobe') ? '/root/.nix-profile/bin/ffprobe' : 'ffprobe'
 const PENDING_MS = 5 * 60_000
+const SOUND_MAX = 480 * 1024   // ستيكر الصوت المتحرك: نحاول نخليه تحت 500KB (حد واتساب للستيكر المتحرك)
 const CHOICE_CMD = 'ملصق_خيار'
 if (!global.stkPending) global.stkPending = new Map()   // chat:sender → { media, seconds, m, expires }
 
@@ -80,6 +81,21 @@ async function videoToWebp(media) {
   } catch (ffErr) {
     console.error('FFmpeg error:', ffErr.message)
     return await new Sticker(media, { pack: global.stickpack || '⛩️ SUKUNA BOT', author: global.stickauth || 'SUKUNA', type: StickerTypes.CROPPED, quality: 20 }).toBuffer()
+  } finally { rm(inputPath, outputPath) }
+}
+
+// نفس تحويل الستيكر العادي (256×256) بس بجودة/FPS نتحكم فيهم، ومن غير -fs (القص بيبوّظ الأنيميشن)
+async function videoToWebpTuned(media, { q, fps }) {
+  const id = Date.now() + '_' + Math.random().toString(36).slice(2, 6)
+  const inputPath = path.join(tmpDir, `tune_in_${id}.mp4`)
+  const outputPath = path.join(tmpDir, `tune_out_${id}.webp`)
+  fs.writeFileSync(inputPath, media)
+  try {
+    const vf = `fps=${fps},scale=256:256:force_original_aspect_ratio=decrease,format=rgba,pad=256:256:(ow-iw)/2:(oh-ih)/2:color=0x00000000`
+    await runFf(ffmpeg(inputPath).outputOptions([
+      '-vf', vf, '-c:v', 'libwebp', '-q:v', String(q), '-loop', '0', '-an', '-vsync', '0'
+    ]), 25000, outputPath)
+    return fs.readFileSync(outputPath)
   } finally { rm(inputPath, outputPath) }
 }
 
@@ -244,8 +260,24 @@ async function finishVideo(conn, m, media, withSound) {
   const t0 = Date.now()
   L(id, `بدء | بصوت=${withSound} | الفيديو ${media.length} بايت | chat=${m.chat}`)
 
-  const sticker = await shrinkIfBig(await videoToWebp(media), true)   // نفس الستيكر العادي بتاع "بدون صوت"
-  L(id, `الستيكر العادي جاهز: ${sticker.length} بايت`)
+  let sticker = await shrinkIfBig(await videoToWebp(media), true)   // نفس الستيكر العادي بتاع "بدون صوت"
+  L(id, `الستيكر العادي جاهز: ${sticker.length} بايت (${(sticker.length / 1024).toFixed(0)}KB)`)
+
+  // ستيكر الصوت: لو أكبر من ~500KB نضغطه (جودة + FPS أقل) لحد ما ينزل تحت الحد
+  if (withSound && sticker.length > SOUND_MAX) {
+    L(id, `⚠️ الستيكر أكبر من ${(SOUND_MAX / 1024).toFixed(0)}KB، هضغطه`)
+    let best = sticker
+    for (const cfg of [{ q: 22, fps: 15 }, { q: 15, fps: 12 }, { q: 10, fps: 10 }, { q: 6, fps: 8 }]) {
+      try {
+        const b = await videoToWebpTuned(media, cfg)
+        L(id, `ضغط q=${cfg.q} fps=${cfg.fps} → ${b.length} بايت`)
+        if (b.length < best.length) best = b
+        if (b.length <= SOUND_MAX) break
+      } catch (e) { E(id, `فشل الضغط q=${cfg.q}:`, e?.message || e) }
+    }
+    sticker = best
+    L(id, `الستيكر بعد الضغط: ${sticker.length} بايت (${(sticker.length / 1024).toFixed(0)}KB)${sticker.length > SOUND_MAX ? ' ⚠️ لسه أكبر من الحد' : ''}`)
+  }
 
   if (!withSound) {
     await sendPlain(conn, m, sticker)
