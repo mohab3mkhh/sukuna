@@ -114,26 +114,35 @@ async function pinterestImages(entry, errs) {
 // ───────────── TikTok ─────────────
 async function tikSearch(keywords) {
     const params = new URLSearchParams({ keywords, count: 30, cursor: 0 })
+    const errs = []
+
     if (TIK_KEY) {
         try {
             const r = await fetch(`https://api.tikwmapi.com/feed/search?${params}`, {
                 headers: { 'x-tikwmapi-key': TIK_KEY, 'User-Agent': UA },
                 signal: AbortSignal.timeout(20000)
             })
-            if (r.ok) {
-                const j = await r.json()
-                if (j?.code === undefined || j.code === 0) return j?.data?.videos || []
-            }
-        } catch {}
+            if (!r.ok) throw new Error('HTTP ' + r.status)
+            const j = await r.json()
+            if (j?.code !== undefined && j.code !== 0) throw new Error(j?.msg || 'code ' + j.code)
+            return j?.data?.videos || []
+        } catch (e) { errs.push(`tikwmapi ${e?.message || e}`) }
+    } else {
+        errs.push('TIKWMAPI_KEY مش موجود في متغيرات السيرفر')
     }
-    const r = await fetch(`https://www.tikwm.com/api/feed/search?${params}`, {
-        headers: { 'User-Agent': UA },
-        signal: AbortSignal.timeout(25000)
-    })
-    if (!r.ok) throw new Error('HTTP ' + r.status)
-    const j = await r.json()
-    if (j?.code !== undefined && j.code !== 0) throw new Error(j?.msg || 'failed')
-    return j?.data?.videos || []
+
+    try {
+        const r = await fetch(`https://www.tikwm.com/api/feed/search?${params}`, {
+            headers: { 'User-Agent': UA },
+            signal: AbortSignal.timeout(25000)
+        })
+        if (!r.ok) throw new Error('HTTP ' + r.status)
+        const j = await r.json()
+        if (j?.code !== undefined && j.code !== 0) throw new Error(j?.msg || 'failed')
+        return j?.data?.videos || []
+    } catch (e) { errs.push(`tikwm.com ${e?.message || e}`) }
+
+    throw new Error(errs.join(' | '))
 }
 
 async function tiktokImages(entry, errs) {
@@ -168,7 +177,7 @@ function igCookie() {
     return pairs.join('; ')
 }
 
-async function igGet(url, cookie) {
+async function igGet(url, cookie, label) {
     try {
         return await axios.get(url, {
             headers: {
@@ -183,8 +192,8 @@ async function igGet(url, cookie) {
         })
     } catch (e) {
         const s = e.response?.status
-        if (s === 401 || s === 403 || s === 400) throw new Error(`HTTP ${s} — الكوكيز منتهية أو الحساب متقيّد`)
-        throw e
+        if (s === 400 || s === 401 || s === 403) throw new Error(`${label}: HTTP ${s} (الكوكيز منتهية أو الحساب متقيّد)`)
+        throw new Error(`${label}: ${s ? 'HTTP ' + s : (e.code || e.message)}`)
     }
 }
 
@@ -195,30 +204,59 @@ async function instagramImages(entry) {
     // نفضّل الاسم اللاتيني (الإنجليزي بعد الترجمة)
     const latin = entry.queries.find(q => /^[\x00-\x7F]+$/.test(q)) || entry.queries[0]
     let username = /^@[\w.]{2,30}$/.test(latin) ? latin.slice(1) : null
+    const errs = []
 
+    // 1) نلاقي الحساب (3 endpoints بالترتيب)
     if (!username) {
-        const s = await igGet(`https://www.instagram.com/web/search/topsearch/?context=blended&query=${encodeURIComponent(latin)}&include_reel=false`, cookie)
-        const users = s.data?.users || []
-        const pick = users.find(u => u?.user?.is_verified) || users[0]
-        username = pick?.user?.username
-        if (!username) throw new Error('ما لقيتش حساب مناسب')
+        const q = encodeURIComponent(latin)
+        const attempts = [
+            ['topsearch-v1', `https://www.instagram.com/api/v1/web/search/topsearch/?context=blended&query=${q}&include_reel=false`],
+            ['topsearch', `https://www.instagram.com/web/search/topsearch/?context=blended&query=${q}&include_reel=false`],
+            ['users-search', `https://i.instagram.com/api/v1/users/search/?q=${q}&count=10`]
+        ]
+        for (const [label, url] of attempts) {
+            try {
+                const s = await igGet(url, cookie, label)
+                const users = (s.data?.users || []).map(x => x?.user || x).filter(u => u?.username)
+                if (users.length) {
+                    username = (users.find(u => u.is_verified) || users[0]).username
+                    break
+                }
+                errs.push(`${label}: مفيش نتايج`)
+            } catch (e) { errs.push(e.message) }
+        }
+        if (!username) throw new Error('ما لقيتش حساب: ' + errs.join(' | '))
     }
 
-    const p = await igGet(`https://i.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`, cookie)
-    const user = p.data?.data?.user
-    if (!user) throw new Error('رد فاضي من إنستجرام')
-    if (user.is_private && !user.followed_by_viewer) throw new Error(`حساب ${username} خاص`)
+    // 2) صور الحساب: web_profile_info ثم feed كاحتياطي
+    const urls = []
+    try {
+        const p = await igGet(`https://i.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`, cookie, 'profile')
+        const user = p.data?.data?.user
+        if (!user) throw new Error('profile: رد فاضي')
+        if (user.is_private && !user.followed_by_viewer) throw new Error(`profile: حساب ${username} خاص`)
+        urls.push(cleanUrl(user.profile_pic_url_hd))
+        for (const edge of user.edge_owner_to_timeline_media?.edges || []) {
+            const n = edge?.node
+            if (!n) continue
+            const children = n.edge_sidecar_to_children?.edges
+            if (children?.length) children.forEach(c => urls.push(cleanUrl(c?.node?.display_url)))
+            else urls.push(cleanUrl(n.display_url))
+        }
+    } catch (e) { errs.push(e.message) }
 
-    const urls = [cleanUrl(user.profile_pic_url_hd)]
-    for (const edge of user.edge_owner_to_timeline_media?.edges || []) {
-        const n = edge?.node
-        if (!n) continue
-        const children = n.edge_sidecar_to_children?.edges
-        if (children?.length) children.forEach(c => urls.push(cleanUrl(c?.node?.display_url)))
-        else urls.push(cleanUrl(n.display_url))
+    if (uniq(urls).length < 2) {
+        try {
+            const f = await igGet(`https://i.instagram.com/api/v1/feed/user/${encodeURIComponent(username)}/username/?count=12`, cookie, 'feed')
+            for (const it of f.data?.items || []) {
+                const nodes = it.carousel_media?.length ? it.carousel_media : [it]
+                for (const n of nodes) urls.push(cleanUrl(n?.image_versions2?.candidates?.[0]?.url))
+            }
+        } catch (e) { errs.push(e.message) }
     }
+
     const out = uniq(urls)
-    if (!out.length) throw new Error('الحساب مفيهوش صور ظاهرة')
+    if (!out.length) throw new Error(`حساب ${username}: ما جبتش صور — ${errs.join(' | ')}`)
     entry.igUser = username
     return out.slice(0, POOL_SIZE)
 }
@@ -277,28 +315,56 @@ function fbRequest(url, maxRedirects = 5) {
     })
 }
 
-const fbDecode = (s) => s.replace(/\\\//g, '/').replace(/\\u0025/g, '%').replace(/\\u0026/g, '&')
+const fbDecode = (s) => s.replace(/\\\//g, '/').replace(/\\u0025/g, '%').replace(/\\u0026/g, '&').replace(/&amp;/g, '&')
+
+// المصغّرات الصغيرة (أقل من 480px) نتجاهلها
+function fbSmall(u) {
+    try {
+        const m = decodeURIComponent(u).match(/stp=[^&]*?(\d{2,4})x(\d{2,4})/)
+        return !!m && Math.max(Number(m[1]), Number(m[2])) < 480
+    } catch { return false }
+}
+
+// صورة الغلاف بجودة عالية من صفحة الفيديو نفسها
+async function fbPoster(id) {
+    const r = await fbRequest(`https://www.facebook.com/watch/?v=${id}`)
+    if (r.status !== 200) return null
+    const og = r.text.match(/<meta property="og:image" content="([^"]+)"/)?.[1]
+    const pt = r.text.match(/"preferred_thumbnail":\{"image":\{"uri":"([^"]+)"/)?.[1]
+    const raw = og ? og.replace(/&amp;/g, '&') : (pt ? fbDecode(pt) : null)
+    return cleanUrl(raw)
+}
 
 async function facebookImages(entry) {
     const q = entry.queries[0]
     const r = await fbRequest(`https://www.facebook.com/watch/search/?q=${encodeURIComponent(q)}`)
     if (r.status !== 200 || r.text.length < 1000) throw new Error('فيسبوك رفض البحث')
 
-    const urls = []
-    for (const m of r.text.matchAll(/"(?:uri|src|thumbnail_uri)":"(https:\\\/\\\/[^"]+)"/g)) {
-        const u = fbDecode(m[1])
-        if (/(scontent|fbcdn)/.test(u) && /\.(jpe?g|png|webp)/i.test(u) && !/emoji|rsrc|static/i.test(u)) urls.push(u)
+    // 1) أغلفة الفيديوهات بجودة عالية (على دفعات 5 مع بعض)
+    const ids = uniq([...r.text.matchAll(/"video_id":"(\d+)"/g)].map(m => m[1])).slice(0, 20)
+    const out = []
+    for (let i = 0; i < ids.length && out.length < POOL_SIZE; i += 5) {
+        const batch = await Promise.all(ids.slice(i, i + 5).map(id => fbPoster(id).catch(() => null)))
+        out.push(...batch.filter(Boolean))
     }
-    // نفس الصورة بمقاسات مختلفة: نكتفي بواحدة لكل مسار
+
+    // 2) احتياطي: مصغّرات صفحة البحث (الكبيرة بس)
+    if (!out.length) {
+        for (const m of r.text.matchAll(/"(?:uri|src|thumbnail_uri)":"(https:\\\/\\\/[^"]+)"/g)) {
+            const u = fbDecode(m[1])
+            if (/(scontent|fbcdn)/.test(u) && /\.(jpe?g|png|webp)/i.test(u) && !/emoji|rsrc|static/i.test(u) && !fbSmall(u)) out.push(u)
+        }
+    }
+
     const seen = new Set()
-    const out = urls.filter(u => {
+    const result = out.filter(u => {
         const k = u.split('?')[0]
         if (seen.has(k)) return false
         seen.add(k)
         return true
     })
-    if (!out.length) throw new Error('فيسبوك مش بيدّي صور بحث للزوار من غير تسجيل دخول')
-    return out.slice(0, POOL_SIZE)
+    if (!result.length) throw new Error('فيسبوك مش بيدّي صور بحث للزوار من غير تسجيل دخول')
+    return result.slice(0, POOL_SIZE)
 }
 
 // ───────────── المنصات ─────────────
