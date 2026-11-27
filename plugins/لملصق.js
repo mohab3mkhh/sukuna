@@ -140,42 +140,6 @@ function probeSeconds(file) {
   })
 }
 
-// 🗜️ يصغّر الفيديو الأول (الأبعاد + الجودة + FPS) مع الحفاظ على الصوت، ويكرره لحد 10 ثواني بالظبط
-// (ستيكر الصوت الحقيقي: الحركة والصوت الاتنين 10 ثواني)
-async function shrinkVideo(media, id) {
-  const LIMIT = 800 * 1024
-  const key = Date.now() + '_' + Math.random().toString(36).slice(2, 6)
-  const inP = path.join(tmpDir, `shr_in_${key}.mp4`)
-  const outP = path.join(tmpDir, `shr_out_${key}.mp4`)
-  fs.writeFileSync(inP, media)
-  const attempts = [
-    { size: 256, fps: 15, crf: 32 },
-    { size: 192, fps: 12, crf: 36 },
-    { size: 160, fps: 10, crf: 40 }
-  ]
-  let best = media
-  try {
-    for (const a of attempts) {
-      const ok = await new Promise(resolve => {
-        const args = ['-y', '-stream_loop', '-1', '-i', inP, '-t', '10',
-          '-vf', `fps=${a.fps},scale=${a.size}:${a.size}:force_original_aspect_ratio=decrease:force_divisible_by=2`,
-          '-c:v', 'libx264', '-preset', 'veryfast', '-crf', String(a.crf), '-pix_fmt', 'yuv420p',
-          '-c:a', 'aac', '-b:a', '64k', '-ac', '1', '-movflags', '+faststart', outP]
-        const ff = spawn(FFMPEG, args)
-        const t = setTimeout(() => { try { ff.kill('SIGKILL') } catch {} ; resolve(false) }, 40000)
-        ff.on('error', () => { clearTimeout(t); resolve(false) })
-        ff.on('close', code => { clearTimeout(t); resolve(code === 0 && fs.existsSync(outP)) })
-      })
-      if (!ok) { L(id, `تصغير الفيديو فشل (${a.size}px)`); continue }
-      const b = fs.readFileSync(outP); rm(outP)
-      L(id, `🗜️ تصغير الفيديو ${a.size}px/${a.fps}fps/crf${a.crf}: ${(media.length / 1024).toFixed(0)}KB → ${(b.length / 1024).toFixed(0)}KB`)
-      if (b.length < best.length) best = b
-      if (b.length <= LIMIT) break
-    }
-  } finally { rm(inP, outP) }
-  return best
-}
-
 async function shrinkIfBig(buf, isVideo) {
   if (buf.length <= 900 * 1024) return buf
   try {
@@ -233,6 +197,27 @@ function audioStreamInfo(media) {
   })
 }
 
+// نفس تحويل أمر لصوت بالظبط: فيديو → mp3 (192k / 44100)، وده الشكل اللي اشتغل معاك لما دمجته يدوي
+function videoToMp3(media, id = '-') {
+  return new Promise((resolve, reject) => {
+    const key = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`
+    const inP = path.join(os.tmpdir(), `${key}_v.mp4`)
+    const outP = path.join(os.tmpdir(), `${key}_a.mp3`)
+    fs.writeFileSync(inP, media)
+    const args = ['-y', '-i', inP, '-vn', '-acodec', 'libmp3lame', '-b:a', '192k', '-ar', '44100', '-loglevel', 'error', outP]
+    L(id, 'ffmpeg(mp3)', args.join(' '))
+    const ff = spawn(FFMPEG, args)
+    ff.on('error', e => { rm(inP, outP); reject(e) })
+    ff.on('close', code => {
+      rm(inP)
+      if (code !== 0 || !fs.existsSync(outP)) { rm(outP); return reject(new Error('فشل استخراج الصوت')) }
+      const b = fs.readFileSync(outP); rm(outP)
+      L(id, `صوت mp3 جاهز: ${b.length} بايت`)
+      resolve(b)
+    })
+  })
+}
+
 // بترجّع { buf, seconds } — seconds هي المدة الفعلية للصوت (مهمة جداً لتشغيل الستيكر)
 function toOpusOggBuffer(inputBuffer, maxSeconds = 10, id = '-') {
   return new Promise((resolve, reject) => {
@@ -242,7 +227,7 @@ function toOpusOggBuffer(inputBuffer, maxSeconds = 10, id = '-') {
     const outPath = path.join(os.tmpdir(), `${key}_out.ogg`)
     fs.writeFileSync(inPath, inputBuffer)
 
-    const args = ['-y', '-i', inPath, '-vn', '-af', `alimiter=limit=0.8:attack=5:release=50:level=disabled,apad=whole_dur=${maxSeconds}`, '-t', String(maxSeconds), '-c:a', 'libopus', '-b:a', '64k', '-ar', '48000', '-ac', '1', outPath]
+    const args = ['-y', '-i', inPath, '-vn', '-t', String(maxSeconds), '-c:a', 'libopus', '-b:a', '64k', '-ar', '48000', '-ac', '1', outPath]
     L(id, 'ffmpeg', args.join(' '))
     const ff = spawn(FFMPEG, args)
     let err = ''
@@ -282,16 +267,9 @@ async function buildAndSend(conn, m, stickerBuf, rawAudio, id) {
     prepareWAMessageMedia({ audio: opusBuf, mimetype: 'audio/ogg; codecs=opus', ptt: false }, { upload: conn.waUploadToServer })
   )
 
-  // ستيكر الصوت الحقيقي في واتساب صوته دايماً 10 ثواني، فالصوت بيتكمّل بصمت لحد 10 ثواني (apad فوق)
-  const secondsSent = 10
-
-  const am = { ...audioMedia.audioMessage, seconds: secondsSent }
-
-  // الستيكر: نفس شكل الستيكر المتحرك الحقيقي (isAnimated + الأبعاد)
+  // نفس أمر ستيكر_صوت الشغال بالظبط
   const sm = { ...stickerMedia.stickerMessage }
-  const wi = webpInfo(stickerBuf)
-  if (wi.animated) sm.isAnimated = true
-  if (wi.width && !sm.width) { sm.width = wi.width; sm.height = wi.height }
+  const am = { ...audioMedia.audioMessage, seconds: audioMedia.audioMessage.seconds || 10 }
 
   L(id, 'الستيكر:', JSON.stringify({
     mimetype: sm.mimetype, isAnimated: sm.isAnimated, width: sm.width, height: sm.height, bytes: Number(sm.fileLength) || stickerBuf.length
@@ -318,13 +296,9 @@ async function finishVideo(conn, m, media, withSound) {
   const t0 = Date.now()
   L(id, `بدء | بصوت=${withSound} | الفيديو ${media.length} بايت | chat=${m.chat}`)
 
-  // بصوت: نصغّر الفيديو ونكرره لـ 10 ثواني قبل أي حاجة (الصوت بيتكرر معاه)
-  if (withSound) media = await shrinkVideo(media, id)
 
-  // لو بصوت: نبدأ من غير -fs (القص بيبوّظ ملف الـ webp المتحرك ويخلي الصوت مايشتغلش)
-  let sticker = withSound
-    ? await videoToWebpTuned(media, { q: 30, fps: 15 }).catch(() => videoToWebp(media))
-    : await shrinkIfBig(await videoToWebp(media), true)
+  // نفس الستيكر العادي بتاع "بدون صوت" (اللي اشتغل معاك يدوي)
+  let sticker = await shrinkIfBig(await videoToWebp(media), true)
   L(id, `الستيكر جاهز: ${sticker.length} بايت (${(sticker.length / 1024).toFixed(0)}KB)`)
 
   // ستيكر الصوت: لو أكبر من ~500KB نضغطه (جودة + FPS أقل) لحد ما ينزل تحت الحد
@@ -357,7 +331,8 @@ async function finishVideo(conn, m, media, withSound) {
   }
 
   try {
-    await buildAndSend(conn, m, sticker, media, id)
+    const mp3 = await videoToMp3(media, id)   // الصوت يعدّي على mp3 زي أمر لصوت
+    await buildAndSend(conn, m, sticker, mp3, id)
     L(id, `✅ خلص بنجاح | ${Date.now() - t0}ms`)
   } catch (e) {
     E(id, 'فشل دمج الصوت:', e?.stack || e?.message || e)
