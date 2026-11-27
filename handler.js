@@ -1,764 +1,829 @@
 // ════════════════════════════════════════════════════════
-//   ⛩️ sukuna bot v4 — index.js
-//   متلعبش في الكود ده، ممكن تبوظ البوت
+// ⛩️ SUKUNA BOT v4 — handler.js (OPTIMIZED)
+//    بنفس اتقان وقوة النظام الاحترافي + تحسينات الأداء
 // ════════════════════════════════════════════════════════
-process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = '1'
+import { smsg }         from './lib/simple.js'
+import { getButtonId } from './lib/buttons.js'
+import { format }       from 'util'
+import { fileURLToPath } from 'url'
+import path, { join }   from 'path'
+import fs, { unwatchFile, watchFile, readdirSync, existsSync, watch } from 'fs'
+import { pathToFileURL } from 'url'
+import chalk            from 'chalk'
+import ws               from 'ws'
 
+const _baileys = await import('@whiskeysockets/baileys')
+const proto    = _baileys?.proto || _baileys?.default?.proto || {}
 
-// ━━━ Config أولاً — تحميل كل الـ globals ━━━
-import './config.js'
-import './plugins/_allfake.js'
-
-import { createRequire }      from 'module'
-import { fileURLToPath, pathToFileURL } from 'url'
-import { platform }           from 'process'
-import * as wsLib             from 'ws'
-
-import fs, {
-  readdirSync, statSync, unlinkSync, existsSync,
-  mkdirSync, readFileSync, writeFileSync, watch
-} from 'fs'
-
-import path, { join, dirname } from 'path'
-import chalk                  from 'chalk'
-import pino                   from 'pino'
-import Pino                   from 'pino'
-import NodeCache              from 'node-cache'
-import { Low, JSONFile }      from 'lowdb'
-import pkg from 'lodash';
-
-const { chain } = pkg;
-import readline               from 'readline'
-import util                   from 'util'
-import { spawn }              from 'child_process'
-import { Boom }               from '@hapi/boom'
-
-import {
-  makeWASocket,
-  protoType,
-  serialize
-} from './lib/simple.js'
-
-import {
-  useMultiFileAuthState,
-  DisconnectReason,
-  fetchLatestBaileysVersion,
-  makeCacheableSignalKeyStore,
-  jidNormalizedUser,
-  fetchLatestWaWebVersion
-} from '@whiskeysockets/baileys'
-
-import store from './lib/store.js'
-
-import {
-  handler,
-  loadPlugins,
-  watchPlugins,
-  participantsUpdate,
-  groupsUpdate,
-  callUpdate
-} from './handler.js'
-
-const { yukiJadiBot } = await import('./plugins/sockets-serbot.js').catch(() => ({ yukiJadiBot: null }))
+const isNumber = x  => typeof x === 'number' && !isNaN(x)
+const delay    = ms => isNumber(ms) && new Promise(resolve => setTimeout(function () {
+  clearTimeout(this); resolve()
+}, ms))
 
 // ════════════════════════════════════════════════════════
-// 🔧 Helpers
+// 🔕 منع الخاص: لو مفعّل البوت مايردش خالص على الرسائل الخاصة (ما عدا المالك)
+//    التشغيل/الإيقاف بأمر  .منع_الخاص اون / اوف  (plugins/منع_الخاص.js)
 // ════════════════════════════════════════════════════════
-const format = util.format
-
-global.__filename = (pathURL = import.meta.url, rmPrefix = platform !== 'win32') =>
-  rmPrefix ? (/file:\/\/\//.test(pathURL) ? fileURLToPath(pathURL) : pathURL) : pathToFileURL(pathURL).toString()
-
-global.__dirname = (pathURL) => dirname(global.__filename(pathURL, true))
-
-global.__require = (dir = import.meta.url) => createRequire(dir)
-
-const __dirname = global.__dirname(import.meta.url)
-
-global.timestamp = { start: new Date() }
-global.opts      = {}
-global.prems     = global.prems || []
-global.conns     = Array.isArray(global.conns) ? global.conns : []
-global.ch        = global.ch || {}   // قنوات الانضمام
-
-// alias عشان البلاجنات القديمة تشتغل
-global.owner     = global.owners || []
-global.botname   = global.botName
-
-// ════════════════════════════════════════════════════════
-// 📁 المجلدات الضرورية
-// ════════════════════════════════════════════════════════
-// ════════════════════════════════════════════════════════
-// 💽 Railway Volume — الجلسات وقاعدة البيانات تفضل بعد كل Deploy/Restart
-//   Railway بيسمح بـ Volume واحد بس للخدمة، فبنوصّل session/ و Sessions/ و database.json جواه بـ symlink.
-//   (بيشتغل لوحده لو Volume متوصّل — Railway بيحط المتغير RAILWAY_VOLUME_MOUNT_PATH تلقائياً)
-// ════════════════════════════════════════════════════════
-try {
-  const VOL = process.env.RAILWAY_VOLUME_MOUNT_PATH
-  if (VOL) {
-    for (const [name, isDir] of [['session', true], ['Sessions', true], ['database.json', false]]) {
-      const link = join(__dirname, name), target = join(VOL, name)
-      let isLink = false
-      try { isLink = fs.lstatSync(link).isSymbolicLink() } catch {}
-      if (isLink) continue
-      if (!existsSync(target)) {
-        if (existsSync(link)) fs.cpSync(link, target, { recursive: true })
-        else if (isDir) mkdirSync(target, { recursive: true })
-      }
-      try { fs.rmSync(link, { recursive: true, force: true }) } catch {}
-      fs.symlinkSync(target, link, isDir ? 'dir' : 'file')
-      console.log(chalk.green(`[Volume] ${name} → ${target}`))
-    }
-  }
-} catch (e) { console.error(chalk.red('[Volume]'), e.message) }
-
-const AUTH_DIR   = join(__dirname, 'session')
-const PLUGIN_DIR = join(__dirname, 'plugins')
-const SUBBOT_DIR = join(__dirname, global.subbotDir || 'Sessions/SubBot')
-const TMP_DIR    = join(__dirname, 'tmp')
-
-;[AUTH_DIR, PLUGIN_DIR, SUBBOT_DIR, TMP_DIR].forEach(d => {
-  if (!existsSync(d)) mkdirSync(d, { recursive: true })
-})
-
-// ════════════════════════════════════════════════════════
-// 💾 قاعدة البيانات — lowdb
-// ════════════════════════════════════════════════════════
-global.db      = new Low(new JSONFile(join(__dirname, 'database.json')))
-global.DATABASE = global.db
-
-global.loadDatabase = async function loadDatabase() {
-  // لو بيُقرأ حالياً، انتظر
-  if (global.db.READ) {
-    return new Promise(resolve =>
-      setInterval(function () {
-        if (!global.db.READ) {
-          clearInterval(this)
-          resolve(global.db.data == null ? global.loadDatabase() : global.db.data)
-        }
-      }, 1000)
-    )
-  }
-  if (global.db.data !== null) return
-
-  global.db.READ = true
-  await global.db.read().catch(console.error)
-  global.db.READ = null
-
-  global.db.data = {
-    users:    {},
-    chats:    {},
-    settings: {},
-    ...(global.db.data || {})
-  }
-  global.db.chain = chain(global.db.data)
-}
-await global.loadDatabase()
-
-// ════════════════════════════════════════════════════════
-// 🔄 استعادة Session من BASE64
-// ════════════════════════════════════════════════════════
-const credsPath = join(AUTH_DIR, 'creds.json')
-
-if (global.sessionId && !existsSync(credsPath)) {
-  try {
-    let data
-    try   { data = JSON.parse(Buffer.from(global.sessionId, 'base64').toString('utf-8')) }
-    catch { data = JSON.parse(global.sessionId) }
-    writeFileSync(credsPath, JSON.stringify(data, null, 2))
-    console.log(chalk.green.bold('🔱 Session restored from SESSION_ID'))
-  } catch (e) {
-    console.error(chalk.red('[Session Restore]'), e.message)
-  }
+const PRIVATE_BLOCK_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'database', 'privateblock.json')
+if (!global.privateBlock) {
+  try { global.privateBlock = { enabled: JSON.parse(fs.readFileSync(PRIVATE_BLOCK_FILE, 'utf8')).enabled === true } }
+  catch { global.privateBlock = { enabled: false } }
 }
 
 // ════════════════════════════════════════════════════════
-// 📱 إعداد الاتصال (QR أو Pairing Code)
+// 👑 أرقام المالك المحمية (رقم عادي + LID)
 // ════════════════════════════════════════════════════════
-const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
-const question = txt => new Promise(res => rl.question(txt, res))
+const ownerNumbers  = ['201036547166', '201515640916']
+const ownerLids     = ['54160242270370', '20477758198374620', '204775819837462']
 
-const methodQR   = process.argv.includes('qr')
-const methodCode = process.argv.includes('code') || !!global.pairing
-
-// اختيار الطريقة لو مافيش session
-let opcion
-if (methodQR) {
-  opcion = '1'
-} else if (!existsSync(credsPath)) {
-  if (methodCode || global.pairing) {
-    opcion = '2'
-  } else {
-    do {
-      opcion = await question(
-        chalk.bold.white('اختر طريقة الاتصال:\n') +
-        chalk.bold.cyan('1. كود QR\n') +
-        chalk.bold.green('2. كود ربط (Pairing Code)\n') +
-        chalk.bold.white('--> ')
-      )
-      if (!/^[1-2]$/.test(opcion))
-        console.log(chalk.bold.red('اختر 1 أو 2 فقط'))
-    } while (opcion !== '1' && opcion !== '2')
-  }
+// ✅ دالة موحدة تتحقق من المالك بأي صيغة
+const isOwnerJid = (jid) => {
+  if (!jid) return false
+  const clean = String(jid).replace('@s.whatsapp.net', '').replace('@lid', '').replace(/[^0-9]/g, '')
+  return ownerNumbers.includes(clean) || ownerLids.includes(clean)
 }
 
-console.info = () => {}   // كبح رسائل baileys المزعجة
+const numOf = jid => String(jid || '').replace('@s.whatsapp.net', '').replace('@lid', '').replace(/[^0-9]/g, '')
 
 // ════════════════════════════════════════════════════════
-// 🔌 إنشاء الـ Socket
+// 🛡️ نظام الحماية من الطرد الجماعي
 // ════════════════════════════════════════════════════════
-protoType()
-serialize()
+global.antiMassKick = global.antiMassKick || {
+  tracking: new Map(),
+  WINDOW: 5000,
+  THRESHOLD: 3,
 
-const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR)
-const { version }          = await fetchLatestWaWebVersion().catch(() => ({ version: [2, 3000, 0] }))
-// ✅ كان stdTTL: 0 = مفيش حاجة بتتمسح أبداً (تسريب ذاكرة بيكبر مع الساعات). دلوقتي بتتمسح بعد 10 دقايق.
-const msgRetryCounterCache = new NodeCache({ stdTTL: 600, checkperiod: 120 })
-const userDevicesCache     = new NodeCache({ stdTTL: 600, checkperiod: 120 })
-
-const connectionOptions = {
-  version,
-  logger:  pino({ level: 'silent' }),
-  printQRInTerminal: opcion === '1' || methodQR,
-  auth: {
-    creds: state.creds,
-    keys:  makeCacheableSignalKeyStore(state.keys, Pino({ level: 'fatal' }).child({ level: 'fatal' }))
-  },
-  browser:                       ['Mac OS', 'Firefox', '10.15.7'],
-  markOnlineOnConnect:           true,
-  generateHighQualityLinkPreview: true,
-  syncFullHistory:               false,
-  keepAliveIntervalMs:           25_000,   // كان 55 ثانية: قريب جداً من مهلة السيرفر فكان واتساب يقفل الاتصال "فجأة" (408)
-  connectTimeoutMs:              60_000,
-  defaultQueryTimeoutMs:         60_000,   // كان undefined: أي طلب معلّق كان بيفضل للأبد
-  msgRetryCounterCache,
-  userDevicesCache,
-  getMessage: async key => {
-    try {
-      const jid = jidNormalizedUser(key.remoteJid)
-      const msg = await store.loadMessage(jid, key.id)
-      return msg?.message || ''
-    } catch { return '' }
-  },
-  cachedGroupMetadata: jid => global.conn?.chats?.[jid] ?? {},
-  patchMessageBeforeSending: msg => {
-    if (msg.buttonsMessage || msg.templateMessage || msg.listMessage) {
-      return {
-        viewOnceMessage: {
-          message: {
-            messageContextInfo: { deviceListMetadataVersion: 2, deviceListMetadata: {} },
-            ...msg
-          }
-        }
-      }
-    }
-    return msg
-  }
-}
-
-global.conn = makeWASocket(connectionOptions)
-global.conn.isInit = false
-
-// ════════════════════════════════════════════════════════
-// 📲 Pairing Code
-// ════════════════════════════════════════════════════════
-if (!existsSync(credsPath) && (opcion === '2' || methodCode)) {
-  if (!global.conn.authState.creds.registered) {
-    let pNum = global.pairing
-
-    if (!pNum) {
-      let raw
-      do {
-        raw = await question(chalk.bgBlack(chalk.bold.green(
-          `أدخل رقم الواتساب مع كود الدولة:\n${chalk.bold.magenta('---> ')}`
-        )))
-        raw = raw.replace(/\D/g, '')
-        if (!raw) console.log(chalk.bold.red('⚠️ الرقم فارغ'))
-      } while (!raw)
-      pNum = raw
-    }
-
-    rl.close()
-
-    setTimeout(async () => {
-      try {
-        let code = await global.conn.requestPairingCode(pNum.replace(/\D/g, ''), 'SUKUNAAA')
-        code = code?.match(/.{1,4}/g)?.join('-') || code
-        console.log('\n\n╔══════════════════════════╗\n║  PAIRING CODE: ' + code + '  ║\n╚══════════════════════════╝\n\n')
-      } catch (e) {
-        console.error(chalk.red('[Pairing]'), e.message)
-      }
-    }, 3000)
-  }
-}
-
-// ════════════════════════════════════════════════════════
-// 🔃 reloadHandler — يُعيد تحميل handler + conn
-// ════════════════════════════════════════════════════════
-let isInit   = true
-let _handler = { handler, loadPlugins, watchPlugins, participantsUpdate, groupsUpdate, callUpdate }
-
-// ✅ إعادة اتصال واحدة مجدولة بس — كان بيتعمل اتنين مع بعض فيتخانقوا (440)
-let _reconnectTimer = null
-let _replacedCount = 0
-let _replacedSince = 0
-let _holdUntil = 0          // لحد الوقت ده الـ watchdog مايحاولش يعيد الاتصال (بعد تعارض 440)
-let _failStreak = 0         // عدد محاولات إعادة الاتصال الفاشلة ورا بعض (للتأخير المتزايد)
-function scheduleReconnect(ms = 5000) {
-  if (_reconnectTimer) return
-  _reconnectTimer = setTimeout(async () => {
-    _reconnectTimer = null
-    try {
-      await global.reloadHandler(true)
-    } catch (e) {
-      // ✅ كان بيطبع الخطأ بس ويسيب البوت أوفلاين للأبد — دلوقتي بيحاول تاني
-      console.error(chalk.red('[reconnect] فشل:'), e?.message || e)
-      _failStreak++
-      scheduleReconnect(Math.min(5000 * 2 ** Math.min(_failStreak, 5), 120_000))
-    }
-  }, ms)
-}
-// ✅ متاحة لـ plugins/حارس_الاتصال.js (بيكشف الاتصال الميت ويعيد الاتصال)
-global.scheduleReconnect = scheduleReconnect
-
-global.reloadHandler = async function reloadHandler(restatConn = false) {
-  if (!restatConn) {
-    try {
-      const newH = await import(`./handler.js?t=${Date.now()}`).catch(console.error)
-      if (newH && Object.keys(newH).length) _handler = newH
-    } catch (e) { console.error('[reloadHandler]', e.message) }
-  }
-
-  if (restatConn) {
-    const oldChats = global.conn.chats
-    try { global.conn.ws.close() } catch {}
-    global.conn.ev.removeAllListeners()
-    global.conn = makeWASocket(connectionOptions, { chats: oldChats })
-    isInit = true
-  }
-
-  // إزالة المستمعين القدامى
-  if (!isInit) {
-    global.conn.ev.off('messages.upsert',          global.conn._handlerUpsert)
-    global.conn.ev.off('connection.update',        global.conn._handlerConnUpd)
-    global.conn.ev.off('creds.update',             global.conn._handlerCreds)
-    global.conn.ev.off('group-participants.update', global.conn._handlerParts)
-    global.conn.ev.off('groups.update',            global.conn._handlerGroups)
-    global.conn.ev.off('call',                     global.conn._handlerCall)
-  }
-
-  // ━━━ ربط الأحداث ━━━
-  // cache للـ groupMetadata عشان منكررش الـ call لكل رسالة
-  if (!global._groupMetaCache) global._groupMetaCache = new Map()
-  const getCachedGroupMeta = async (jid) => {
+  track(groupId, kickerJid, victimJid) {
+    const key = `${groupId}:${kickerJid}`
     const now = Date.now()
-    const cached = global._groupMetaCache.get(jid)
-    if (cached && (now - cached.ts) < 5 * 60 * 1000) return cached.data
-    const data = await global.conn.groupMetadata(jid).catch(() => null)
-    if (data) global._groupMetaCache.set(jid, { data, ts: now })
-    return data
-  }
-
-  global.conn._handlerUpsert = async ({ messages, type }) => {
-    if (type !== 'notify') return
-    const now = Math.floor(Date.now() / 1000)
-    for (let msg of messages) {
-      // 🚫 جروب متجاهَل (.بانشات): مفيش قراءة ولا رد ولا أي حاجة
-      if (global.isIgnoredGroup?.(msg.key?.remoteJid)) continue
-      // 🔕 منع الخاص: تجاهل كامل قبل أي قراءة أو تسجيل (المالك مستثنى)
-      if (global.shouldIgnorePrivate?.(msg)) continue
-      const ts = msg.messageTimestamp?.low || msg.messageTimestamp || 0
-      if (ts > 0 && (now - ts) > 120) continue
-
-      // ━━━ LID Fix: بس لو في lid فعلاً ━━━
-      try {
-        const isGroup = msg.key?.remoteJid?.endsWith('@g.us')
-        if (isGroup && msg.message) {
-          const senderRaw = msg.key?.participant || msg.participant || ''
-          const mentionedJid = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid || []
-          const hasLid = senderRaw.endsWith('@lid') || mentionedJid.some(j => j.endsWith('@lid'))
-
-          // نجيب الـ metadata بس لو في lid فعلاً
-          if (hasLid) {
-            const groupMetadata = await getCachedGroupMeta(msg.key.remoteJid)
-            if (groupMetadata) {
-
-              // 1. إصلاح الـ sender
-              if (senderRaw.endsWith('@lid')) {
-                const match = groupMetadata.participants.find(p => p.id === senderRaw || p.lid === senderRaw)
-                if (match?.jid && !match.jid.endsWith('@lid')) {
-                  msg.key.participant = match.jid
-                }
-              }
-
-              // 2. إصلاح الـ mentionedJid
-              if (Array.isArray(mentionedJid) && mentionedJid.some(j => j.endsWith('@lid'))) {
-                const lidMap = {}
-                mentionedJid.forEach(originalLid => {
-                  if (originalLid.endsWith('@lid')) {
-                    const match = groupMetadata.participants.find(p => p.id === originalLid || p.lid === originalLid)
-                    if (match?.jid && !match.jid.endsWith('@lid')) {
-                      lidMap[originalLid.split('@')[0]] = match.jid.split('@')[0]
-                    }
-                  }
-                })
-                const resolvedMentions = mentionedJid.map(jid => {
-                  if (jid.endsWith('@lid')) {
-                    const match = groupMetadata.participants.find(p => p.id === jid || p.lid === jid)
-                    return (match?.jid && !match.jid.endsWith('@lid')) ? match.jid : jid
-                  }
-                  return jid
-                })
-                if (msg.message?.extendedTextMessage?.contextInfo) {
-                  msg.message.extendedTextMessage.contextInfo.mentionedJid = resolvedMentions
-                }
-                const replaceLid = (text) => {
-                  if (!text) return text
-                  Object.entries(lidMap).forEach(([lidNum, jidNum]) => {
-                    text = text.replace(new RegExp(`@${lidNum}\b`, 'g'), `@${jidNum}`)
-                  })
-                  return text
-                }
-                if (msg.message?.conversation) msg.message.conversation = replaceLid(msg.message.conversation)
-                if (msg.message?.extendedTextMessage?.text) msg.message.extendedTextMessage.text = replaceLid(msg.message.extendedTextMessage.text)
-              }
-            }
-          }
-        }
-      } catch {}
-      // ━━━ نهاية LID Fix ━━━
-
-      ;(_handler.handler || handler)(global.conn, msg).catch(e =>
-        console.error(chalk.red('[messages.upsert]'), e.message)
-      )
+    if (!this.tracking.has(key)) this.tracking.set(key, [])
+    const events = this.tracking.get(key)
+    events.push({ victim: victimJid, timestamp: now })
+    const cutoff = now - this.WINDOW
+    for (let i = events.length - 1; i >= 0; i--) {
+      if (events[i].timestamp < cutoff) events.splice(i, 1)
     }
-  }
+    return events
+  },
 
-  global.conn._handlerConnUpd = connectionUpdate.bind(global.conn)
-  global.conn._handlerCreds   = saveCreds
-  global.conn._handlerParts   = upd => {
-    if (global.isIgnoredGroup?.(upd?.id)) return
-    return (_handler.participantsUpdate || participantsUpdate)(global.conn, upd).catch(() => {})
-  }
-  global.conn._handlerGroups  = upds => {
-    const list = (Array.isArray(upds) ? upds : [upds]).filter(u => !global.isIgnoredGroup?.(u?.id))
-    if (!list.length) return
-    return (_handler.groupsUpdate || groupsUpdate)(global.conn, list).catch(() => {})
-  }
-  global.conn._handlerCall    = calls => calls.forEach(c =>
-    (_handler.callUpdate || callUpdate)(global.conn, c).catch(() => {})
-  )
+  isMassKick(groupId, kickerJid) {
+    return (this.tracking.get(`${groupId}:${kickerJid}`) || []).length >= this.THRESHOLD
+  },
 
-  global.conn.ev.on('messages.upsert',           global.conn._handlerUpsert)
-  global.conn.ev.on('connection.update',         global.conn._handlerConnUpd)
-  global.conn.ev.on('creds.update',              global.conn._handlerCreds)
-  global.conn.ev.on('group-participants.update', global.conn._handlerParts)
-  global.conn.ev.on('groups.update',             global.conn._handlerGroups)
-  global.conn.ev.on('call',                      global.conn._handlerCall)
+  getVictims(groupId, kickerJid) {
+    const events = this.tracking.get(`${groupId}:${kickerJid}`) || []
+    return [...new Set(events.map(e => e.victim))]
+  },
 
-  // 2705 062a062e0632064a0646 contacts 0639063406270646 0646062d0644 062706440640 LID 2192 063106420645 062d0642064a0642064a
-  if (!global.conn.contacts) global.conn.contacts = {}
-
-  global.conn.ev.on('contacts.upsert', (contacts) => {
-    if (!global.conn.contacts) global.conn.contacts = {}
-    for (const c of contacts) {
-      if (c.id) global.conn.contacts[c.id] = c
-    }
-  })
-
-  global.conn.ev.on('contacts.update', (updates) => {
-    if (!global.conn.contacts) global.conn.contacts = {}
-    for (const c of updates) {
-      if (c.id) global.conn.contacts[c.id] = { ...(global.conn.contacts[c.id] || {}), ...c }
-    }
-  })
-
-  isInit = false
-  return true
-}
-
-// ════════════════════════════════════════════════════════
-// 📡 connectionUpdate
-// ════════════════════════════════════════════════════════
-async function connectionUpdate(update) {
-  const conn = global.conn
-  const { connection, lastDisconnect, isNewLogin, qr } = update
-  global.stopped = connection
-
-  if (isNewLogin) conn.isInit = true
-
-  const code = lastDisconnect?.error?.output?.statusCode
-    || lastDisconnect?.error?.output?.payload?.statusCode
-
-  if (global.db.data == null) await global.loadDatabase()
-
-  if (qr && (opcion === '1' || methodQR)) {
-    console.log(chalk.green.bold(`\n[ ]  امسح كود الـ QR`))
-  }
-
-  if (connection === 'connecting') {
-    console.log(chalk.hex('#9400FF').bold('⚡ جاري الاتصال...'))
-  }
-
-  if (connection === 'open') {
-    const jid  = jidNormalizedUser(conn.user?.id || '')
-    const name = conn.user?.name || conn.user?.verifiedName || 'GOJO BOT'
-    if (conn.user) conn.user.jid = jid
-
-    global.timestamp.connect = new Date()
-    _failStreak = 0
-    _replacedCount = 0
-
-    console.log(chalk.hex('#00FFFF').bold(
-      `\n╔══════════════════════════════════╗\n` +
-      `║  ✅ متصل: ${name.slice(0, 20).padEnd(20)} ║\n` +
-      `║  📱 JID: ${jid.slice(0, 21).padEnd(21)} ║\n` +
-      `╚══════════════════════════════════╝\n`
-    ))
-
-    // لود مجموعات الـ cache
-    conn.insertAllGroup().catch(() => {})
-
-    // انضمام للقنوات
-    await joinChannels(conn).catch(() => {})
-  }
-
-  if (connection === 'close') {
-    const reason = new Boom(lastDisconnect?.error)?.output?.statusCode
-
-    console.log(chalk.red(`🔴 انقطع الاتصال — كود: ${reason || '?'}`))
-
-    if (reason === DisconnectReason.loggedOut || reason === 401) {
-      console.log(chalk.red.bold('🔴 تم تسجيل الخروج — أعد الربط بـ Pairing Code'))
-      try { fs.unlinkSync(credsPath) } catch {}
-      scheduleReconnect(5000)
-      return
-    }
-
-    if (reason === DisconnectReason.connectionReplaced || reason === 440) {
-      const now = Date.now()
-      if (now - _replacedSince > 5 * 60_000) { _replacedSince = now; _replacedCount = 0 }
-      _replacedCount++
-      if (_replacedCount > 3) {
-        // ✅ كان بيوقف نهائياً لحد ما تعمل Restart يدوي. دلوقتي بيستنى 5 دقايق ويحاول تاني (غالباً النسخة القديمة من الـ Deploy بتكون قفلت)
-        console.log(chalk.red.bold('🔴 الجلسة شغّالة في مكانين في نفس الوقت (تعارض 440) — هستنى 5 دقايق وأحاول تاني.\n   لو بيتكرر: اقفل النسخة التانية (جهازك/Deploy قديم/Replica تانية في Railway).'))
-        _holdUntil = Date.now() + 5 * 60_000
-        _replacedCount = 0
-        scheduleReconnect(5 * 60_000)
-        return
-      }
-      console.log(chalk.yellow('⚠️ الجلسة استُبدلت — إعادة اتصال بعد 30 ثانية...'))
-      scheduleReconnect(30_000)
-      return
-    }
-
-    // ✅ أي كود تاني (405 / 500 / 428 / 515 ...): نحافظ على الجلسة ونعيد الاتصال — مبقاش بنمسح creds
-    _failStreak++
-    const wait = Math.min(5000 * 2 ** Math.min(_failStreak - 1, 4), 60_000)   // 5ث ← 10 ← 20 ← 40 ← 60
-    console.log(chalk.yellow(`♻️ إعادة الاتصال بعد ${wait / 1000} ثانية...`))
-    scheduleReconnect(wait)
+  clear(groupId, kickerJid) {
+    this.tracking.delete(`${groupId}:${kickerJid}`)
   }
 }
-
-// ════════════════════════════════════════════════════════
-// 📦 تحميل البلاجنات — global.plugins + hot-reload
-// ════════════════════════════════════════════════════════
-await loadPlugins(PLUGIN_DIR)
-watchPlugins(PLUGIN_DIR)
-
-// Hot-reload فردي مع فحص syntax
-global.reload = async (_ev, filename) => {
-  if (!filename?.endsWith('.js')) return
-  const filePath = join(PLUGIN_DIR, filename)
-
-  if (!existsSync(filePath)) {
-    console.log(chalk.yellow(`[Plugin] 🗑️ حُذف: ${filename}`))
-    delete global.plugins[filename]
-    return
-  }
-
-  console.log(chalk.cyan(`[Plugin] 🔄 تحديث: ${filename}`))
-
-  try {
-    const src = readFileSync(filePath, 'utf8')
-    // فحص syntax بسيط
-    try { new Function(src) } catch (synErr) {
-      console.error(chalk.red(`[Plugin] ❌ Syntax في ${filename}:`), synErr.message)
-      return
-    }
-  } catch {}
-
-  try {
-    const url = pathToFileURL(filePath).href + `?t=${Date.now()}`
-    const mod = await import(url)
-    global.plugins[filename] = mod.default || mod
-    console.log(chalk.green(`[Plugin] ✅ ${filename}`))
-  } catch (e) {
-    console.error(chalk.red(`[Plugin] ❌ ${filename}:`), e.message)
-  }
-
-  // إعادة ترتيب أبجدي
-  global.plugins = Object.fromEntries(
-    Object.entries(global.plugins).sort(([a], [b]) => a.localeCompare(b))
-  )
-}
-Object.freeze(global.reload)
-watch(PLUGIN_DIR, global.reload)
-
-// ════════════════════════════════════════════════════════
-// 🚀 تشغيل الاتصال الأولي
-// ════════════════════════════════════════════════════════
-await global.reloadHandler()
-
-// ════════════════════════════════════════════════════════
-// 💾 حفظ DB كل 30 ثانية + تنظيف tmp
-// ════════════════════════════════════════════════════════
-setInterval(async () => {
-  if (global.db?.data) {
-    await global.db.write().catch(e => console.error('[DB Write]', e.message))
-  }
-}, 30_000)
 
 setInterval(() => {
-  try {
-    readdirSync(TMP_DIR).forEach(f => {
-      try { unlinkSync(join(TMP_DIR, f)) } catch {}
-    })
-  } catch {}
-}, 60_000)
+  const now = Date.now()
+  const cutoff = now - global.antiMassKick.WINDOW
+  for (const [key, events] of global.antiMassKick.tracking.entries()) {
+    if (events.length === 0 || events.every(e => e.timestamp < cutoff)) {
+      global.antiMassKick.tracking.delete(key)
+    }
+  }
+}, 120_000)
 
 // ════════════════════════════════════════════════════════
-// 🤖 Sub-Bots — إعادة تشغيل عند البدء
+// 📦 PLUGIN LOADER
 // ════════════════════════════════════════════════════════
-function getInstalledIds() {
-  // تنصيب.js بيحفظ القايمة في Sessions/ (قبل كده كانت في plugins/ — ولسه بنقرا منها لو الجديد مش موجود)
-  for (const f of [join(__dirname, 'Sessions', 'yuki_installs.json'), join(PLUGIN_DIR, 'yuki_installs.json')]) {
-    try { if (existsSync(f)) return JSON.parse(readFileSync(f, 'utf8')) || [] } catch {}
+global.plugins = global.plugins || {}
+
+export async function loadPlugins(pluginDir) {
+  if (!existsSync(pluginDir)) return
+  const files = readdirSync(pluginDir).filter(f => f.endsWith('.js'))
+  let ok = 0, fail = 0
+  global.plugins = {}
+
+  for (const file of files) {
+    try {
+      const url = pathToFileURL(join(pluginDir, file)).href + `?t=${Date.now()}`
+      const mod = await import(url)
+
+      if (mod.default && typeof mod.default === 'object' && typeof mod.default.execute === 'function') {
+        const plug = mod.default
+        const fn = async function(m, extra) {
+          return plug.execute.call(this, extra?.conn || this, m, extra)
+        }
+        fn.command  = plug.name ? [plug.name, ...(Array.isArray(plug.aliases) ? plug.aliases : [])] : (Array.isArray(plug.aliases) ? plug.aliases : [])
+        fn.tags     = plug.tags || []
+        fn.help     = plug.help || fn.command
+        fn.owner    = plug.ownerOnly  ?? plug.owner  ?? false
+        fn.rowner   = plug.ownerOnly  ?? plug.rowner ?? false
+        fn.group    = plug.groupOnly  ?? plug.group  ?? false
+        fn.private  = plug.privateOnly ?? plug.private ?? false
+        fn.admin    = plug.adminOnly  ?? plug.admin  ?? false
+        fn.botAdmin = plug.botAdminRequired ?? plug.botAdmin ?? false
+        fn.premium  = plug.premium ?? false
+        fn.limit    = plug.limit   ?? false
+        fn.exp      = plug.exp     ?? 10
+        fn.fail     = plug.fail    ?? null
+        global.plugins[file] = fn
+        ok++
+        continue
+      }
+
+      if (mod.default && typeof mod.default === 'function') {
+        const plug = mod.default
+        if (!plug.before && typeof mod.before === 'function') plug.before = mod.before
+        if (!plug.all    && typeof mod.all    === 'function') plug.all    = mod.all
+        if (!plug.after  && typeof mod.after  === 'function') plug.after  = mod.after
+        global.plugins[file] = plug
+        ok++
+        continue
+      }
+
+      if (!mod.default && (typeof mod.before === 'function' || typeof mod.all === 'function')) {
+        const stub   = async function() {}
+        stub.command = []
+        stub.before  = mod.before || null
+        stub.all     = mod.all    || null
+        stub.after   = mod.after  || null
+        stub.disabled = false
+        global.plugins[file] = stub
+        ok++
+        continue
+      }
+
+    } catch (e) {
+      fail++
+      console.error(chalk.red(`[Plugin] ❌ ${file}: ${e.message}`))
+    }
   }
-  return []
+
+  console.log(chalk.hex('#9400FF')(
+    `[Plugin] ✅ ${ok} loaded${fail ? `, ❌ ${fail} failed` : ''} | total: ${Object.keys(global.plugins).length}`
+  ))
 }
 
-function isSubBotAlive(uid) {
-  return global.conns.some(s => {
-    const n = (s?.user?.jid || s?.user?.id || '').split('@')[0].split(':')[0]
-    return n === uid && s?.ws?.readyState === 1
+export function watchPlugins(pluginDir) {
+  if (!existsSync(pluginDir)) return
+  watch(pluginDir, async (ev, file) => {
+    if (!file?.endsWith('.js')) return
+    console.log(chalk.yellow(`[Plugin] 🔄 Reloading: ${file}`))
+    await loadPlugins(pluginDir).catch(console.error)
   })
 }
 
-async function reviveSubBot(uid) {
-  const bPath = join(SUBBOT_DIR, uid)
-  if (!existsSync(join(bPath, 'creds.json'))) return
-  const reviveFn = yukiJadiBot || global.yukiJadiBot
-  if (!reviveFn) return
-  try {
-    await reviveFn({ pathYukiJadiBot: bPath, m: null, conn: global.conn, args: [], fromCommand: false })
-    await new Promise(r => setTimeout(r, 3000))
-  } catch (e) {
-    console.error(chalk.red(`[SubBot] Failed ${uid}:`), e.message)
+// ════════════════════════════════════════════════════════
+// 🔔 رسائل فشل الصلاحيات
+// ════════════════════════════════════════════════════════
+global.dfail = (type, m, conn) => {
+  const msgs = {
+    rowner:   `*╮═≼『⛩️┃تنبيه┃⛩️』≽═╭*\n*┇⌗╎ꕥ هذا الأمر لمالكي البوت فقط ⌗*\n*╯✯≼══━━﹂⛩️﹁━━══≽✯*`,
+    owner:    `*╮═≼『⛩️┃تنبيه┃⛩️』≽═╭*\n*┇⌗╎ꕥ هذا الأمر للمطورين فقط ⌗*\n*╯✯≼══━━﹂⛩️﹁━━══≽✯*`,
+    premium:  `*╮═≼『⛩️┃تنبيه┃⛩️』≽═╭*\n*┇⌗╎ꕥ هذا الأمر للمستخدمين المميزين فقط ⌗*\n*╯✯≼══━━﹂⛩️﹁━━══≽✯*`,
+    group:    `*╮═≼『⛩️┃تنبيه┃⛩️』≽═╭*\n*┇⌗╎ꕥ هذا الأمر للمجموعات فقط ⌗*\n*╯✯≼══━━﹂⛩️﹁━━══≽✯*`,
+    private:  `*╮═≼『⛩️┃تنبيه┃⛩️』≽═╭*\n*┇⌗╎ꕥ هذا الأمر للمحادثات الخاصة فقط ⌗*\n*╯✯≼══━━﹂⛩️﹁━━══≽✯*`,
+    admin:    `*╮═≼『⛩️┃تنبيه┃⛩️』≽═╭*\n*┇⌗╎ꕥ هذا الأمر للأدمن فقط ⌗*\n*╯✯≼══━━﹂⛩️﹁━━══≽✯*`,
+    botAdmin: `*╮═≼『⛩️┃تنبيه┃⛩️』≽═╭*\n*┇⌗╎ꕥ لتنفيذ هذا الأمر يجب أن أكون أدمن ⌗*\n*╯✯≼══━━﹂⛩️﹁━━══≽✯*`,
+    restrict: `*╮═≼『⛩️┃تنبيه┃⛩️』≽═╭*\n*┇⌗╎ꕥ هذه الخاصية معطلة حالياً ⌗*\n*╯✯≼══━━﹂⛩️﹁━━══≽✯*`,
+    limit:    `*╮═≼『⛩️┃تنبيه┃⛩️』≽═╭*\n*┇⌗╎ꕥ انتهى حد استخدامك اليومي ⌗*\n*╯✯≼══━━﹂⛩️﹁━━══≽✯*`
   }
+  const msg = msgs[type]
+  if (msg) return conn?.reply?.(m.chat, msg, m).then(() => m.react?.('✖️')).catch(() => {})
 }
 
-// revival عند البدء (بعد 12 ثانية)
-setTimeout(async () => {
-  // ✅ لو تنصيب.js محمّل: هو اللي بيشغّل البوتات الفرعية وعنده مراقب بيرجّع الواقع (بيحترم فترات الانتظار بعد 440/403)
-  if (typeof global.initSubBots === 'function') {
-    await global.initSubBots(global.conn).catch(e => console.error('[SubBot] init:', e.message))
+// ════════════════════════════════════════════════════════
+// ✅ دالة التحقق من صلاحية الأدمن
+// ════════════════════════════════════════════════════════
+const checkAdmin = val => {
+  if (!val) return false
+  if (val === true || val === 'true') return true
+  if (typeof val === 'string') return /admin|super|creator|owner/i.test(val)
+  if (typeof val === 'number') return val === 1
+  return false
+}
+
+// ════════════════════════════════════════════════════════
+// 🚀 MAIN HANDLER
+// ════════════════════════════════════════════════════════
+export async function handler(conn, rawMsg) {
+  const opts = global.opts || {}
+
+  if (!rawMsg) return
+  if (!rawMsg.key) return
+  if (!conn?.user?.jid) return
+  if (rawMsg.key.remoteJid?.endsWith('@g.us') && global.isIgnoredGroup?.(rawMsg.key.remoteJid)) return   // 🚫 .بانشات
+
+  const stubType = rawMsg?.messageStubType
+
+  // ══ خروج أو طرد معاقب (31=طرد، 32=خروج) ══
+  if ((stubType === 31 || stubType === 32) && rawMsg?.key?.remoteJid?.endsWith('@g.us')) {
+    const groupId = rawMsg.key.remoteJid
+    const victims = rawMsg.messageStubParameters || []
+    for (const jid of victims) {
+      if (global.activePunishments?.[jid]?.chatId === groupId) {
+        const p = global.activePunishments[jid]
+        const endTime = p.endTime || 0
+        const remaining = endTime - Date.now()
+        const fmtTime = (ms) => {
+          if (ms <= 0) return 'انتهى'
+          const totalMins = Math.floor(ms / 60000)
+          const hours = Math.floor(totalMins / 60)
+          const mins = totalMins % 60
+          if (hours > 0 && mins > 0) return `${hours} ساعة و ${mins} دقيقة`
+          if (hours > 0) return `${hours} ساعة`
+          return `${mins} دقيقة`
+        }
+        clearTimeout(p.leaveTimeout)
+        p.reminders?.forEach(t => clearTimeout(t))
+        await conn.sendMessage(groupId, {
+          text: `*❍━━━══━━❪⛩️❫━━══━━━❍*\n*｢✅｣⇇ تم بدء العداد*\n\nخرج @${jid.split('@')[0]} من الجروب\n⏳ الوقت المتبقي للعقوبة: *${fmtTime(remaining)}*\n\nسيتم إخطاره بالعودة بعد انتهاء المدة 🔔\n*❍━━━══━━❪⛩️❫━━══━━━❍*`,
+          mentions: [jid]
+        }).catch(() => {})
+      }
+    }
+    // شغّل handler.before في الأوامر للأحداث دي
+    for (const plugin of Object.values(global.plugins)) {
+      if (typeof plugin?.before === 'function') {
+        await plugin.before.call(conn, rawMsg, { conn }).catch(() => {})
+      }
+    }
     return
   }
-  const ids = getInstalledIds()
-  if (!ids.length) return
-  console.log(chalk.cyan(`[SubBot] 🔄 إعادة تشغيل ${ids.length} بوت فرعي...`))
-  for (const uid of ids) await reviveSubBot(uid)
-}, 12_000)
 
-// Watchdog كل دقيقتين (يبدأ بعد 15 ثانية)
-setTimeout(() => {
-  setInterval(async () => {
-    try {
-      const before = global.conns.length
-      global.conns = global.conns.filter(s => {
-        const ws  = s?.ws?.readyState
-        const dead = !s || ws === 3 || (!s.isInit && !s.user && ws !== 0 && ws !== 1)
-        if (dead) {
-          try { s?.ws?.close() }          catch {}
-          try { s?.ev?.removeAllListeners() } catch {}
-        }
-        return !dead
-      })
+  // ══ دخول (27=add، 28=invite) ══
+  if ((stubType === 27 || stubType === 28) && rawMsg?.key?.remoteJid?.endsWith('@g.us')) {
+    const groupId   = rawMsg.key.remoteJid
+    const kickerJid = rawMsg.participant || rawMsg.key?.participant
+    const victims   = rawMsg.messageStubParameters || []
 
-      if (global.conns.length < before)
-        console.log(chalk.yellow(`[Watchdog] 🧹 أزال ${before - global.conns.length} بوت ميت`))
-
-      // لو مراقب تنصيب.js شغّال، هو المسؤول (عشان ماحصلش تشغيل مكرر لنفس الجلسة = 440)
-      if (!global.__jadiSup) {
-        for (const uid of getInstalledIds()) {
-          if (!isSubBotAlive(uid)) await reviveSubBot(uid)
-        }
+    // دخول معاقب — شغّل handler.before
+    for (const jid of victims) {
+      if (global.activePunishments?.[jid]?.chatId === groupId) {
+        await (async () => {
+          try {
+            const meta = await conn.groupMetadata(groupId).catch(() => null)
+            if (!meta) return
+            const admins = meta.participants.filter(p => p.admin).map(p => p.id)
+            const p = global.activePunishments[jid]
+            const endTime = p.endTime || 0
+            const remaining = endTime - Date.now()
+            const fmtTime = (ms) => {
+              if (ms <= 0) return 'انتهى'
+              const totalMins = Math.floor(ms / 60000)
+              const hours = Math.floor(totalMins / 60)
+              const mins = totalMins % 60
+              if (hours > 0 && mins > 0) return `${hours} ساعة و ${mins} دقيقة`
+              if (hours > 0) return `${hours} ساعة`
+              return `${mins} دقيقة`
+            }
+            await conn.sendMessage(groupId, {
+              text: `*❍━━━══━━❪⛩️❫━━══━━━❍*\n*｢⚠️｣⇇ تنبيه للأدمنز*\n\nالشخص @${jid.split('@')[0]} دخل الجروب وعنده عقوبة!\nالوقت المتبقي: *${fmtTime(remaining)}*\n\nهل تريدون:\n✅ اكتب *اتركه* للسماح له\n🔨 اكتب *اطرده* لطرده فوراً\n\n⏰ لو مفيش رد خلال 15 دقيقة هيتطرد تلقائياً\n*❍━━━══━━❪⛩️❫━━══━━━❍*`,
+              mentions: [...admins, jid]
+            }).catch(() => {})
+          } catch {}
+        })()
       }
-
-      // ✅ حارس البوت الرئيسي: لو السوكت مقفول ومفيش إعادة اتصال مجدولة → ارجع اتصل
-      if (Date.now() >= _holdUntil && !_reconnectTimer && global.conn?.ws?.readyState === 3) {
-        console.log(chalk.yellow('[Watchdog] البوت الرئيسي مقفول ومفيش إعادة اتصال مجدولة — بعيد الاتصال'))
-        scheduleReconnect(1000)
-      }
-    } catch (e) { console.error('[Watchdog]', e.message) }
-  }, 2 * 60_000)
-}, 15_000)
-
-// ════════════════════════════════════════════════════════
-// 📡 joinChannels — انضمام للقنوات
-// ════════════════════════════════════════════════════════
-async function joinChannels(conn) {
-  if (!global.ch || typeof global.ch !== 'object') return
-  for (const value of Object.values(global.ch)) {
-    if (typeof value === 'string' && value.endsWith('@newsletter')) {
-      await conn.newsletterFollow(value).catch(() => {})
     }
+
+    if (groupId && kickerJid && victims.length > 0) {
+      victims.forEach(v => global.antiMassKick.track(groupId, kickerJid, v))
+
+      if (global.antiMassKick.isMassKick(groupId, kickerJid)) {
+        setTimeout(async () => {
+          try {
+            const metadata = await conn.groupMetadata(groupId).catch(() => null)
+            if (!metadata) return
+
+            const participants = metadata.participants || []
+            const botJid       = conn.user?.jid
+            const botPart      = participants.find(p => (p?.id || p?.jid) === botJid)
+            const kickerPart   = participants.find(p => (p?.id || p?.jid) === kickerJid)
+
+            if (!checkAdmin(botPart?.admin)) return
+            if (!checkAdmin(kickerPart?.admin)) {
+              global.antiMassKick.clear(groupId, kickerJid)
+              return
+            }
+
+            const kickerNum = kickerJid.split('@')[0]
+            const isOwner   = (global.owners || []).some(o => String(o).replace(/\D/g, '') === kickerNum)
+            if (isOwner) {
+              global.antiMassKick.clear(groupId, kickerJid)
+              return
+            }
+
+            await conn.groupParticipantsUpdate(groupId, [kickerJid], 'demote').catch(() => {})
+            await delay(700)
+            await conn.groupParticipantsUpdate(groupId, [kickerJid], 'remove').catch(() => {})
+            await delay(1000)
+
+            const allVictims  = global.antiMassKick.getVictims(groupId, kickerJid)
+            const currentJids = participants.map(p => p.id || p.jid)
+            const toReAdd     = allVictims.filter(v => !currentJids.includes(v) && v !== kickerJid)
+
+            let restored = 0
+            for (const victim of toReAdd) {
+              await conn.groupParticipantsUpdate(groupId, [victim], 'add')
+                .then(() => restored++)
+                .catch(() => {})
+              await delay(1200)
+            }
+
+            await conn.sendMessage(groupId, {
+              text: `*╮═≼『⛩️┃حماية الجروب┃⛩️』≽═╭*\n\n*┇⌗╎⚠️ تم إيقاف طرد جماعي*\n*┇⌗╎👤 المعتدي:* @${kickerNum}\n*┇⌗╎📊 الضحايا:* ${allVictims.length}\n*┇⌗╎✅ تمت إعادة:* ${restored}\n*┇⌗╎✓ تم إزالة إشرافه وطرده*\n\n*╯✯≼══━━﹂⛩️﹁━━══≽✯*`,
+              mentions: [kickerJid, ...toReAdd]
+            }).catch(() => {})
+
+            global.antiMassKick.clear(groupId, kickerJid)
+          } catch (err) {
+            console.error('[Anti-MassKick]', err.message)
+          }
+        }, 1000)
+      }
+    }
+  }
+
+  if (!rawMsg?.message) return
+
+  const msgId = rawMsg.key?.id || ''
+  const isFromMe = rawMsg.key?.fromMe === true
+  if (msgId.startsWith('NJX-') ||
+     (msgId.startsWith('3EB0') && !isFromMe) ||
+     (msgId.startsWith('BAE5') && msgId.length === 16) ||
+     (msgId.startsWith('B24E') && msgId.length === 20) ||
+      msgId.startsWith('3E83')) return
+
+  if (rawMsg.key?.remoteJid === 'status@broadcast') {
+    if (global.autoRead) await conn.readMessages([rawMsg.key]).catch(() => {})
+    return
+  }
+
+  await conn.pushMessage([rawMsg]).catch(() => {})
+
+  let m
+  try { m = smsg(conn, rawMsg) } catch { return }
+
+  if (!m || !m.sender || !m.chat) return
+
+  // ✅ منع استغلال اليوزرنيم المزيف
+  // لو fromMe=true بس المرسل مش البوت نفسه → تجاهل
+  {
+    const botNum    = numOf(conn.user?.jid || '')
+    const senderNum = numOf(m.sender)
+    const isRealFromMe = isFromMe && (
+      senderNum === botNum ||
+      m.sender === conn.user?.jid ||
+      rawMsg.key?.participant // رسايل الجروب اللي البوت بعتها
+    )
+    if (isFromMe && !isRealFromMe) return
+  }
+
+  m.exp = 0
+
+  if (global.db?.data == null && typeof global.loadDatabase === 'function') {
+    await global.loadDatabase().catch(() => {})
+  }
+
+  const db = global.db?.data || { users: {}, chats: {}, settings: {} }
+  if (!db.users)    db.users    = {}
+  if (!db.chats)    db.chats    = {}
+  if (!db.settings) db.settings = {}
+
+  const uKey = m.sender
+  if (!db.users[uKey]) db.users[uKey] = {}
+  const user = db.users[uKey]
+
+ const userDefaults = {
+  name: m.name || '', exp: 0, coin: 0, bank: 0, level: 0, limit: 10,
+  health: 100, premium: false, premiumTime: 0, banned: false,
+  bannedReason: '', commands: 0, afk: -1, afkReason: '', warn: 0,
+title: '', lastclaim: 0, lastweekly: 0
+}
+  for (const [key, val] of Object.entries(userDefaults)) {
+    if (!(key in user) || (isNumber(val) && !isNumber(user[key]))) user[key] = val
+  }
+
+  const cKey = m.chat
+  if (!db.chats[cKey]) db.chats[cKey] = {}
+  const chat = db.chats[cKey]
+
+  const chatDefaults = {
+    isBanned: false, isMute: false, welcome: false, sWelcome: '',
+    sBye: '', detect: true, primaryBot: null, modoadmin: false,
+    antiLink: true, nsfw: false, economy: true
+  }
+  for (const [key, val] of Object.entries(chatDefaults)) {
+    if (!(key in chat)) chat[key] = val
+  }
+
+  const sKey = conn.user?.jid || 'default'
+  if (!db.settings[sKey]) db.settings[sKey] = {}
+  const settings = db.settings[sKey]
+  if (!('self' in settings))      settings.self      = false
+  if (!('jadibotmd' in settings)) settings.jadibotmd = true
+
+  if (typeof m.text !== 'string') m.text = ''
+
+  // 🔘 الضغط على زرار/قائمة تفاعلية يتحول لأمر مكتوب
+  {
+    const _btnId = getButtonId(rawMsg)
+    if (_btnId) m.text = String(_btnId)
+  }
+
+  if (m.pushName && m.pushName !== user.name) user.name = m.pushName
+
+  const owners    = Array.isArray(global.owners) ? global.owners : (global.owner || [])
+  const prems     = Array.isArray(global.prems)  ? global.prems  : []
+  const ownersJid = owners.map(n => String(n).replace(/\D/g, '') + '@s.whatsapp.net')
+  const premsJid  = prems.map(n  => String(n).replace(/\D/g, '') + '@s.whatsapp.net')
+
+  const botJid   = conn.user?.jid?.split(':')[0] + '@s.whatsapp.net'
+
+  // ✅ حل مشكلة اليوزرنيم — resolve الـ LID للـ sender
+  const _globalLidMap = conn?.isLid || {}
+  const _resolvedSender = _globalLidMap[m.sender] ||
+                          _globalLidMap[String(m.sender).replace(/:[0-9]+@/, '@')] ||
+                          m.sender
+  const _senderNum = numOf(_resolvedSender)
+
+  const isROwner = ownersJid.includes(_resolvedSender) ||
+                   isOwnerJid(_resolvedSender) ||
+                   ownerNumbers.includes(_senderNum) ||
+                   (isFromMe && (m.sender === botJid || m.sender === conn.user?.jid))
+  const isOwner  = isROwner
+  const isPrems  = isROwner || premsJid.includes(m.sender) || user.premium === true
+
+  // 🔕 منع الخاص: تجاهل كامل (من غير رد ولا تحذير ولا تشغيل أي أمر) — المالك مستثنى
+  if (!m.isGroup && global.privateBlock?.enabled && !isROwner) return
+
+  if (global.autoRead) await conn.readMessages([rawMsg.key]).catch(() => {})
+
+  try {
+    const printer = await import('./lib/print.js').catch(() => null)
+    if (printer?.default) await printer.default(m, conn).catch(() => {})
+  } catch {}
+
+  if (global.autoReact && isROwner && !m.fromMe && m.text) m.react('⛩️').catch(() => {})
+  m.exp += Math.ceil(Math.random() * 10)
+
+  let groupMetadata = {}
+  let isAdmin       = false
+  let isRAdmin      = false
+  let isBotAdmin    = false
+
+  const isRealOwner = isOwnerJid(_resolvedSender) || isOwnerJid(m.sender)
+
+  if (m.isGroup) {
+    try {
+      const meta = await conn.groupMetadata(m.chat).catch(() => null) || conn.chats?.[m.chat]?.metadata
+      if (meta) {
+        if (!conn.chats) conn.chats = {}
+        if (!conn.chats[m.chat]) conn.chats[m.chat] = { id: m.chat }
+        conn.chats[m.chat].metadata = meta
+        groupMetadata = meta
+      }
+    } catch {}
+
+    const rawParts = groupMetadata.participants || []
+    const lidMap   = conn?.isLid || {}
+
+    const partMap = new Map()
+    for (const p of rawParts) {
+      const rawId      = (typeof p === 'string') ? p : (p?.id || p?.jid || '')
+      const directJid  = (p?.jid && !String(p.jid).includes('@lid'))
+        ? String(p.jid).replace(/:[0-9]+@/, '@')
+        : null
+      const resolvedId = directJid || lidMap[rawId] || lidMap[String(rawId).replace(/:[0-9]+@/, '@')] || rawId
+
+      const nums = [
+        numOf(resolvedId),
+        numOf(p?.jid || ''),
+        numOf(p?.lid || ''),
+        numOf(p?.phoneNumber || ''),
+        numOf(rawId)
+      ].filter(Boolean)
+
+      const part = { id: resolvedId, jid: resolvedId, admin: p?.admin ?? p?.isAdmin ?? null }
+      for (const n of nums) {
+        if (n && !partMap.has(n)) partMap.set(n, part)
+      }
+    }
+
+    // ✅ استخدم الـ resolved sender في isAdmin
+    const _lidMapLocal = conn?.isLid || {}
+    const _senderResolved = _lidMapLocal[m.sender] ||
+                            _lidMapLocal[String(m.sender).replace(/:[0-9]+@/, '@')] ||
+                            m.sender
+    const userNum  = numOf(_senderResolved)
+    const botNum   = numOf(conn.user?.jid || '')
+    const userPart = partMap.get(userNum) || {}
+    const botPart  = partMap.get(botNum)  || {}
+
+    isRAdmin   = userPart.admin === 'superadmin'
+    isAdmin    = isRAdmin || userPart.admin === 'admin'
+    isBotAdmin = checkAdmin(botPart.admin)
+
+    if (isRealOwner) {
+      isAdmin  = true
+      isRAdmin = true
+    }
+  }
+
+  const participants = []
+  const pluginDir = path.join(path.dirname(fileURLToPath(import.meta.url)), 'plugins')
+
+  for (const name in global.plugins) {
+    const plugin = global.plugins[name]
+    if (!plugin || plugin.disabled) continue
+
+    const __filename = join(pluginDir, name)
+
+    if (typeof plugin.all === 'function') {
+      try {
+        await plugin.all.call(conn, m, {
+          conn, chatUpdate: { messages: [rawMsg] },
+          __dirname: pluginDir, __filename,
+          user, chat, settings, usedPrefix: global.prefix
+        })
+      } catch {}
+    }
+
+    if (!opts.restrict && plugin.tags?.includes('admin')) continue
+
+    const strRgx  = s => s.replace(/[|\\{}()[\]^$+*?.]/g, '\\$&')
+    const plugPfx = plugin.customPrefix ?? conn.prefix ?? global.prefix ?? '.'
+    const pfxMatch = (
+      plugPfx instanceof RegExp ? [[plugPfx.exec(m.text), plugPfx]] :
+      Array.isArray(plugPfx) ? plugPfx.map(p => {
+        const r = p instanceof RegExp ? p : new RegExp(strRgx(p))
+        return [r.exec(m.text), r]
+      }) :
+      typeof plugPfx === 'string' && plugPfx.length
+        ? [[new RegExp(strRgx(plugPfx)).exec(m.text), new RegExp(strRgx(plugPfx))]]
+        : [[[], new RegExp]]
+    ).find(p => p[1])
+
+    if (typeof plugin.before === 'function') {
+      try {
+        const skip = await plugin.before.call(conn, m, {
+          pfxMatch, conn, participants, groupMetadata,
+          isROwner, isOwner, isRAdmin, isAdmin, isBotAdmin, isPrems,
+          chatUpdate: { messages: [rawMsg] },
+          __dirname: pluginDir, __filename, user, chat, settings
+        })
+        if (skip) continue
+      } catch {}
+    }
+
+    if (typeof plugin !== 'function') continue
+
+    const usedPrefix = (pfxMatch && (pfxMatch[0] || '')[0]) || ''
+    if (!usedPrefix) continue
+
+    const noPrefix = m.text.replace(usedPrefix, '')
+    let [command, ...args] = noPrefix.trim().split(' ').filter(Boolean)
+    args = args || []
+    const _args = noPrefix.trim().split(' ').slice(1)
+    const text  = _args.join(' ')
+    command     = (command || '').toLowerCase()
+
+    const fail     = plugin.fail || global.dfail
+    const isAccept = plugin.command instanceof RegExp
+      ? plugin.command.test(command)
+      : Array.isArray(plugin.command)
+        ? plugin.command.some(c => c instanceof RegExp ? c.test(command) : c === command)
+        : typeof plugin.command === 'string'
+          ? plugin.command === command
+          : false
+
+    if (!isROwner && settings.self) return
+    if (chat.primaryBot && chat.primaryBot !== conn.user?.jid) {
+      try {
+        const primary = global.conns?.find(c => c.user?.jid === chat.primaryBot && c.ws?.socket?.readyState !== ws.CLOSED)
+        const inGroup = m.isGroup
+          ? (await conn.groupMetadata(m.chat).catch(() => ({ participants: [] }))).participants.some(p => p.jid === chat.primaryBot)
+          : false
+        if (!primary || !inGroup) chat.primaryBot = null
+        else continue
+      } catch {}
+    }
+
+    if (!isAccept) continue
+
+    m.plugin = name
+    if (user.commands !== undefined) user.commands++
+
+    if (chat.isBanned && !isROwner) {
+      await m.reply?.(`*╮═≼『⛩️┃تنبيه┃⛩️』≽═╭*\n*┇⌗╎ꕥ البوت معطل في هذه المجموعة ⌗*`).catch(() => {})
+      return
+    }
+
+    if (m.text && user.banned && !isROwner) {
+      await m.reply?.(`*╮═≼『⛩️┃تنبيه┃⛩️』≽═╭*\n*┇⌗╎ꕥ تم حظرك من استخدام البوت ⌗*`).catch(() => {})
+      return
+    }
+
+    if (!isRealOwner) {
+      if (plugin.rowner   && !isROwner)   { fail('rowner',   m, conn); continue }
+      if (plugin.owner    && !isOwner)    { fail('owner',    m, conn); continue }
+      if (plugin.premium  && !isPrems)    { fail('premium',  m, conn); continue }
+      if (plugin.group    && !m.isGroup)  { fail('group',    m, conn); continue }
+      if (plugin.private  &&  m.isGroup)  { fail('private',  m, conn); continue }
+      if (plugin.admin    && !isAdmin)    { fail('admin',    m, conn); continue }
+      if (plugin.botAdmin && !isBotAdmin) { fail('botAdmin', m, conn); continue }
+      if (plugin.limit    && user.limit <= 0) { fail('limit', m, conn); continue }
+    }
+
+    try {
+      await plugin.call(conn, m, {
+        conn, args, _args, text, usedPrefix, command,
+        participants, groupMetadata,
+        isROwner, isOwner, isRAdmin, isAdmin, isBotAdmin, isPrems,
+        chatUpdate: { messages: [rawMsg] },
+        __dirname: pluginDir, __filename, user, chat, settings
+      })
+      m.exp += plugin.exp || 0
+    } catch (e) {
+      console.error(chalk.red(`[Handler] ❌ ${name}: ${e.message}`))
+      if (typeof fail === 'function') fail('error', m, conn)
+    }
+  }
+
+  if (m.exp > 0 && db.users[uKey]) {
+    db.users[uKey].exp = (db.users[uKey].exp || 0) + m.exp
+  }
+
+  if (global.db?.data && typeof global.db.write === 'function') {
+    global.db.write().catch(() => {})
   }
 }
 
 // ════════════════════════════════════════════════════════
-// 🔍 quickTest — فحص الأدوات المتاحة
+// 👥 participantsUpdate — ✅ حماية المالك بالـ LID
 // ════════════════════════════════════════════════════════
-// ━━━ تحميل yt-dlp تلقائياً عند الشغل ━━━
-// yt-dlp متاح تلقائياً من nixpacks.toml
+export async function participantsUpdate(conn, update) {
+  // Baileys ممكن يبعت array أو object
+  if (Array.isArray(update)) {
+    for (const upd of update) await participantsUpdate(conn, upd).catch(() => {})
+    return
+  }
+  try {
+    const { id, participants, action, author } = update
 
-async function _quickTest() {
-  const tools = await Promise.all([
-    spawn('ffmpeg'),
-    spawn('ffprobe'),
-    spawn('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-filter_complex', 'color', '-frames:v', '1', '-f', 'webp', '-']),
-    spawn('convert'),
-    spawn('magick'),
-    spawn('gm'),
-    spawn('find', ['--version'])
-  ].map(p =>
-    Promise.race([
-      new Promise(r => p.on('close', code => r(code !== 127))),
-      new Promise(r => p.on('error', () => r(false)))
-    ])
-  ))
-  const [ffmpeg, ffprobe, ffmpegWebp, convert, magick, gm, find] = tools
-  global.support = Object.freeze({ ffmpeg, ffprobe, ffmpegWebp, convert, magick, gm, find })
-  console.log(chalk.hex('#9400FF')(
-    `[Tools] ffmpeg:${ffmpeg?'✅':'❌'} | convert:${convert?'✅':'❌'} | magick:${magick?'✅':'❌'}`
-  ))
+
+    if (author && id?.endsWith('@g.us')) {
+      const isActorOwner = isOwnerJid(author)
+
+      // 🚨 لو حد بيطرد المالك
+      if (action === 'remove' && !isActorOwner) {
+        const ownerRemoved = participants.some(p => isOwnerJid(p))
+        if (ownerRemoved) {
+          const actorNum = numOf(author)
+          setTimeout(async () => {
+            try {
+              await conn.groupParticipantsUpdate(id, [author], 'remove').catch(() => {})
+              await conn.sendMessage(id, {
+                text: `*╮═≼『⛩️┃حماية المالك┃⛩️』≽═╭*\n\n*┇⌗╎🚨 تم طرد @${actorNum} لمحاولته طرد المالك!*\n\n*╯✯≼══━━﹂⛩️﹁━━══≽✯*`,
+                mentions: [author]
+              }).catch(() => {})
+            } catch {}
+          }, 500)
+        }
+      }
+
+      // 🚨 لو حد بيشيل إشراف المالك
+      if (action === 'demote' && !isActorOwner) {
+        const ownerDemoted = participants.some(p => isOwnerJid(p))
+        if (ownerDemoted) {
+          const actorNum = numOf(author)
+          setTimeout(async () => {
+            try {
+              for (const p of participants) {
+                if (isOwnerJid(p)) {
+                  await conn.groupParticipantsUpdate(id, [p], 'promote').catch(() => {})
+                }
+              }
+              await conn.groupParticipantsUpdate(id, [author], 'remove').catch(() => {})
+              await conn.sendMessage(id, {
+                text: `*╮═≼『⛩️┃حماية المالك┃⛩️』≽═╭*\n\n*┇⌗╎🚨 تم طرد @${actorNum} لمحاولته إزالة إشراف المالك!*\n*┇⌗╎✅ تم إعادة الإشراف تلقائياً*\n\n*╯✯≼══━━﹂⛩️﹁━━══≽✯*`,
+                mentions: [author]
+              }).catch(() => {})
+            } catch {}
+          }, 500)
+        }
+      }
+    }
+
+    // ══ نظام التأديب ══
+    const punishFmt = (ms) => {
+      if (ms <= 0) return 'انتهى'
+      const totalMins = Math.floor(ms / 60000)
+      const h = Math.floor(totalMins / 60)
+      const m = totalMins % 60
+      if (h > 0 && m > 0) return `${h} ساعة و ${m} دقيقة`
+      if (h > 0) return `${h} ساعة`
+      return `${m} دقيقة`
+    }
+
+    // دخول معاقب
+    if (action === 'add' || action === 'promote') {
+      for (const jid of participants) {
+        if (global.activePunishments?.[jid]?.chatId === id) {
+          try {
+            const p = global.activePunishments[jid]
+            const remaining = punishFmt(p.endTime - Date.now())
+            const meta = await conn.groupMetadata(id).catch(() => null)
+            const admins = meta?.participants?.filter(x => x.admin).map(x => x.id) || []
+
+            await conn.sendMessage(id, {
+              text: `*❍━━━══━━❪⛩️❫━━══━━━❍*\n*｢⚠️｣⇇ تنبيه للأدمنز*\n\nالشخص @${jid.split('@')[0]} دخل الجروب وعنده عقوبة!\nالوقت المتبقي: *${remaining}*\n\nهل تريدون:\n✅ اكتب *اتركه* للسماح له\n🔨 اكتب *اطرده* لطرده فوراً\n\n⏰ لو مفيش رد خلال 15 دقيقة هيتطرد تلقائياً\n*❍━━━══━━❪⛩️❫━━══━━━❍*`,
+              mentions: [...admins, jid]
+            }).catch(() => {})
+
+            if (!global.pendingRejoin) global.pendingRejoin = {}
+            const autoKick = setTimeout(async () => {
+              if (!global.pendingRejoin?.[jid]) return
+              delete global.pendingRejoin[jid]
+              await conn.groupParticipantsUpdate(id, [jid], 'remove').catch(() => {})
+              await conn.sendMessage(id, {
+                text: `*❍━━━══━━❪⛩️❫━━══━━━❍*\n*｢🔨｣⇇ تم طرد @${jid.split('@')[0]} تلقائياً*\nلم يستجب أي أدمن خلال 15 دقيقة\n*❍━━━══━━❪⛩️❫━━══━━━❍*`,
+                mentions: [jid]
+              }).catch(() => {})
+            }, 15 * 60 * 1000)
+
+            global.pendingRejoin[jid] = { chatId: id, admins, autoKick }
+            console.log('[التأديب] دخل معاقب:', jid)
+          } catch (e) {
+            console.error('[التأديب-دخول]', e.message)
+          }
+        }
+      }
+    }
+
+    // خروج معاقب — Baileys بيبعت remove للخروج والطرد معاً
+    if (action === 'remove') {
+      for (const jid of participants) {
+        // تجاهل لو البوت طرده هو (موجود في pendingRejoin)
+        if (global.pendingRejoin?.[jid]) continue
+        if (global.activePunishments?.[jid]?.chatId === id) {
+          try {
+            const p = global.activePunishments[jid]
+            const remaining = punishFmt(p.endTime - Date.now())
+            clearTimeout(p.leaveTimeout)
+            p.reminders?.forEach(t => clearTimeout(t))
+
+            await conn.sendMessage(id, {
+              text: `*❍━━━══━━❪⛩️❫━━══━━━❍*\n*｢✅｣⇇ تم بدء العداد*\n\nخرج @${jid.split('@')[0]} من الجروب\n⏳ الوقت المتبقي للعقوبة: *${remaining}*\n\nسيتم إخطاره بالعودة بعد انتهاء المدة 🔔\n*❍━━━══━━❪⛩️❫━━══━━━❍*`,
+              mentions: [jid]
+            }).catch(() => {})
+            console.log('[التأديب] خرج معاقب:', jid)
+          } catch (e) {
+            console.error('[التأديب-خروج]', e.message)
+          }
+        }
+      }
+    }
+
+    for (const plugin of Object.values(global.plugins)) {
+      if (typeof plugin?.participantsUpdate === 'function') {
+        await plugin.participantsUpdate({ conn, id, participants, action }).catch(() => {})
+      }
+    }
+  } catch (e) {
+    console.error('[participantsUpdate]', e.message)
+  }
 }
-_quickTest().catch(() => {})
 
 // ════════════════════════════════════════════════════════
-// 🛡️ Crash Protection
+// 📋 groupsUpdate
 // ════════════════════════════════════════════════════════
-process.on('uncaughtException',  e => console.error(chalk.red('[CRASH]'),     e?.message || e))
-process.on('unhandledRejection', r => console.error(chalk.red('[REJECTION]'), r?.message || r))
+export async function groupsUpdate(conn, updates) {
+  try {
+    for (const update of updates) {
+      for (const plugin of Object.values(global.plugins)) {
+        if (typeof plugin?.groupsUpdate === 'function') {
+          await plugin.groupsUpdate({ conn, update }).catch(() => {})
+        }
+      }
+    }
+  } catch (e) {
+    console.error('[groupsUpdate]', e.message)
+  }
+}
 
 // ════════════════════════════════════════════════════════
-// 🖼️ Startup Banner
+// 📞 callUpdate
 // ════════════════════════════════════════════════════════
-console.log(chalk.hex('#FFD700').bold(`
-╔══════════════════════════════════════╗
-║  ꧁༒【⛩️sukuna⛩️bot】༒꧂      ║
-║  v${global.botVer}  —  Powered by simple.js    ║
-║  ⛩️ Node ${process.version.padEnd(10)} | ${new Date().toLocaleDateString('ar-EG')}  ║
-╚══════════════════════════════════════╝
-`))
+export async function callUpdate(conn, call) {
+  try {
+    if (global.antiCall && call.status === 'offer') {
+      await conn.rejectCall(call.id, call.from).catch(() => {})
+    }
+    for (const plugin of Object.values(global.plugins)) {
+      if (typeof plugin?.callUpdate === 'function') {
+        await plugin.callUpdate({ conn, call }).catch(() => {})
+      }
+    }
+  } catch (e) {
+    console.error('[callUpdate]', e.message)
+  }
+}
