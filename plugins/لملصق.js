@@ -113,7 +113,7 @@ function probeSeconds(file) {
 
 // يطلّع صوت الفيديو OGG/Opus بطول "ثواني صحيحة" (1..10) عن طريق حشو صمت في الآخر،
 // عشان حقل seconds اللي بيتبعت لواتساب يطابق طول الصوت الحقيقي بالظبط.
-// (الطريقة القديمة كانت بتقرّب المدة Math.round، فالفرق ممكن يوصل نص ثانية)
+// (الطريقة القديمة كانت بتقرّب Math.round فبتطلع seconds أكبر من الطول الفعلي لما الكسر ≥ .5)
 // بيرجّع { buf, seconds } أو null لو الفيديو مفيهوش صوت.
 async function extractOpus(media) {
   const id = Date.now() + '_' + Math.random().toString(36).slice(2, 6)
@@ -124,7 +124,7 @@ async function extractOpus(media) {
   try {
     const real = await probeSeconds(inputPath)
     const N = Math.min(10, Math.max(1, Math.ceil((real || 1) - 0.05)))   // الثواني اللي هتتبعت لواتساب
-    const T = N >= 10 ? 9.95 : N                                          // طول الملف الفعلي (تحت حد الـ 10 ثواني بشوية)
+    const T = N                                                           // طول الملف الفعلي = N ثانية بالظبط
 
     const ok = await new Promise(resolve => {
       let err = ''
@@ -149,7 +149,7 @@ async function extractOpus(media) {
 
     const actual = await probeSeconds(outputPath)
     console.log(`[ملصق:صوت] مدة الفيديو ${real.toFixed(2)}ث → seconds=${N} | طول الصوت الفعلي ${actual.toFixed(3)}ث | ${buf.length} بايت`)
-    return { buf, seconds: N }
+    return { buf, seconds: N, actual }
   } finally { rm(inputPath, outputPath) }
 }
 
@@ -183,7 +183,9 @@ async function sendWithSound(conn, m, stickerBuf, opusBuf, seconds) {
   const stickerMedia = await prepareWAMessageMedia({ sticker: stickerBuf }, { upload: conn.waUploadToServer })
   const audioMedia = await prepareWAMessageMedia({ audio: opusBuf, mimetype: 'audio/ogg; codecs=opus', ptt: false }, { upload: conn.waUploadToServer })
   const sm = { ...stickerMedia.stickerMessage, isAnimated: true }   // الستيكر ده متحرك (من فيديو)
-  const am = { ...audioMedia.audioMessage, seconds }                  // seconds = طول الصوت الحقيقي (ثواني صحيحة)
+  // نفس أمر ستيكر_صوت الشغال: بنستخدم قيمة seconds اللي Baileys حسبها من الملف نفسه
+  const am = { ...audioMedia.audioMessage, seconds: audioMedia.audioMessage.seconds || seconds }
+  console.log(`[ملصق:صوت] seconds المحسوبة=${seconds} | seconds من Baileys=${audioMedia.audioMessage.seconds} | المرسلة=${am.seconds}`)
   await conn.relayMessage(m.chat, buildAudioStickerPayload(sm, am), { quoted: m })
 }
 
