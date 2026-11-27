@@ -104,7 +104,8 @@ async function videoToWebpTuned(media, { q, fps }) {
   const outputPath = path.join(tmpDir, `tune_out_${id}.webp`)
   fs.writeFileSync(inputPath, media)
   try {
-    const vf = `fps=${fps},scale=256:256:force_original_aspect_ratio=decrease,format=rgba,pad=256:256:(ow-iw)/2:(oh-ih)/2:color=0x00000000`
+    // قص بدل الحشو الشفاف: ستيكر الصوت لازم يكون إطاره ممتلي (بدون حواف شفافة)
+    const vf = `fps=${fps},scale=256:256:force_original_aspect_ratio=increase,crop=256:256,format=yuv420p`
     await runFf(ffmpeg(inputPath).outputOptions([
       '-vf', vf, '-c:v', 'libwebp', '-q:v', String(q), '-loop', '0', '-an', '-vsync', '0'
     ]), 25000, outputPath)
