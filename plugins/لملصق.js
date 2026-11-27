@@ -140,6 +140,42 @@ function probeSeconds(file) {
   })
 }
 
+// 🗜️ يصغّر الفيديو الأول (الأبعاد + الجودة + FPS) مع الحفاظ على الصوت، عشان الستيكر يطلع خفيف
+async function shrinkVideo(media, id) {
+  const LIMIT = 800 * 1024
+  if (media.length <= LIMIT) { L(id, `الفيديو صغير أصلاً (${(media.length / 1024).toFixed(0)}KB)، مش محتاج تصغير`); return media }
+  const key = Date.now() + '_' + Math.random().toString(36).slice(2, 6)
+  const inP = path.join(tmpDir, `shr_in_${key}.mp4`)
+  const outP = path.join(tmpDir, `shr_out_${key}.mp4`)
+  fs.writeFileSync(inP, media)
+  const attempts = [
+    { size: 256, fps: 15, crf: 32 },
+    { size: 192, fps: 12, crf: 36 },
+    { size: 160, fps: 10, crf: 40 }
+  ]
+  let best = media
+  try {
+    for (const a of attempts) {
+      const ok = await new Promise(resolve => {
+        const args = ['-y', '-i', inP, '-t', '10',
+          '-vf', `fps=${a.fps},scale=${a.size}:${a.size}:force_original_aspect_ratio=decrease:force_divisible_by=2`,
+          '-c:v', 'libx264', '-preset', 'veryfast', '-crf', String(a.crf), '-pix_fmt', 'yuv420p',
+          '-c:a', 'aac', '-b:a', '64k', '-ac', '1', '-movflags', '+faststart', outP]
+        const ff = spawn(FFMPEG, args)
+        const t = setTimeout(() => { try { ff.kill('SIGKILL') } catch {} ; resolve(false) }, 40000)
+        ff.on('error', () => { clearTimeout(t); resolve(false) })
+        ff.on('close', code => { clearTimeout(t); resolve(code === 0 && fs.existsSync(outP)) })
+      })
+      if (!ok) { L(id, `تصغير الفيديو فشل (${a.size}px)`); continue }
+      const b = fs.readFileSync(outP); rm(outP)
+      L(id, `🗜️ تصغير الفيديو ${a.size}px/${a.fps}fps/crf${a.crf}: ${(media.length / 1024).toFixed(0)}KB → ${(b.length / 1024).toFixed(0)}KB`)
+      if (b.length < best.length) best = b
+      if (b.length <= LIMIT) break
+    }
+  } finally { rm(inP, outP) }
+  return best
+}
+
 async function shrinkIfBig(buf, isVideo) {
   if (buf.length <= 900 * 1024) return buf
   try {
@@ -282,6 +318,9 @@ async function finishVideo(conn, m, media, withSound) {
   const id = Math.random().toString(36).slice(2, 6)
   const t0 = Date.now()
   L(id, `بدء | بصوت=${withSound} | الفيديو ${media.length} بايت | chat=${m.chat}`)
+
+  // بصوت: نصغّر الفيديو الأول قبل أي حاجة (الصوت بيفضل موجود)
+  if (withSound) media = await shrinkVideo(media, id)
 
   // لو بصوت: نبدأ من غير -fs (القص بيبوّظ ملف الـ webp المتحرك ويخلي الصوت مايشتغلش)
   let sticker = withSound
