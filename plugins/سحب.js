@@ -17,19 +17,26 @@ const handler = async (m, { conn }) => {
 
   try {
     const meta = await conn.groupMetadata(chat);
-    const botId = conn.user?.id ? conn.decodeJid(conn.user.id) : conn.decodeJid(meta.participants.find(p => p.id.includes('bot'))?.id);
-    const botJid = conn.decodeJid(conn.user.id);
-    const senderJid = conn.decodeJid(m.sender);
 
-    const botPart = meta.participants.find(p => conn.decodeJid(p.id) === botJid);
-    if (!botPart?.admin) {
+    // رقم بدون @ ولا :device ولا فرق s.whatsapp.net / lid، عشان نقارن بثبات
+    const decode = (jid) => (typeof conn.decodeJid === 'function' ? conn.decodeJid(jid) : jid) || '';
+    const num = (jid) => decode(jid).replace(/^.*?(\d+)(?::\d+)?@.*$/, '$1');
+
+    const botNum = num(conn.user?.id || '');
+    const senderNum = num(m.sender);
+
+    const botPart = meta.participants.find(p => num(p.id) === botNum || num(p.jid || '') === botNum);
+    if (!botPart || !botPart.admin) {
       await react('❌');
-      return m.reply('❌ لازم البوت يكون أدمن في الجروب الأول عشان ينفّذ الأمر ده.');
+      return m.reply(
+        `❌ لازم البوت يكون أدمن في الجروب الأول عشان ينفّذ الأمر ده.\n` +
+        `🔧 بوت: ${botNum || 'مش متعرف'} | أدمنية الجروب: ${meta.participants.filter(p => p.admin).map(p => num(p.id)).join(', ') || 'لا يوجد'}`
+      );
     }
 
     const others = meta.participants.filter(p => {
-      const jid = conn.decodeJid(p.id);
-      return jid !== botJid && jid !== senderJid;
+      const n = num(p.id);
+      return n !== botNum && n !== senderNum;
     });
     const otherAdmins = others.filter(p => p.admin);
 
