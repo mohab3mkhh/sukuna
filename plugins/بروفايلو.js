@@ -179,6 +179,6 @@ const handler = async (m, { conn, text, usedPrefix, command, isROwner }) => {
 
 handler.help = ['بروفايل']
 handler.tags = ['tools']
-handler.command = /^(بروفايل|pp|)$/i
+handler.command = /^(بروفايل|pp)$/i
 
 export default handler
