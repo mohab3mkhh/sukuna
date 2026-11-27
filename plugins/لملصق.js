@@ -22,6 +22,7 @@ const FFMPEG = fs.existsSync('/root/.nix-profile/bin/ffmpeg') ? '/root/.nix-prof
 const FFPROBE = fs.existsSync('/root/.nix-profile/bin/ffprobe') ? '/root/.nix-profile/bin/ffprobe' : 'ffprobe'
 const PENDING_MS = 5 * 60_000
 const CHOICE_CMD = 'ملصق_خيار'
+const SOUND_STICKER_MAX = 500 * 1024   // واتساب بيحدّد الستيكر المتحرك بـ 500KB تقريباً
 if (!global.stkPending) global.stkPending = new Map()   // chat:sender → { media, seconds, m, expires }
 
 const box = (title, line) =>
@@ -99,7 +100,7 @@ async function imageToWebp(media) {
   } finally { rm(inputPath, outputPath) }
 }
 
-// مدة ملف الصوت الفعلية بالثواني (واتساب بيرفض يشغّل صوت الستيكر لو seconds مش مطابقة للمدة الحقيقية)
+// مدة ملف (صوت أو فيديو) بالثواني
 function probeSeconds(file) {
   return new Promise(resolve => {
     let out = ''
@@ -110,43 +111,58 @@ function probeSeconds(file) {
   })
 }
 
-// يطلّع صوت الفيديو (أول 10 ثواني) OGG/Opus — بنفس أوامر ffmpeg بتاعة ستيكر_صوت الشغال.
-// بيرجّع { buf, seconds } أو null لو الفيديو مفيهوش صوت. وبيطبع أي خطأ من ffmpeg في اللوج عشان نعرف السبب.
-function extractOpus(media) {
-  return new Promise(resolve => {
-    const id = Date.now() + '_' + Math.random().toString(36).slice(2, 6)
-    const inputPath = path.join(tmpDir, `aud_in_${id}.mp4`)
-    const outputPath = path.join(tmpDir, `aud_out_${id}.ogg`)
-    fs.writeFileSync(inputPath, media)
-    let err = ''
-    const ff = spawn(FFMPEG, ['-y', '-i', inputPath, '-vn', '-t', '10', '-c:a', 'libopus', '-b:a', '64k', '-ar', '48000', '-ac', '1', outputPath])
-    const timer = setTimeout(() => { try { ff.kill('SIGKILL') } catch {} }, 25000)
-    ff.stderr.on('data', d => { err = (err + d).slice(-600) })
-    const done = val => { clearTimeout(timer); rm(inputPath, outputPath); resolve(val) }
-    ff.on('error', e => { console.error('[ملصق:صوت] ffmpeg مش شغال:', e.message); done(null) })
-    ff.on('close', async code => {
-      const ok = code === 0 && fs.existsSync(outputPath)
-      const buf = ok ? fs.readFileSync(outputPath) : null
-      if (!buf || buf.length < 500) {
-        console.error('[ملصق:صوت] استخراج الصوت فشل (code ' + code + '):', err.trim().split('\n').slice(-3).join(' | '))
-        return done(null)
-      }
-      const seconds = await probeSeconds(outputPath)
-      done({ buf, seconds: Math.min(10, Math.max(1, Math.round(seconds || 1))) })
+// يطلّع صوت الفيديو OGG/Opus بطول "ثواني صحيحة" (1..10) عن طريق حشو صمت في الآخر،
+// عشان حقل seconds اللي بيتبعت لواتساب يطابق طول الصوت الحقيقي بالظبط.
+// (الطريقة القديمة كانت بتقرّب المدة Math.round، فالفرق ممكن يوصل نص ثانية)
+// بيرجّع { buf, seconds } أو null لو الفيديو مفيهوش صوت.
+async function extractOpus(media) {
+  const id = Date.now() + '_' + Math.random().toString(36).slice(2, 6)
+  const inputPath = path.join(tmpDir, `aud_in_${id}.mp4`)
+  const outputPath = path.join(tmpDir, `aud_out_${id}.ogg`)
+  fs.writeFileSync(inputPath, media)
+
+  try {
+    const real = await probeSeconds(inputPath)
+    const N = Math.min(10, Math.max(1, Math.ceil((real || 1) - 0.05)))   // الثواني اللي هتتبعت لواتساب
+    const T = N >= 10 ? 9.95 : N                                          // طول الملف الفعلي (تحت حد الـ 10 ثواني بشوية)
+
+    const ok = await new Promise(resolve => {
+      let err = ''
+      const ff = spawn(FFMPEG, [
+        '-y', '-i', inputPath, '-vn',
+        '-af', `apad=whole_dur=${T}`, '-t', String(T),
+        '-c:a', 'libopus', '-b:a', '64k', '-ar', '48000', '-ac', '1', outputPath
+      ])
+      const timer = setTimeout(() => { try { ff.kill('SIGKILL') } catch {} }, 25000)
+      ff.stderr.on('data', d => { err = (err + d).slice(-600) })
+      ff.on('error', e => { clearTimeout(timer); console.error('[ملصق:صوت] ffmpeg مش شغال:', e.message); resolve(false) })
+      ff.on('close', code => {
+        clearTimeout(timer)
+        if (code !== 0) console.error('[ملصق:صوت] استخراج الصوت فشل (code ' + code + '):', err.trim().split('\n').slice(-3).join(' | '))
+        resolve(code === 0)
+      })
     })
-  })
+
+    if (!ok || !fs.existsSync(outputPath)) return null
+    const buf = fs.readFileSync(outputPath)
+    if (buf.length < 500) return null
+
+    const actual = await probeSeconds(outputPath)
+    console.log(`[ملصق:صوت] مدة الفيديو ${real.toFixed(2)}ث → seconds=${N} | طول الصوت الفعلي ${actual.toFixed(3)}ث | ${buf.length} بايت`)
+    return { buf, seconds: N }
+  } finally { rm(inputPath, outputPath) }
 }
 
 // ستيكر الصوت: بنبنيه بـ wa-sticker-formatter (512×512 + بيانات pack/author زي ستيكرات واتساب الأصلية)
-// بدل ffmpeg الخام (256×256 من غير EXIF) — احتمال إن واتساب مش بيقبل صوت على الستيكر ده.
+// وبنضغطه لحد ما يبقى تحت حد الستيكر المتحرك (500KB).
 async function videoToWebpForSound(media) {
   let buf
-  for (const quality of [40, 25, 12]) {
+  for (const quality of [40, 25, 12, 6]) {
     buf = await new Sticker(media, {
       pack: global.stickpack || '⛩️ SUKUNA BOT', author: global.stickauth || 'SUKUNA',
       type: StickerTypes.FULL, quality
     }).toBuffer()
-    if (buf.length <= 900 * 1024) break
+    if (buf.length <= SOUND_STICKER_MAX) break
   }
   return buf
 }
@@ -167,7 +183,7 @@ async function sendWithSound(conn, m, stickerBuf, opusBuf, seconds) {
   const stickerMedia = await prepareWAMessageMedia({ sticker: stickerBuf }, { upload: conn.waUploadToServer })
   const audioMedia = await prepareWAMessageMedia({ audio: opusBuf, mimetype: 'audio/ogg; codecs=opus', ptt: false }, { upload: conn.waUploadToServer })
   const sm = { ...stickerMedia.stickerMessage, isAnimated: true }   // الستيكر ده متحرك (من فيديو)
-  const am = { ...audioMedia.audioMessage, seconds }                  // المدة الحقيقية للصوت مش 10 ثابتة
+  const am = { ...audioMedia.audioMessage, seconds }                  // seconds = طول الصوت الحقيقي (ثواني صحيحة)
   await conn.relayMessage(m.chat, buildAudioStickerPayload(sm, am), { quoted: m })
 }
 
