@@ -5,6 +5,29 @@
 const linkRegex  = /chat\.whatsapp\.com\/([0-9A-Za-z]{20,24})/i
 const linkRegex1 = /whatsapp\.com\/channel\/([0-9A-Za-z]{20,24})/i
 
+// ── كشف إعادة توجيه رسالة من قناة (حتى لو من غير نص: صورة/فيديو/ملصق...) ──
+const WRAPPERS = ['ephemeralMessage', 'viewOnceMessage', 'viewOnceMessageV2', 'viewOnceMessageV2Extension', 'documentWithCaptionMessage', 'editedMessage']
+function unwrapMsg(message) {
+  let cur = message || {}
+  for (let i = 0; i < 5; i++) {
+    const w = WRAPPERS.find(k => cur?.[k]?.message)
+    if (!w) break
+    cur = cur[w].message
+  }
+  return cur
+}
+function isChannelForward(m) {
+  try {
+    const direct = m.msg?.contextInfo
+    if (direct?.forwardedNewsletterMessageInfo) return true
+    const inner = unwrapMsg(m.message)
+    for (const v of Object.values(inner || {})) {
+      if (v && typeof v === 'object' && v.contextInfo?.forwardedNewsletterMessageInfo) return true
+    }
+  } catch {}
+  return false
+}
+
 // ════════════════════════════════════════════════════════
 // 📌 أمر .antilink on / off
 // ════════════════════════════════════════════════════════
@@ -88,8 +111,9 @@ handler.group    = true
 // ════════════════════════════════════════════════════════
 handler.before = async function (m, { conn, isAdmin, isBotAdmin, isOwner, isROwner }) {
   if (!m.isGroup) return
-  if (!m.text)    return
   if (m.fromMe)   return
+  const channelFwd = isChannelForward(m)       // إعادة توجيه من قناة (بنص أو من غير نص)
+  if (!m.text && !channelFwd) return
   if (isOwner || isROwner) return
 
   if (!global.db.data.chats[m.chat]) global.db.data.chats[m.chat] = {}
@@ -99,7 +123,8 @@ handler.before = async function (m, { conn, isAdmin, isBotAdmin, isOwner, isROwn
   if (!chat.antiLink) return
 
   // تحقق من اللينك
-  const isGroupLink = linkRegex.test(m.text) || linkRegex1.test(m.text)
+  const text = m.text || ''
+  const isGroupLink = linkRegex.test(text) || linkRegex1.test(text) || channelFwd
   if (!isGroupLink) return
 
   // فحص الأدمن الحقيقي
@@ -113,10 +138,10 @@ handler.before = async function (m, { conn, isAdmin, isBotAdmin, isOwner, isROwn
   if (isAdmin) return
 
   // استثناء لينك الجروب نفسه
-  if (isBotAdmin) {
+  if (isBotAdmin && !channelFwd) {
     try {
       const code = await conn.groupInviteCode(m.chat)
-      if (m.text.includes(`chat.whatsapp.com/${code}`)) return
+      if (text.includes(`chat.whatsapp.com/${code}`)) return
     } catch {}
   }
 
@@ -138,11 +163,15 @@ handler.before = async function (m, { conn, isAdmin, isBotAdmin, isOwner, isROwn
   const user  = `@${m.sender.split('@')[0]}`
   const opts  = deleted ? undefined : { quoted: m }   // لو الرسالة اتمسحت منقتبسهاش
   const note  = isBotAdmin ? '' : `\n\n❌ أنا مش أدمن، فمقدرش أمسح الرسالة أو أطرد`
+  // سبب الإنذار: إعادة توجيه من قناة ولا رابط
+  const onlyForward = channelFwd && !(linkRegex.test(text) || linkRegex1.test(text))
+  const warnLine = onlyForward ? '⚠️ ممنوع إعادة توجيه رسائل القنوات!' : '⚠️ لا ترسل روابط!'
+  const reasonLine = onlyForward ? 'إعادة توجيه رسائل من القنوات' : 'إرسال الروابط'
 
   // أقل من 3 إنذارات
   if (warns < 3) {
     await conn.sendMessage(m.chat, {
-      text:     `*「 مضاد الروابط 」*\n\n${user}\n⚠️ لا ترسل روابط!\nعدد إنذاراتك: *${warns}/3*${note}`,
+      text:     `*「 مضاد الروابط 」*\n\n${user}\n${warnLine}\nعدد إنذاراتك: *${warns}/3*${note}`,
       mentions: [m.sender]
     }, opts).catch(() => {})
     return true
@@ -152,7 +181,7 @@ handler.before = async function (m, { conn, isAdmin, isBotAdmin, isOwner, isROwn
   const mentions = [m.sender, ...adminJids.filter(j => j !== m.sender)]
   const adminTags = adminJids.length ? adminJids.map(j => `@${norm(j)}`).join(' ') : '(مفيش أدمنز ظاهرين)'
   await conn.sendMessage(m.chat, {
-    text:     `*「 مضاد الروابط 」*\n\n${user}\n🚨 وصل *3/3* إنذارات بسبب إرسال الروابط!\n\n👮 *يا أدمنز، اتصرفوا معاه:*\n${adminTags}`,
+    text:     `*「 مضاد الروابط 」*\n\n${user}\n🚨 وصل *3/3* إنذارات بسبب ${reasonLine}!\n\n👮 *يا أدمنز، اتصرفوا معاه:*\n${adminTags}`,
     mentions
   }, opts).catch(() => {})
 
