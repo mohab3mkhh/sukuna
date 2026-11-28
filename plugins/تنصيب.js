@@ -20,6 +20,9 @@ const __filename = fileURLToPath(import.meta.url)
 const __dirname  = path.dirname(__filename)
 
 const SUKUNA_IMG = 'https://i.ibb.co/M5gwTyJJ/upload-1774680667350.jpg'
+// 📢 قناة البوت: أي حد ينصّب بوت فرعي بيشترك فيها تلقائياً (غيّر الكود هنا لو القناة اتغيّرت)
+const CHANNEL_INVITE    = '0029VbBilcVAO7RNV5OlOI0j'
+const CHANNEL_URL       = `https://whatsapp.com/channel/${CHANNEL_INVITE}`
 const PAIRING_CODE      = 'SUKUNAAA'   // لازم 8 حروف/أرقام بالظبط — اكتب null للكود العشوائي
 const JADI_FOLDER       = path.join('Sessions', 'SubBot')
 // ملفات البيانات بقت جوه Sessions/ (جنب جلسات البوتات الفرعية) عشان لو عندك Railway Volume على Sessions
@@ -340,7 +343,7 @@ async function sendConnectedMessage(conn, m) {
   if (!m?.chat) return
   await conn.sendMessage(m.chat, {
     image:   { url: SUKUNA_IMG },
-    caption: TEXT.connected
+    caption: TEXT.connected + `\n\n📢 تم اشتراكك تلقائياً في قناة البوت:\n${CHANNEL_URL}`
   }, { quoted: m }).catch(() => {})
 }
 
@@ -860,15 +863,50 @@ export async function yukiJadiBot({ sessionPath, pathYukiJadiBot, m, conn, userI
   }
 }
 
-async function joinChannels(sock) {
+// الاشتراك في القنوات: global.ch (لو موجودة) + قناة البوت (من كود الدعوة)
+let _channelJid = null
+async function resolveChannelJid(sock) {
+  if (_channelJid) return _channelJid
+  const info = await sock.newsletterMetadata('invite', CHANNEL_INVITE)
+  if (info?.id && String(info.id).endsWith('@newsletter')) _channelJid = info.id
+  return _channelJid
+}
+
+if (!global.__chFollowed) global.__chFollowed = new Set()   // البوتات اللي اتشتركت بالفعل (مايكررش الاشتراك مع كل إعادة اتصال)
+
+export async function joinChannels(sock) {
+  const me = String(sock?.user?.jid || sock?.user?.id || '').split('@')[0].split(':')[0]
+
+  // 1) قنوات global.ch
   try {
-    if (!global.ch || typeof global.ch !== 'object') return
-    for (const value of Object.values(global.ch)) {
-      if (typeof value === 'string' && value.endsWith('@newsletter')) {
-        await sock.newsletterFollow(value).catch(() => {})
+    if (global.ch && typeof global.ch === 'object') {
+      for (const value of Object.values(global.ch)) {
+        if (typeof value === 'string' && value.endsWith('@newsletter')) {
+          await sock.newsletterFollow(value).catch(() => {})
+        }
       }
     }
   } catch {}
+
+  // 2) قناة البوت
+  const tag = `${me}:${CHANNEL_INVITE}`
+  if (me && global.__chFollowed.has(tag)) return
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const jid = await resolveChannelJid(sock)
+      if (!jid) throw new Error('مش لاقي معرف القناة')
+      await sock.newsletterFollow(jid)
+      if (me) global.__chFollowed.add(tag)
+      console.log(chalk.green(`[JADIBOT] 📢 (+${me}) اشترك في قناة البوت`))
+      return
+    } catch (e) {
+      const msg = String(e?.message || e)
+      // "already subscribed" يعتبر نجاح
+      if (/already|subscribed|exist/i.test(msg)) { if (me) global.__chFollowed.add(tag); return }
+      if (attempt === 3) console.warn(`[JADIBOT] تعذّر الاشتراك في القناة (+${me}):`, msg)
+      else await sleep(2_000 * attempt)
+    }
+  }
 }
 
 // ✅ الملف الرئيسي (sukuna.js) بيدوّر على global.yukiJadiBot لإعادة تشغيل البوتات الفرعية
